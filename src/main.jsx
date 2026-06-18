@@ -42,15 +42,16 @@ import {
 } from 'lucide-react'
 import './styles.css'
 
+const BASE = import.meta.env.BASE_URL
 const money = (value) => value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
 
 const products = [
-  { id: 1, name: 'Pão de Queijo Tradicional', category: 'Pão de queijo', image: '/images/pao-de-queijo-real.jpg', stock: 142, min: 60, price: 128.9, supplier: 'Queijos Serra Alta', temperature: '-18°C', unit: 'cx 5kg' },
-  { id: 2, name: 'Mini Pizza Congelada', category: 'Assados', image: '/images/mini-pizza-1.jpg', stock: 88, min: 55, price: 96.5, supplier: 'Forno Sul Alimentos', temperature: '-18°C', unit: 'cx 30 un' },
-  { id: 3, name: 'Açaí Premium Balde', category: 'Açaí', image: '/images/acai-real.avif', stock: 31, min: 40, price: 154.9, supplier: 'Amazônia Mix', temperature: '-18°C', unit: 'balde 10L' },
-  { id: 4, name: 'Croissant Folhado', category: 'Croissant', image: '/images/croissant-real.avif', stock: 67, min: 35, price: 112.0, supplier: 'La Maison Congelados', temperature: '-18°C', unit: 'cx 40 un' },
-  { id: 5, name: 'Mix de Salgados', category: 'Salgados', image: '/images/salgados-real.jpg', stock: 54, min: 50, price: 89.7, supplier: 'Salgados San Pietro', temperature: '-18°C', unit: 'cx 100 un' },
-  { id: 6, name: 'Polpas de Frutas Sortidas', category: 'Polpas', image: '/images/linha-mercados-real.png', stock: 210, min: 120, price: 48.5, supplier: 'Frutas do Vale', temperature: '-18°C', unit: 'pct 20 un' },
+  { id: 1, name: 'Pão de Queijo Tradicional', category: 'Pão de queijo', image: BASE + 'images/pao-de-queijo-real.jpg', stock: 142, min: 60, price: 128.9, supplier: 'Queijos Serra Alta', temperature: '-18°C', unit: 'cx 5kg' },
+  { id: 2, name: 'Mini Pizza Congelada', category: 'Assados', image: BASE + 'images/mini-pizza-1.jpg', stock: 88, min: 55, price: 96.5, supplier: 'Forno Sul Alimentos', temperature: '-18°C', unit: 'cx 30 un' },
+  { id: 3, name: 'Açaí Premium Balde', category: 'Açaí', image: BASE + 'images/acai-real.avif', stock: 31, min: 40, price: 154.9, supplier: 'Amazônia Mix', temperature: '-18°C', unit: 'balde 10L' },
+  { id: 4, name: 'Croissant Folhado', category: 'Croissant', image: BASE + 'images/croissant-real.avif', stock: 67, min: 35, price: 112.0, supplier: 'La Maison Congelados', temperature: '-18°C', unit: 'cx 40 un' },
+  { id: 5, name: 'Mix de Salgados', category: 'Salgados', image: BASE + 'images/salgados-real.jpg', stock: 54, min: 50, price: 89.7, supplier: 'Salgados San Pietro', temperature: '-18°C', unit: 'cx 100 un' },
+  { id: 6, name: 'Polpas de Frutas Sortidas', category: 'Polpas', image: BASE + 'images/linha-mercados-real.png', stock: 210, min: 120, price: 48.5, supplier: 'Frutas do Vale', temperature: '-18°C', unit: 'pct 20 un' },
 ]
 
 const initialOrders = [
@@ -339,7 +340,7 @@ function App() {
     <div className="appShell">
       <aside className="sidebar">
         <div className="brandBox">
-          <img src="/images/logo-saborsan.png" alt="Saborsan" />
+          <img src={BASE + 'images/logo-saborsan.png'} alt="Saborsan" />
           <span>Sistema de Gestão</span>
         </div>
         <nav className="sideNav">
@@ -415,7 +416,7 @@ function Login({ onLogin }) {
       <section className="loginHero">
         <div className="loginCard">
           <div className="loginCardTop">
-            <img src="/images/logo-saborsan.png" alt="Saborsan" />
+            <img src={BASE + 'images/logo-saborsan.png'} alt="Saborsan" />
             <span className="badge navy">Painel interno</span>
           </div>
           <h1>Gestão completa para distribuição de alimentos.</h1>
@@ -454,7 +455,7 @@ function Dashboard({ totals, orders, aiEnabled, setActive }) {
           <p>Acompanhe tudo o que acontece na distribuidora: solicitações do app, emissão de notas, reposição de estoque, comunicação com fornecedores e rotas de entrega.</p>
           <div className="heroButtons"><button onClick={() => setActive('pedidos')}>Ver pedidos</button><button onClick={() => setActive('automacao')}>Central de automação</button></div>
         </div>
-        <img src="/images/new-work-station-2.png" alt="New work station 2" />
+        <img src={BASE + 'images/new-work-station-2.png'} alt="New work station 2" />
       </section>
       <section className="metricGrid">
         {cards.map(({ label, value, icon: Icon, tone, detail }) => (
