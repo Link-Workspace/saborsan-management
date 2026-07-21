@@ -43,6 +43,7 @@ import {
 import './styles.css'
 
 const BASE = import.meta.env.BASE_URL
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:7071'
 const money = (value) => value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
 
 const products = [
@@ -294,7 +295,7 @@ function NotifPanel({ onClose }) {
 }
 
 function App() {
-  const [logged, setLogged] = useState(false)
+  const [employee, setEmployee] = useState(null)
   const [active, setActive] = useState('dashboard')
   const [aiEnabled, setAiEnabled] = useState(true)
   const [orders, setOrders] = useState(initialOrders)
@@ -332,7 +333,7 @@ function App() {
     notify(`Nota fiscal demonstrativa gerada para ${order.customer}.`)
   }
 
-  if (!logged) return <Login onLogin={() => setLogged(true)} />
+  if (!employee) return <Login onLogin={setEmployee} />
 
   const title = navItems.find((item) => item.id === active)?.label || 'Dashboard'
 
@@ -352,8 +353,8 @@ function App() {
           ))}
         </nav>
         <div className="sideUserCard">
-          <div className="userPill"><span>L</span><div><b>Lucas</b><small>Administrador</small></div></div>
-          <button className="logout" onClick={() => setLogged(false)}><LogOut size={18} /></button>
+          <div className="userPill"><span>{employee.email[0].toUpperCase()}</span><div><b>{employee.email}</b><small>{employee.role}</small></div></div>
+          <button className="logout" onClick={() => setEmployee(null)}><LogOut size={18} /></button>
         </div>
       </aside>
 
@@ -403,14 +404,35 @@ function App() {
 function Login({ onLogin }) {
   const [form, setForm] = useState({ email: '', password: '' })
   const [error, setError] = useState('')
-  const submit = (e) => {
+  const [loading, setLoading] = useState(false)
+
+  const submit = async (e) => {
     e.preventDefault()
     if (!form.email || !form.password) {
       setError('Informe e-mail e senha para acessar o painel.')
       return
     }
-    onLogin()
+    setError('')
+    setLoading(true)
+    try {
+      const res = await fetch(`${API_URL}/api/employee-login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: form.email, password: form.password }),
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        setError(data.error || 'E-mail ou senha incorretos.')
+        return
+      }
+      onLogin(data.employee)
+    } catch {
+      setError('Não foi possível conectar ao servidor. Tente novamente.')
+    } finally {
+      setLoading(false)
+    }
   }
+
   return (
     <main className="loginPage">
       <section className="loginHero">
@@ -429,10 +451,11 @@ function Login({ onLogin }) {
           <h2>Acesso do funcionário</h2>
           <p>Entre com os dados de acesso para administrar a operação da Saborsan.</p>
           <label>E-mail corporativo<input type="email" placeholder="admin@saborsan.com" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></label>
-          <label>Senha<input type="password" placeholder="123456" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} /></label>
+          <label>Senha<input type="password" placeholder="••••••" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} /></label>
           {error && <small className="errorText">{error}</small>}
-          <button className="btnPrimary" type="submit">Entrar no sistema</button>
-          <small className="hint">Demonstração: qualquer e-mail e senha acessam o painel.</small>
+          <button className="btnPrimary" type="submit" disabled={loading}>
+            {loading ? 'Verificando...' : 'Entrar no sistema'}
+          </button>
         </form>
       </section>
     </main>
