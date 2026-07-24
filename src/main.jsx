@@ -370,6 +370,11 @@ function App() {
     setOrders((items) => items.map((item) => item.id === id ? { ...item, nfeSentAt: sentAt } : item))
     if (verNotaOrder?.id === id) setVerNotaOrder((old) => ({ ...old, nfeSentAt: sentAt }))
     notify('Nota fiscal enviada ao cliente com sucesso.')
+    fetch(`${API_URL}/api/orders`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ orderId: id, sentToClient: true }),
+    }).catch(() => {})
   }
 
   const removeOrder = async (id) => {
@@ -441,7 +446,7 @@ function App() {
         {active === 'dashboard' && <Dashboard totals={totals} orders={orders} aiEnabled={aiEnabled} setActive={setActive} />}
         {active === 'pedidos' && <Orders orders={orders} ordersLoading={ordersLoading} onSelect={setSelectedOrder} updateOrderStatus={updateOrderStatus} createInvoice={createInvoice} onGerarNota={setNotaFiscalOrder} onNewOrder={() => setNewOrderOpen(true)} onVerNota={setVerNotaOrder} />}
         {active === 'vendedores' && <Sellers />}
-        {active === 'notas' && <Invoices orders={orders} createInvoice={createInvoice} />}
+        {active === 'notas' && <Invoices orders={orders} onGerarNota={setNotaFiscalOrder} onVerNota={setVerNotaOrder} />}
         {active === 'estoque' && <Stock onProduct={setSelectedProduct} />}
         {active === 'fornecedores' && <Suppliers onMessage={setSupplierModal} />}
         {active === 'compras' && <Purchases notify={notify} />}
@@ -657,21 +662,50 @@ function Orders({ orders, ordersLoading, onSelect, updateOrderStatus, createInvo
   )
 }
 
-function Invoices({ orders, createInvoice }) {
+function Invoices({ orders, onGerarNota, onVerNota }) {
+  const fiscalHistory = orders.filter((o) => o.nfeData)
+  const readyToEmit = orders.filter((o) => !o.nfeData && o.status !== 'Entregue' && o.status !== 'Cancelado')
+
+  const formatNfeDate = (o) => {
+    const iso = o.nfeData?.authorizedAt
+    if (!iso) return null
+    const d = new Date(iso)
+    return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit' })
+  }
+
   return (
     <section className="pageStack">
-      <div className="sectionHeader"><div><p>Geração e acompanhamento fiscal</p></div><button className="btnSolid"><FileSignature size={18} /> Nova nota</button></div>
+      <div className="sectionHeader"><div><p>Geração e acompanhamento fiscal</p></div></div>
       <div className="contentGrid twoCols">
         <div className="card">
           <div className="cardHeader"><div><p>Notas geradas</p><h3>Histórico fiscal</h3></div><ReceiptText /></div>
-          <div className="tableLike">
-            {invoices.map((n) => <div key={n.number}><b>{n.number}</b><span>{n.customer}</span><strong>{money(n.value)}</strong><Status status={n.status} /></div>)}
+          <div className="tableLike actionRows">
+            {fiscalHistory.length === 0 && <p className="emptyText">Nenhuma nota emitida ainda.</p>}
+            {fiscalHistory.map((o) => (
+              <div key={o.id}>
+                <b>{o.nfeData.number ? `NF-e ${o.nfeData.number}` : o.id}{formatNfeDate(o) ? ` • ${formatNfeDate(o)}` : ''}</b>
+                <span>{o.customer}</span>
+                <strong>{money(o.value)}</strong>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <Status status="Emitida" />
+                  <button onClick={() => onVerNota(o)}>Ver nota</button>
+                </div>
+              </div>
+            ))}
           </div>
         </div>
         <div className="card">
           <div className="cardHeader"><div><p>Pedidos prontos para emissão</p><h3>Gerar notas</h3></div><FileText /></div>
           <div className="tableLike actionRows">
-            {orders.filter((o) => o.status !== 'Entregue').map((order) => <div key={order.id}><b>{order.id}</b><span>{order.customer}</span><strong>{money(order.value)}</strong><button onClick={() => createInvoice(order)}>Emitir demo</button></div>)}
+            {readyToEmit.length === 0 && <p className="emptyText">Nenhum pedido pendente de nota.</p>}
+            {readyToEmit.map((order) => (
+              <div key={order.id}>
+                <b>{order.id}</b>
+                <span>{order.customer}</span>
+                <strong>{money(order.value)}</strong>
+                <button onClick={() => onGerarNota(order)}>Gerar nota</button>
+              </div>
+            ))}
           </div>
         </div>
       </div>

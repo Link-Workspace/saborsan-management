@@ -52,7 +52,7 @@ app.http('orders', {
             ORDER BY id ASC
           `,
           sql.query`
-            SELECT orderId, focusReference, nfeNumber, nfeSeries, accessKey, protocol
+            SELECT orderId, focusReference, nfeNumber, nfeSeries, accessKey, protocol, authorizedAt, sentToClientAt
             FROM GestaoFiscalDocuments
             WHERE status = 'AUTHORIZED'
           `.catch(() => ({ recordset: [] })),
@@ -66,6 +66,8 @@ app.http('orders', {
             series: doc.nfeSeries,
             accessKey: doc.accessKey,
             protocol: doc.protocol,
+            authorizedAt: doc.authorizedAt ? doc.authorizedAt.toISOString() : null,
+            sentToClientAt: doc.sentToClientAt ? doc.sentToClientAt.toISOString() : null,
           };
         }
 
@@ -90,23 +92,37 @@ app.http('orders', {
               price: Number(i.unitPrice || 0),
             })),
           notes: o.observations || '',
-          ...(nfeByOrder[o.id] ? { nfeData: nfeByOrder[o.id] } : {}),
+          ...(nfeByOrder[o.id] ? {
+            nfeData: nfeByOrder[o.id],
+            nfeSentAt: nfeByOrder[o.id].sentToClientAt || null,
+          } : {}),
         }));
 
         return { jsonBody: { orders } };
       }
 
       if (request.method === 'PATCH') {
-        const { orderId, status } = await request.json();
-        if (!orderId || !status) {
-          return { status: 400, jsonBody: { error: 'orderId e status são obrigatórios' } };
+        const body = await request.json();
+        const { orderId, status, sentToClient } = body;
+        if (!orderId) {
+          return { status: 400, jsonBody: { error: 'orderId é obrigatório' } };
         }
 
-        await sql.query`
-          UPDATE GestaoOrders
-          SET status = ${status}, updatedAt = GETUTCDATE()
-          WHERE id = ${orderId}
-        `;
+        if (status) {
+          await sql.query`
+            UPDATE GestaoOrders
+            SET status = ${status}, updatedAt = GETUTCDATE()
+            WHERE id = ${orderId}
+          `;
+        }
+
+        if (sentToClient) {
+          await sql.query`
+            UPDATE GestaoFiscalDocuments
+            SET sentToClientAt = GETUTCDATE(), updatedAt = GETUTCDATE()
+            WHERE orderId = ${orderId} AND status = 'AUTHORIZED'
+          `.catch(() => {});
+        }
 
         return { jsonBody: { success: true } };
       }
