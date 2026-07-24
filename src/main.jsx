@@ -775,6 +775,9 @@ function NewProductModal({ onClose, onCreated, editProduct, onUpdated }) {
   })
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState('')
+  const [imageFile, setImageFile] = useState(null)
+  const [imagePreview, setImagePreview] = useState(editProduct ? (editProduct.image || editProduct.imageUrl || '') : '')
+  const imageInputRef = useRef(null)
 
   // Upload tab state
   const [dragOver, setDragOver] = useState(false)
@@ -795,6 +798,17 @@ function NewProductModal({ onClose, onCreated, editProduct, onUpdated }) {
     setSubmitError('')
     setSubmitting(true)
     try {
+      let resolvedImageUrl = form.imageUrl || null
+
+      if (imageFile) {
+        const fd = new FormData()
+        fd.append('file', imageFile)
+        const uploadRes = await fetch(`${API_URL}/api/upload-image`, { method: 'POST', body: fd })
+        const uploadData = await uploadRes.json()
+        if (!uploadRes.ok) throw new Error(uploadData.error || 'Erro ao fazer upload da imagem.')
+        resolvedImageUrl = uploadData.url
+      }
+
       if (editProduct) {
         const res = await fetch(`${API_URL}/api/products`, {
           method: 'PUT',
@@ -812,7 +826,7 @@ function NewProductModal({ onClose, onCreated, editProduct, onUpdated }) {
             preparation: form.preparation || null,
             idealFor: form.idealFor || null,
             badge: form.badge || null,
-            imageUrl: form.imageUrl || null,
+            imageUrl: resolvedImageUrl,
           }),
         })
         const data = await res.json()
@@ -836,7 +850,7 @@ function NewProductModal({ onClose, onCreated, editProduct, onUpdated }) {
           preparation: form.preparation || null,
           idealFor: form.idealFor || null,
           badge: form.badge || null,
-          imageUrl: form.imageUrl || null,
+          imageUrl: resolvedImageUrl,
         }),
       })
       const data = await res.json()
@@ -975,9 +989,44 @@ function NewProductModal({ onClose, onCreated, editProduct, onUpdated }) {
                 <label>Badge / Destaque
                   <input placeholder="Ex: Mais vendido, Novo" value={form.badge} onChange={(e) => set('badge', e.target.value)} />
                 </label>
-                <label>URL da imagem
-                  <input placeholder="https://..." value={form.imageUrl} onChange={(e) => set('imageUrl', e.target.value)} />
-                </label>
+                <div className="imageUploadField full">
+                  <span className="imageUploadLabel">Imagem do produto</span>
+                  <div className="imageUploadArea" onClick={() => imageInputRef.current?.click()}>
+                    {imagePreview ? (
+                      <img src={imagePreview} alt="Preview" className="imageUploadPreview" />
+                    ) : (
+                      <div className="imageUploadPlaceholder">
+                        <UploadCloud size={28} />
+                        <span>Clique para selecionar uma imagem</span>
+                        <small>JPG, PNG, WEBP, AVIF ou GIF — máx. 5MB</small>
+                      </div>
+                    )}
+                  </div>
+                  {imagePreview && (
+                    <button
+                      type="button"
+                      className="imageUploadRemove"
+                      onClick={() => { setImageFile(null); setImagePreview(''); set('imageUrl', '') }}
+                    >
+                      <X size={14} /> Remover imagem
+                    </button>
+                  )}
+                  <input
+                    ref={imageInputRef}
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp,image/avif,image/gif"
+                    style={{ display: 'none' }}
+                    onChange={(e) => {
+                      const file = e.target.files?.[0]
+                      if (!file) return
+                      setImageFile(file)
+                      const reader = new FileReader()
+                      reader.onload = (ev) => setImagePreview(ev.target.result)
+                      reader.readAsDataURL(file)
+                      e.target.value = ''
+                    }}
+                  />
+                </div>
               </div>
               {submitError && <small className="errorText" style={{ marginTop: 12, display: 'block' }}>{submitError}</small>}
             </div>
