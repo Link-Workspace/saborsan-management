@@ -286,12 +286,35 @@ app.http('emit-nfe', {
           return { status: 404, jsonBody: { error: 'Documento não autorizado ou não encontrado' } };
         }
 
-        const filePath = download === 'xml' ? doc.xmlPath : doc.danfePath;
+        const { baseUrl, token } = getFocusConfig();
+
+        // Se o caminho não estiver salvo no banco, busca o status atual na Focus NFe
+        let filePath = download === 'xml' ? doc.xmlPath : doc.danfePath;
         if (!filePath) {
-          return { status: 404, jsonBody: { error: `Arquivo ${download.toUpperCase()} não disponível` } };
+          try {
+            const statusRes = await focusRequest(`/v2/nfe/${encodeURIComponent(ref)}?completa=1`);
+            const mapped = mapFocusStatus(statusRes.data);
+            if (mapped.status === 'AUTHORIZED') {
+              // Atualiza o banco para futuras consultas
+              await sql.query`
+                UPDATE GestaoFiscalDocuments
+                SET xmlPath   = ${mapped.xmlPath || null},
+                    danfePath = ${mapped.danfePath || null},
+                    updatedAt = GETUTCDATE()
+                WHERE focusReference = ${ref}
+              `;
+              filePath = download === 'xml' ? mapped.xmlPath : mapped.danfePath;
+            }
+          } catch (_) {}
         }
 
-        const { baseUrl, token } = getFocusConfig();
+        // Fallback: construir URL direta da Focus NFe pelo padrão de endpoint
+        if (!filePath) {
+          filePath = download === 'xml'
+            ? `${baseUrl}/v2/nfe/${encodeURIComponent(ref)}.xml`
+            : `${baseUrl}/v2/nfe/${encodeURIComponent(ref)}.pdf`;
+        }
+
         const fileUrl = filePath.startsWith('http') ? filePath : `${baseUrl}${filePath}`;
 
         const fileRes = await fetch(fileUrl, {
@@ -351,9 +374,9 @@ app.http('emit-nfe', {
           };
         }
 
-        // Query Focus NFe for current status
+        // Query Focus NFe for current status (completa=1 inclui caminho_xml e caminho_danfe)
         try {
-          const focusRes = await focusRequest(`/v2/nfe/${encodeURIComponent(ref)}`);
+          const focusRes = await focusRequest(`/v2/nfe/${encodeURIComponent(ref)}?completa=1`);
           const mapped = mapFocusStatus(focusRes.data);
 
           if (mapped.status === 'AUTHORIZED') {
@@ -593,7 +616,7 @@ app.http('emit-nfe', {
             jsonBody: {
               status: docStatus,
               reference,
-              error: errMsg,
+              errorMessage: errMsg,
               errorCode: String(focusErr.httpStatus || 'ERR'),
             },
           };

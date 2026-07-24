@@ -311,6 +311,8 @@ function App() {
   const [notaFiscalOrder, setNotaFiscalOrder] = useState(null)
   const [newOrderOpen, setNewOrderOpen] = useState(false)
   const [verNotaOrder, setVerNotaOrder] = useState(null)
+  const [removeConfirmOrder, setRemoveConfirmOrder] = useState(null)
+  const [editOrder, setEditOrder] = useState(null)
 
   const fetchOrders = () => {
     setOrdersLoading(true)
@@ -366,6 +368,18 @@ function App() {
     setOrders((items) => items.map((item) => item.id === id ? { ...item, nfeSentAt: sentAt } : item))
     if (verNotaOrder?.id === id) setVerNotaOrder((old) => ({ ...old, nfeSentAt: sentAt }))
     notify('Nota fiscal enviada ao cliente com sucesso.')
+  }
+
+  const removeOrder = (id) => {
+    setOrders((items) => items.filter((item) => item.id !== id))
+    setRemoveConfirmOrder(null)
+    setSelectedOrder(null)
+    notify(`Pedido ${id} removido.`)
+  }
+
+  const updateOrder = (updatedOrder) => {
+    setOrders((items) => items.map((item) => item.id === updatedOrder.id ? updatedOrder : item))
+    notify(`Pedido ${updatedOrder.id} atualizado com sucesso!`)
   }
 
   if (!employee) return <Login onLogin={setEmployee} />
@@ -426,13 +440,25 @@ function App() {
         {active === 'configuracoes' && <Settings notify={notify} />}
       </main>
 
-      {selectedOrder && <OrderModal order={selectedOrder} onClose={() => setSelectedOrder(null)} updateOrderStatus={updateOrderStatus} createInvoice={createInvoice} />}
+      {selectedOrder && <OrderModal order={selectedOrder} onClose={() => setSelectedOrder(null)} updateOrderStatus={updateOrderStatus} createInvoice={createInvoice} onRemove={() => setRemoveConfirmOrder(selectedOrder)} onEdit={() => { setEditOrder(selectedOrder); setSelectedOrder(null) }} />}
       {selectedProduct && <ProductModal product={selectedProduct} onClose={() => setSelectedProduct(null)} notify={notify} />}
       {supplierModal && <SupplierModal supplier={supplierModal} onClose={() => setSupplierModal(null)} notify={notify} />}
       {notaFiscalOrder && <NotaFiscalModal order={notaFiscalOrder} onClose={() => setNotaFiscalOrder(null)} updateOrderStatus={updateOrderStatus} notify={notify} />}
       {verNotaOrder && <VerNotaModal order={verNotaOrder} onClose={() => setVerNotaOrder(null)} onSendToClient={sendNfeToClient} />}
       {notifOpen && <NotifPanel onClose={() => setNotifOpen(false)} />}
-      {newOrderOpen && <NewOrderModal onClose={() => setNewOrderOpen(false)} onCreateOrder={createOrder} />}
+      {(newOrderOpen || editOrder) && <NewOrderModal onClose={() => { setNewOrderOpen(false); setEditOrder(null) }} onCreateOrder={createOrder} onUpdateOrder={updateOrder} editOrder={editOrder} />}
+      {removeConfirmOrder && (
+        <div className="cancelSepOverlay" onClick={(e) => { if (e.target.classList.contains('cancelSepOverlay')) setRemoveConfirmOrder(null) }}>
+          <div className="cancelSepModal">
+            <h3>Remover pedido?</h3>
+            <p>O pedido <b>{removeConfirmOrder.id}</b> de <b>{removeConfirmOrder.customer}</b> será removido permanentemente do sistema.</p>
+            <div className="cancelSepActions">
+              <button className="cancelSepConfirm" style={{background:'var(--red)'}} onClick={() => removeOrder(removeConfirmOrder.id)}>Sim, remover pedido</button>
+              <button className="cancelSepDeny" onClick={() => setRemoveConfirmOrder(null)}>Não, voltar</button>
+            </div>
+          </div>
+        </div>
+      )}
       {toast && <div className="toast"><CheckCircle2 size={18} />{toast}</div>}
     </div>
   )
@@ -554,6 +580,8 @@ function Dashboard({ totals, orders, aiEnabled, setActive }) {
 
 function Orders({ orders, ordersLoading, onSelect, updateOrderStatus, createInvoice, onGerarNota, onNewOrder, onVerNota }) {
   const [filter, setFilter] = useState('Todos')
+  const [confirmCancelSep, setConfirmCancelSep] = useState(null)
+  const [confirmSepSemNota, setConfirmSepSemNota] = useState(null)
   const filtered = filter === 'Todos' ? orders : orders.filter((o) => o.status === filter)
   return (
     <section className="pageStack">
@@ -574,10 +602,37 @@ function Orders({ orders, ordersLoading, onSelect, updateOrderStatus, createInvo
             <p>{order.city} • {order.whatsapp}</p>
             <div className="orderProducts">{order.products.map((p) => <span key={p.name}>{p.qty} {p.unit} • {p.name}</span>)}</div>
             <div className="orderFooter"><strong>{money(order.value)}</strong><small>Entrega: {order.delivery}</small></div>
-            <div className="orderActions"><button onClick={() => onSelect(order)}>Detalhes</button>{order.status === 'Nota emitida' && <button onClick={() => onVerNota(order)}>Ver nota</button>}<button onClick={() => updateOrderStatus(order.id, 'Separação')}>Separar</button>{order.status !== 'Nota emitida' && <button onClick={() => onGerarNota(order)}>Gerar nota</button>}</div>
+            <div className="orderActions"><button onClick={() => onSelect(order)}>Detalhes</button>{(order.status === 'Nota emitida' || (order.status === 'Separação' && order.nfeData)) && <button onClick={() => onVerNota(order)}>Ver nota</button>}{order.status === 'Separação' ? <button className="cancelSep" onClick={() => setConfirmCancelSep(order)}>Cancelar separação</button> : <button onClick={() => (!order.nfeData && order.status !== 'Nota emitida') ? setConfirmSepSemNota(order) : updateOrderStatus(order.id, 'Separação')}>Separar</button>}{order.status !== 'Nota emitida' && !(order.status === 'Separação' && order.nfeData) && <button onClick={() => onGerarNota(order)}>Gerar nota</button>}</div>
           </article>
         ))}
       </div>
+      {confirmCancelSep && (
+        <div className="cancelSepOverlay" onClick={(e) => { if (e.target.classList.contains('cancelSepOverlay')) setConfirmCancelSep(null) }}>
+          <div className="cancelSepModal">
+            <h3>Cancelar separação?</h3>
+            {confirmCancelSep.nfeData
+              ? <p>O pedido <b>{confirmCancelSep.id}</b> voltará para <b>Nota emitida</b> e <b>Pronto para separação</b>.</p>
+              : <p>O pedido <b>{confirmCancelSep.id}</b> voltará para o status <b>Recebido</b>.</p>
+            }
+            <div className="cancelSepActions">
+              <button className="cancelSepConfirm" onClick={() => { updateOrderStatus(confirmCancelSep.id, confirmCancelSep.nfeData ? 'Nota emitida' : 'Recebido'); setConfirmCancelSep(null) }}>Sim, cancelar separação</button>
+              <button className="cancelSepDeny" onClick={() => setConfirmCancelSep(null)}>Não, manter</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {confirmSepSemNota && (
+        <div className="cancelSepOverlay" onClick={(e) => { if (e.target.classList.contains('cancelSepOverlay')) setConfirmSepSemNota(null) }}>
+          <div className="cancelSepModal">
+            <h3>Enviar para separação sem nota?</h3>
+            <p>O pedido <b>{confirmSepSemNota.id}</b> ainda não teve a nota fiscal emitida. Deseja enviar para separação mesmo assim?</p>
+            <div className="cancelSepActions">
+              <button className="cancelSepConfirm" onClick={() => { updateOrderStatus(confirmSepSemNota.id, 'Separação'); setConfirmSepSemNota(null) }}>Sim, enviar para separação</button>
+              <button className="cancelSepDeny" onClick={() => setConfirmSepSemNota(null)}>Não, voltar</button>
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   )
 }
@@ -797,8 +852,17 @@ function Automation({ aiEnabled, setAiEnabled, notify }) {
   )
 }
 
-function NewOrderModal({ onClose, onCreateOrder }) {
-  const [form, setForm] = useState({
+function NewOrderModal({ onClose, onCreateOrder, onUpdateOrder, editOrder }) {
+  const [form, setForm] = useState(() => editOrder ? {
+    customer: editOrder.customer || '',
+    cnpj: editOrder.cnpj || '',
+    city: editOrder.city || '',
+    whatsapp: editOrder.whatsapp || '',
+    source: editOrder.source || 'App Saborsan',
+    priority: editOrder.priority || 'Normal',
+    delivery: editOrder.delivery || '',
+    notes: editOrder.notes || '',
+  } : {
     customer: '',
     cnpj: '',
     city: '',
@@ -808,7 +872,15 @@ function NewOrderModal({ onClose, onCreateOrder }) {
     delivery: '',
     notes: '',
   })
-  const [items, setItems] = useState([{ productId: null, qty: 0 }])
+  const [items, setItems] = useState(() => {
+    if (editOrder && editOrder.products?.length > 0) {
+      return editOrder.products.map((p) => {
+        const product = products.find((pr) => pr.name === p.name)
+        return { productId: product ? product.id : null, qty: p.qty }
+      })
+    }
+    return [{ productId: null, qty: 0 }]
+  })
   const [submitError, setSubmitError] = useState('')
   const [submitting, setSubmitting] = useState(false)
 
@@ -835,6 +907,24 @@ function NewOrderModal({ onClose, onCreateOrder }) {
     setSubmitError('')
     setSubmitting(true)
     try {
+      if (editOrder) {
+        const updatedOrder = {
+          ...editOrder,
+          source: form.source,
+          customer: form.customer,
+          cnpj: form.cnpj,
+          city: form.city,
+          whatsapp: form.whatsapp,
+          priority: form.priority,
+          delivery: form.delivery,
+          notes: form.notes,
+          value: total,
+          products: orderProducts.map((p) => ({ name: p.name, qty: p.qty, unit: p.unit, price: p.price })),
+        }
+        onUpdateOrder(updatedOrder)
+        onClose()
+        return
+      }
       const payload = {
         source: form.source,
         clientName: form.customer,
@@ -872,9 +962,9 @@ function NewOrderModal({ onClose, onCreateOrder }) {
         <button className="closeBtn" onClick={onClose}><X /></button>
         <div className="modalHeader">
           <div>
-            <span>Pedido manual</span>
-            <h2>Novo pedido</h2>
-            <p>Preencha os dados do cliente e os produtos solicitados</p>
+            <span>Pedido {editOrder ? 'existente' : 'manual'}</span>
+            <h2>{editOrder ? 'Editar pedido' : 'Novo pedido'}</h2>
+            <p>{editOrder ? 'Altere os dados do pedido e salve as modificações' : 'Preencha os dados do cliente e os produtos solicitados'}</p>
           </div>
           <ShoppingCart size={36} style={{ color: 'var(--orange)', opacity: 0.5 }} />
         </div>
@@ -957,7 +1047,7 @@ function NewOrderModal({ onClose, onCreateOrder }) {
             </div>
             {submitError && <small className="errorText">{submitError}</small>}
             <div className="newOrderFooterActions">
-              <button type="submit" className="btnPrimary" disabled={!canSubmit || submitting}><CheckCircle2 size={17} /> {submitting ? 'Criando...' : 'Criar pedido'}</button>
+              <button type="submit" className="btnPrimary" disabled={!canSubmit || submitting}><CheckCircle2 size={17} /> {submitting ? (editOrder ? 'Salvando...' : 'Criando...') : (editOrder ? 'Salvar alterações' : 'Criar pedido')}</button>
               <button type="button" onClick={onClose} disabled={submitting}>Cancelar</button>
             </div>
           </div>
@@ -967,26 +1057,31 @@ function NewOrderModal({ onClose, onCreateOrder }) {
   )
 }
 
-function OrderModal({ order, onClose, updateOrderStatus, createInvoice }) {
+function OrderModal({ order, onClose, updateOrderStatus, createInvoice, onRemove, onEdit }) {
   return (
     <div className="modalBackdrop">
-      <div className="detailModal">
+      <div className="detailModal orderModal">
         <button className="closeBtn" onClick={onClose}><X /></button>
         <div className="modalHeader"><div><span>{order.id}</span><h2>{order.customer}</h2><p>{order.cnpj} • {order.city}</p></div><Status status={order.status} /></div>
-        <div className="modalSplit">
-          <div>
-            <h3>Produtos solicitados</h3>
-            <div className="modalItems">{order.products.map((p) => <div key={p.name}><span>{p.qty} {p.unit}</span><b>{p.name}</b><strong>{money(p.qty * p.price)}</strong></div>)}</div>
-            <div className="noteBox"><b>Observações</b><p>{order.notes}</p></div>
+        <div className="orderModalBody">
+          <div className="modalSplit">
+            <div>
+              <h3>Produtos solicitados</h3>
+              <div className="modalItems">{order.products.map((p) => <div key={p.name}><span>{p.qty} {p.unit}</span><b>{p.name}</b><strong>{money(p.qty * p.price)}</strong></div>)}</div>
+              <div className="noteBox"><b>Observações</b><p>{order.notes}</p></div>
+            </div>
+            <div className="summaryBox">
+              <h3>Resumo</h3>
+              <p><b>Origem:</b> {order.source}</p>
+              <p><b>WhatsApp:</b> {order.whatsapp}</p>
+              <p><b>Entrega:</b> {order.delivery}</p>
+              <p><b>Valor:</b> {money(order.value)}</p>
+            </div>
           </div>
-          <div className="summaryBox">
-            <h3>Resumo</h3>
-            <p><b>Origem:</b> {order.source}</p>
-            <p><b>WhatsApp:</b> {order.whatsapp}</p>
-            <p><b>Entrega:</b> {order.delivery}</p>
-            <p><b>Valor:</b> {money(order.value)}</p>
-            <div className="stackButtons"><button onClick={() => updateOrderStatus(order.id, 'Separação')}>Enviar para separação</button><button onClick={() => updateOrderStatus(order.id, 'Rota')}>Enviar para rota</button><button onClick={() => createInvoice(order)}>Gerar nota demo</button></div>
-          </div>
+        </div>
+        <div className="orderModalFooter">
+          <button className="orderModalBtn orderModalBtnDanger" onClick={onRemove}>Remover</button>
+          <button className="orderModalBtn orderModalBtnPrimary" onClick={onEdit}>Editar</button>
         </div>
       </div>
     </div>
@@ -1440,9 +1535,23 @@ function NotaFiscalModal({ order, onClose, updateOrderStatus, notify }) {
     }
   }
 
-  const downloadFile = (type) => {
+  const downloadFile = async (type) => {
     if (!nfeResult?.reference) return
-    window.open(`${API_URL}/api/emit-nfe?ref=${encodeURIComponent(nfeResult.reference)}&download=${type}`, '_blank')
+    try {
+      const res = await fetch(`${API_URL}/api/emit-nfe?ref=${encodeURIComponent(nfeResult.reference)}&download=${type}`)
+      if (!res.ok) throw new Error('Falha ao baixar arquivo')
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = type === 'xml' ? `NFe_${nfeResult.reference}.xml` : `DANFE_${nfeResult.reference}.pdf`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+    } catch {
+      notify('Não foi possível baixar o arquivo. Tente novamente.')
+    }
   }
 
   const handleRetry = () => {
@@ -1696,9 +1805,23 @@ function VerNotaModal({ order, onClose, onSendToClient }) {
   const nfe = order.nfeData
   const hasSent = !!order.nfeSentAt
 
-  const downloadFile = (type) => {
+  const downloadFile = async (type) => {
     if (!nfe?.reference) return
-    window.open(`${API_URL}/api/emit-nfe?ref=${encodeURIComponent(nfe.reference)}&download=${type}`, '_blank')
+    try {
+      const res = await fetch(`${API_URL}/api/emit-nfe?ref=${encodeURIComponent(nfe.reference)}&download=${type}`)
+      if (!res.ok) throw new Error('Falha ao baixar arquivo')
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = type === 'xml' ? `NFe_${nfe.reference}.xml` : `DANFE_${nfe.reference}.pdf`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+    } catch {
+      // silently fail — button remains clickable for retry
+    }
   }
 
   const openNfe = () => {
