@@ -321,6 +321,7 @@ function App() {
   const [removeConfirmProduct, setRemoveConfirmProduct] = useState(null)
   const [editProduct, setEditProduct] = useState(null)
   const [stockRefreshKey, setStockRefreshKey] = useState(0)
+  const [topbarSearch, setTopbarSearch] = useState('')
 
   const fetchOrders = () => {
     setOrdersLoading(true)
@@ -332,6 +333,7 @@ function App() {
   }
 
   useEffect(() => { fetchOrders() }, [])
+  useEffect(() => { setTopbarSearch('') }, [active])
 
   const totals = useMemo(() => {
     const today = orders.filter((o) => o.time !== 'Ontem')
@@ -455,7 +457,7 @@ function App() {
             <span className="topKicker">Saborsan Distribuidora</span>
             <h1>{title}</h1>
           </div>
-          <div className="searchBox topbarSearch"><Search size={17} /><input placeholder="Buscar pedidos, clientes, notas..." /></div>
+          <div className="searchBox topbarSearch"><Search size={17} /><input placeholder={{ pedidos: 'Buscar pedidos, clientes...', estoque: 'Buscar produtos', notas: 'Buscar notas fiscais...', vendedores: 'Buscar vendedores...', fornecedores: 'Buscar fornecedores...', clientes: 'Buscar clientes...' }[active] || 'Buscar no painel...'} value={topbarSearch} onChange={(e) => setTopbarSearch(e.target.value)} /></div>
           <div className="topActions">
             <button className="iconButton" onClick={() => setNotifOpen(!notifOpen)}><Bell size={19} /><span>4</span></button>
           </div>
@@ -468,14 +470,14 @@ function App() {
         </section>
 
         {active === 'dashboard' && <Dashboard totals={totals} orders={orders} aiEnabled={aiEnabled} setActive={setActive} />}
-        {active === 'pedidos' && <Orders orders={orders} ordersLoading={ordersLoading} onSelect={setSelectedOrder} updateOrderStatus={updateOrderStatus} createInvoice={createInvoice} onGerarNota={setNotaFiscalOrder} onNewOrder={() => setNewOrderOpen(true)} onVerNota={setVerNotaOrder} />}
-        {active === 'vendedores' && <Sellers />}
-        {active === 'notas' && <Invoices orders={orders} onGerarNota={setNotaFiscalOrder} onVerNota={setVerNotaOrder} />}
-        {active === 'estoque' && <Stock onProduct={setSelectedProduct} refreshKey={stockRefreshKey} />}
-        {active === 'fornecedores' && <Suppliers onMessage={setSupplierModal} />}
+        {active === 'pedidos' && <Orders orders={orders} ordersLoading={ordersLoading} onSelect={setSelectedOrder} updateOrderStatus={updateOrderStatus} createInvoice={createInvoice} onGerarNota={setNotaFiscalOrder} onNewOrder={() => setNewOrderOpen(true)} onVerNota={setVerNotaOrder} search={topbarSearch} />}
+        {active === 'vendedores' && <Sellers search={topbarSearch} />}
+        {active === 'notas' && <Invoices orders={orders} onGerarNota={setNotaFiscalOrder} onVerNota={setVerNotaOrder} search={topbarSearch} />}
+        {active === 'estoque' && <Stock onProduct={setSelectedProduct} refreshKey={stockRefreshKey} search={topbarSearch} />}
+        {active === 'fornecedores' && <Suppliers onMessage={setSupplierModal} search={topbarSearch} />}
         {active === 'compras' && <Purchases notify={notify} />}
         {active === 'entregas' && <Deliveries />}
-        {active === 'clientes' && <Clients />}
+        {active === 'clientes' && <Clients search={topbarSearch} />}
         {active === 'financeiro' && <Finance />}
         {active === 'relatorios' && <Reports />}
         {active === 'automacao' && <Automation aiEnabled={aiEnabled} setAiEnabled={setAiEnabled} notify={notify} />}
@@ -640,11 +642,12 @@ function Dashboard({ totals, orders, aiEnabled, setActive }) {
   )
 }
 
-function Orders({ orders, ordersLoading, onSelect, updateOrderStatus, createInvoice, onGerarNota, onNewOrder, onVerNota }) {
+function Orders({ orders, ordersLoading, onSelect, updateOrderStatus, createInvoice, onGerarNota, onNewOrder, onVerNota, search = '' }) {
   const [filter, setFilter] = useState('Todos')
   const [confirmCancelSep, setConfirmCancelSep] = useState(null)
   const [confirmSepSemNota, setConfirmSepSemNota] = useState(null)
-  const filtered = filter === 'Todos' ? orders : orders.filter((o) => o.status === filter)
+  const byStatus = filter === 'Todos' ? orders : orders.filter((o) => o.status === filter)
+  const filtered = !search ? byStatus : byStatus.filter((o) => o.customer.toLowerCase().includes(search.toLowerCase()) || o.id.toLowerCase().includes(search.toLowerCase()))
   return (
     <section className="pageStack">
       <div className="sectionHeader">
@@ -699,9 +702,9 @@ function Orders({ orders, ordersLoading, onSelect, updateOrderStatus, createInvo
   )
 }
 
-function Invoices({ orders, onGerarNota, onVerNota }) {
-  const fiscalHistory = orders.filter((o) => o.nfeData)
-  const readyToEmit = orders.filter((o) => !o.nfeData && o.status !== 'Entregue' && o.status !== 'Cancelado')
+function Invoices({ orders, onGerarNota, onVerNota, search = '' }) {
+  const fiscalHistory = orders.filter((o) => o.nfeData && (!search || o.customer.toLowerCase().includes(search.toLowerCase())))
+  const readyToEmit = orders.filter((o) => !o.nfeData && o.status !== 'Entregue' && o.status !== 'Cancelado' && (!search || o.customer.toLowerCase().includes(search.toLowerCase())))
 
   const formatNfeDate = (o) => {
     const iso = o.nfeData?.authorizedAt
@@ -779,6 +782,7 @@ function NewProductModal({ onClose, onCreated, editProduct, onUpdated }) {
   const [parseError, setParseError] = useState('')
   const [uploadSubmitting, setUploadSubmitting] = useState(false)
   const [uploadResult, setUploadResult] = useState(null)
+  const [aiAnalyzing, setAiAnalyzing] = useState(false)
   const fileInputRef = useRef(null)
 
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }))
@@ -846,28 +850,6 @@ function NewProductModal({ onClose, onCreated, editProduct, onUpdated }) {
     }
   }
 
-  const parseTxt = (text) => {
-    const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
-    const rows = []
-    for (const line of lines) {
-      if (line.startsWith('#') || line.startsWith('//')) continue
-      const parts = line.split(';').map((p) => p.trim())
-      const [name, category, price, qty, packaging, conservation, description] = parts
-      if (!name && !category) continue
-      rows.push({
-        name: name || '',
-        category: category || '',
-        price: price || '0',
-        availableQuantity: parseInt(qty || '0', 10),
-        packaging: packaging || null,
-        conservation: conservation || null,
-        description: description || null,
-        valid: !!(name && category),
-      })
-    }
-    return rows
-  }
-
   const handleFile = (file) => {
     setParsedRows(null)
     setParseError('')
@@ -878,18 +860,35 @@ function NewProductModal({ onClose, onCreated, editProduct, onUpdated }) {
       setParseError('Formato não suportado. Use TXT, CSV ou PDF.')
       return
     }
+    setAiAnalyzing(true)
     const reader = new FileReader()
-    reader.onload = (e) => {
-      const text = e.target.result
-      const rows = parseTxt(text)
-      if (!rows.length) {
-        setParseError('Nenhum produto identificado. Verifique o formato do arquivo.')
-      } else {
-        setParsedRows(rows)
+    reader.onload = async (e) => {
+      try {
+        const fileContent = e.target.result
+        const res = await fetch(`${API_URL}/api/analyze-document`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fileContent, fileName: file.name, fileType: ext }),
+        })
+        const data = await res.json()
+        if (!res.ok) throw new Error(data.error || 'Erro ao analisar documento.')
+        if (!data.products?.length) {
+          setParseError('Nenhum produto identificado no documento.')
+        } else {
+          setParsedRows(data.products)
+        }
+      } catch (err) {
+        setParseError(err.message || 'Erro ao analisar documento com IA.')
+      } finally {
+        setAiAnalyzing(false)
       }
     }
-    reader.onerror = () => setParseError('Erro ao ler o arquivo.')
-    reader.readAsText(file)
+    reader.onerror = () => { setParseError('Erro ao ler o arquivo.'); setAiAnalyzing(false) }
+    if (ext === 'pdf') {
+      reader.readAsDataURL(file)
+    } else {
+      reader.readAsText(file)
+    }
   }
 
   const submitUpload = async () => {
@@ -996,27 +995,35 @@ function NewProductModal({ onClose, onCreated, editProduct, onUpdated }) {
             <div className="newProductScrollArea">
               {!parsedRows && !uploadResult && (
                 <>
-                  <div
-                    className={`uploadZone${dragOver ? ' drag' : ''}`}
-                    onClick={() => fileInputRef.current?.click()}
-                    onDragOver={(e) => { e.preventDefault(); setDragOver(true) }}
-                    onDragLeave={() => setDragOver(false)}
-                    onDrop={(e) => { e.preventDefault(); setDragOver(false); handleFile(e.dataTransfer.files[0]) }}
-                  >
-                    <UploadCloud size={40} style={{ color: 'var(--orange)' }} />
-                    <p>Clique ou arraste o arquivo aqui</p>
-                    <small>Formatos aceitos: TXT, CSV, PDF</small>
-                    <input ref={fileInputRef} type="file" accept=".txt,.csv,.pdf" onChange={(e) => handleFile(e.target.files[0])} />
-                  </div>
+                  {aiAnalyzing ? (
+                    <div className="uploadZone" style={{ cursor: 'default', pointerEvents: 'none' }}>
+                      <Sparkles size={40} style={{ color: 'var(--orange)', animation: 'spin 1.5s linear infinite' }} />
+                      <p style={{ fontWeight: 600 }}>Analisando documento com IA...</p>
+                      <small>A IA está identificando os produtos. Aguarde um momento.</small>
+                    </div>
+                  ) : (
+                    <div
+                      className={`uploadZone${dragOver ? ' drag' : ''}`}
+                      onClick={() => fileInputRef.current?.click()}
+                      onDragOver={(e) => { e.preventDefault(); setDragOver(true) }}
+                      onDragLeave={() => setDragOver(false)}
+                      onDrop={(e) => { e.preventDefault(); setDragOver(false); handleFile(e.dataTransfer.files[0]) }}
+                    >
+                      <UploadCloud size={40} style={{ color: 'var(--orange)' }} />
+                      <p>Clique ou arraste o arquivo aqui</p>
+                      <small>Formatos aceitos: TXT, CSV, PDF</small>
+                      <input ref={fileInputRef} type="file" accept=".txt,.csv,.pdf" onChange={(e) => handleFile(e.target.files[0])} />
+                    </div>
+                  )}
                   {parseError && <small className="errorText" style={{ marginTop: 10, display: 'block' }}>{parseError}</small>}
-                  <div className="uploadFormatHint">
-                    <b>Formato esperado (uma linha por produto):</b>
-                    <code>
-                      nome;categoria;preço;quantidade;embalagem;conservação;descrição<br />
-                      Pão de Queijo Tradicional;Pão de queijo;128.90;100;cx 5kg;-18°C;Produto congelado<br />
-                      Açaí Premium Balde;Açaí;154.90;50;balde 10L;-18°C;
-                    </code>
-                  </div>
+                  {!aiAnalyzing && (
+                    <div className="uploadFormatHint">
+                      <b><Sparkles size={13} style={{ verticalAlign: 'middle', marginRight: 4 }} />Análise inteligente com IA</b>
+                      <p style={{ margin: '6px 0 0', fontSize: '.82rem', lineHeight: 1.5 }}>
+                        Envie qualquer documento com informações de produtos: tabelas, listas, notas fiscais, planilhas exportadas (TXT/CSV) ou PDFs. A IA extrai automaticamente nome, categoria, preço, quantidade e embalagem de múltiplos produtos.
+                      </p>
+                    </div>
+                  )}
                 </>
               )}
 
@@ -1092,7 +1099,7 @@ function NewProductModal({ onClose, onCreated, editProduct, onUpdated }) {
   )
 }
 
-function Stock({ onProduct, refreshKey }) {
+function Stock({ onProduct, refreshKey, search = '' }) {
   const [stockProducts, setStockProducts] = useState([])
   const [loading, setLoading] = useState(true)
   const [newProductOpen, setNewProductOpen] = useState(false)
@@ -1114,8 +1121,8 @@ function Stock({ onProduct, refreshKey }) {
         <div className="sectionHeader"><div><p>Controle de produtos congelados</p></div><button className="btnSolid" onClick={() => setNewProductOpen(true)}><PackageCheck size={18} /> Entrada de estoque</button></div>
         {loading && <p className="loadingText">Carregando produtos...</p>}
         <div className="stockGrid">
-          {!loading && stockProducts.length === 0 && <p className="emptyText">Nenhum produto encontrado.</p>}
-          {stockProducts.map((product) => {
+          {!loading && stockProducts.filter((p) => !search || p.name.toLowerCase().includes(search.toLowerCase())).length === 0 && <p className="emptyText">Nenhum produto encontrado.</p>}
+          {stockProducts.filter((p) => !search || p.name.toLowerCase().includes(search.toLowerCase())).map((product) => {
             const percent = product.min > 0 ? Math.min(100, Math.round((product.stock / (product.min * 2)) * 100)) : 100
             return (
               <article className="stockCard" key={product.id} onClick={() => onProduct(product)}>
@@ -1142,13 +1149,14 @@ function Stock({ onProduct, refreshKey }) {
   )
 }
 
-function Suppliers({ onMessage }) {
+function Suppliers({ onMessage, search = '' }) {
   const [transcript, setTranscript] = useState(null)
+  const filtered = !search ? suppliers : suppliers.filter((s) => s.name.toLowerCase().includes(search.toLowerCase()))
   return (
     <section className="pageStack">
       <div className="sectionHeader"><div><p>Relação com fornecedores de alimentos</p></div><button className="btnSolid"><Plus size={18} /> Novo fornecedor</button></div>
       <div className="supplierGrid">
-        {suppliers.map((supplier) => (
+        {filtered.map((supplier) => (
           <article className="supplierCard" key={supplier.id}>
             <div className="supplierIcon"><Factory size={24} /></div>
             <div className="supplierTop"><h3>{supplier.name}</h3><Status status={supplier.status} /></div>
@@ -1223,12 +1231,13 @@ function Deliveries() {
   )
 }
 
-function Clients() {
+function Clients({ search = '' }) {
+  const filtered = !search ? clients : clients.filter((c) => c.name.toLowerCase().includes(search.toLowerCase()))
   return (
     <section className="pageStack">
       <div className="sectionHeader"><div><p>Carteira comercial</p></div><button className="btnSolid"><Users size={18} /> Novo cliente</button></div>
       <div className="clientGrid">
-        {clients.map((client) => (
+        {filtered.map((client) => (
           <article className="clientCard" key={client.name}>
             <div className="avatar">{client.name[0]}</div>
             <div><h3>{client.name}</h3><p>{client.segment}</p></div>
@@ -2015,7 +2024,7 @@ function SellerDetailModal({ seller, onClose, onToggleActive, onEdit }) {
   )
 }
 
-function Sellers() {
+function Sellers({ search = '' }) {
   const [sellersData, setSellersData] = useState([])
   const [sellersLoading, setSellersLoading] = useState(false)
   const [selected, setSelected] = useState(null)
@@ -2070,7 +2079,7 @@ function Sellers() {
       {!sellersLoading && sellersData.length === 0 && <p className="emptyText">Nenhum vendedor cadastrado.</p>}
 
       <div className="sellersGrid">
-        {sellersData.map((s) => {
+        {(!search ? sellersData : sellersData.filter((s) => s.name.toLowerCase().includes(search.toLowerCase()))).map((s) => {
           const pct = s.meta > 0 ? Math.min(100, Math.round((s.total / s.meta) * 100)) : 0
           return (
             <article className={`sellerCard${selected === s.id ? ' sellerActive' : ''}`} key={s.id} onClick={() => setSelected(selected === s.id ? null : s.id)}>
