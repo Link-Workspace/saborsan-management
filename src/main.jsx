@@ -258,7 +258,7 @@ const statusClass = (status) => {
   if (s.includes('recebido') || s.includes('aguardando') || s.includes('preparo')) return 'warning'
   if (s.includes('separação') || s.includes('rota') || s.includes('carregando')) return 'info'
   if (s.includes('entregue') || s.includes('emitida') || s.includes('ativo') || s.includes('vip')) return 'success'
-  if (s.includes('atenção') || s.includes('reativar') || s.includes('baixo')) return 'danger'
+  if (s.includes('inativo') || s.includes('atenção') || s.includes('reativar') || s.includes('baixo')) return 'danger'
   return 'neutral'
 }
 
@@ -298,7 +298,9 @@ function NotifPanel({ onClose }) {
 }
 
 function App() {
-  const [employee, setEmployee] = useState(null)
+  const [employee, setEmployee] = useState(() => {
+    try { const s = localStorage.getItem('saborsan_employee'); return s ? JSON.parse(s) : null } catch { return null }
+  })
   const [active, setActive] = useState('dashboard')
   const [aiEnabled, setAiEnabled] = useState(true)
   const [orders, setOrders] = useState([])
@@ -370,7 +372,18 @@ function App() {
     notify('Nota fiscal enviada ao cliente com sucesso.')
   }
 
-  const removeOrder = (id) => {
+  const removeOrder = async (id) => {
+    try {
+      const res = await fetch(`${API_URL}/api/orders`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderId: id }),
+      })
+      if (!res.ok) throw new Error('Falha ao remover pedido')
+    } catch (err) {
+      notify('Erro ao remover pedido do servidor.')
+      return
+    }
     setOrders((items) => items.filter((item) => item.id !== id))
     setRemoveConfirmOrder(null)
     setSelectedOrder(null)
@@ -403,7 +416,7 @@ function App() {
         </nav>
         <div className="sideUserCard">
           <div className="userPill"><span>{employee.email[0].toUpperCase()}</span><div><b>{employee.email}</b><small>{employee.role}</small></div></div>
-          <button className="logout" onClick={() => setEmployee(null)}><LogOut size={18} /></button>
+          <button className="logout" onClick={() => { localStorage.removeItem('saborsan_employee'); setEmployee(null) }}><LogOut size={18} /></button>
         </div>
       </aside>
 
@@ -466,6 +479,7 @@ function App() {
 
 function Login({ onLogin }) {
   const [form, setForm] = useState({ email: '', password: '' })
+  const [rememberMe, setRememberMe] = useState(false)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
@@ -487,6 +501,11 @@ function Login({ onLogin }) {
       if (!res.ok) {
         setError(data.error || 'E-mail ou senha incorretos.')
         return
+      }
+      if (rememberMe) {
+        localStorage.setItem('saborsan_employee', JSON.stringify(data.employee))
+      } else {
+        localStorage.removeItem('saborsan_employee')
       }
       onLogin(data.employee)
     } catch {
@@ -515,6 +534,7 @@ function Login({ onLogin }) {
           <p>Entre com os dados de acesso para administrar a operação da Saborsan.</p>
           <label>E-mail corporativo<input type="email" placeholder="admin@saborsan.com" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></label>
           <label>Senha<input type="password" placeholder="••••••" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} /></label>
+          <label className="rememberMeRow"><input type="checkbox" checked={rememberMe} onChange={(e) => setRememberMe(e.target.checked)} /><span>Manter-me conectado</span></label>
           {error && <small className="errorText">{error}</small>}
           <button className="btnPrimary" type="submit" disabled={loading}>
             {loading ? 'Verificando...' : 'Entrar no sistema'}
@@ -921,6 +941,29 @@ function NewOrderModal({ onClose, onCreateOrder, onUpdateOrder, editOrder }) {
           value: total,
           products: orderProducts.map((p) => ({ name: p.name, qty: p.qty, unit: p.unit, price: p.price })),
         }
+        const payload = {
+          orderId: editOrder.id,
+          source: form.source,
+          clientName: form.customer,
+          clientCnpj: form.cnpj || null,
+          clientCity: form.city || null,
+          clientPhone: form.whatsapp || null,
+          totalValue: total,
+          observations: form.notes || null,
+          items: orderProducts.map((p) => ({
+            productName: p.name,
+            quantity: p.qty,
+            unit: p.unit,
+            unitPrice: p.price,
+          })),
+        }
+        const res = await fetch(`${API_URL}/api/orders`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        })
+        const data = await res.json()
+        if (!res.ok) throw new Error(data.error || 'Erro ao atualizar pedido')
         onUpdateOrder(updatedOrder)
         onClose()
         return
@@ -1341,30 +1384,255 @@ function Settings({ notify }) {
   )
 }
 
+function NewSellerModal({ onClose, onCreateSeller, editSeller, onUpdateSeller }) {
+  const [form, setForm] = useState(() => editSeller ? {
+    name: editSeller.name || '',
+    email: '',
+    whatsapp: editSeller.phone || '',
+    password: '',
+    city: editSeller.region || '',
+    dailyGoal: editSeller.meta > 0 ? String(editSeller.meta) : '',
+  } : { name: '', email: '', whatsapp: '', password: '', city: '', dailyGoal: '' })
+  const [submitError, setSubmitError] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+
+  const set = (k, v) => setForm((f) => ({ ...f, [k]: v }))
+  const canSubmit = editSeller
+    ? form.name.trim() !== '' && form.city.trim() !== ''
+    : form.name.trim() !== '' && form.email.trim() !== '' && form.password.length >= 6 && form.city.trim() !== ''
+
+  const submit = async (e) => {
+    e.preventDefault()
+    if (!canSubmit || submitting) return
+    setSubmitError('')
+    setSubmitting(true)
+    try {
+      if (editSeller) {
+        const payload = {
+          sellerId: editSeller.id,
+          name: form.name.trim(),
+          whatsapp: form.whatsapp || null,
+          city: form.city.trim(),
+          dailyGoal: form.dailyGoal !== '' ? Number(form.dailyGoal) : 0,
+        }
+        const res = await fetch(`${API_URL}/api/sellers`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        })
+        const data = await res.json()
+        if (!res.ok) throw new Error(data.error || 'Erro ao atualizar vendedor')
+        onUpdateSeller({
+          ...editSeller,
+          name: form.name.trim(),
+          phone: form.whatsapp || editSeller.phone,
+          region: form.city.trim(),
+          meta: form.dailyGoal !== '' ? Number(form.dailyGoal) : 0,
+          avatar: form.name.trim()[0].toUpperCase(),
+        })
+        onClose()
+      } else {
+        const payload = {
+          name: form.name.trim(),
+          email: form.email.trim(),
+          whatsapp: form.whatsapp || null,
+          password: form.password,
+          city: form.city.trim(),
+          dailyGoal: form.dailyGoal !== '' ? Number(form.dailyGoal) : 0,
+        }
+        const res = await fetch(`${API_URL}/api/sellers`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        })
+        const data = await res.json()
+        if (!res.ok) throw new Error(data.error || 'Erro ao cadastrar vendedor')
+        onCreateSeller(data.seller)
+        onClose()
+      }
+    } catch (err) {
+      setSubmitError(err.message || `Erro ao ${editSeller ? 'atualizar' : 'cadastrar'} vendedor. Tente novamente.`)
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <div className="modalBackdrop">
+      <div className="detailModal newOrderModal">
+        <button className="closeBtn" onClick={onClose}><X /></button>
+        <div className="modalHeader">
+          <div>
+            <span>{editSeller ? 'Edição' : 'Cadastro'}</span>
+            <h2>{editSeller ? 'Editar vendedor' : 'Novo vendedor'}</h2>
+            <p>{editSeller ? 'Altere os dados do vendedor e salve as modificações' : 'Preencha os dados do vendedor para cadastrá-lo no sistema'}</p>
+          </div>
+          <UserRound size={36} style={{ color: 'var(--orange)', opacity: 0.5 }} />
+        </div>
+        <form onSubmit={submit}>
+          <div className="newOrderScrollArea">
+            <h3>Dados do vendedor</h3>
+            <div className="settingsForm">
+              <label>Nome completo *
+                <input placeholder="Ex: João da Silva" value={form.name} onChange={(e) => set('name', e.target.value)} required />
+              </label>
+              {!editSeller && (
+                <label>E-mail *
+                  <input type="email" placeholder="vendedor@saborsan.com" value={form.email} onChange={(e) => set('email', e.target.value)} required />
+                </label>
+              )}
+              <label>WhatsApp
+                <input placeholder="(49) 99999-0000" value={form.whatsapp} onChange={(e) => set('whatsapp', e.target.value)} />
+              </label>
+              {!editSeller && (
+                <label>Senha de acesso *
+                  <input type="password" placeholder="Mín. 6 caracteres" value={form.password} onChange={(e) => set('password', e.target.value)} required />
+                </label>
+              )}
+              <label>Cidade / Região *
+                <input placeholder="Lages - SC" value={form.city} onChange={(e) => set('city', e.target.value)} required />
+              </label>
+              <label>Meta diária (R$)
+                <input type="number" min="0" step="0.01" placeholder="0,00" value={form.dailyGoal} onChange={(e) => set('dailyGoal', e.target.value)} />
+              </label>
+            </div>
+          </div>
+          <div className="newOrderFooter">
+            {submitError && <small className="errorText">{submitError}</small>}
+            <div className="newOrderFooterActions">
+              <button type="submit" className="btnPrimary" disabled={!canSubmit || submitting}>
+                <CheckCircle2 size={17} /> {submitting ? (editSeller ? 'Salvando...' : 'Cadastrando...') : (editSeller ? 'Salvar alterações' : 'Cadastrar vendedor')}
+              </button>
+              <button type="button" onClick={onClose} disabled={submitting}>Cancelar</button>
+            </div>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
+function SellerDetailModal({ seller, onClose, onToggleActive, onEdit }) {
+  const pct = seller.meta > 0 ? Math.min(100, Math.round((seller.total / seller.meta) * 100)) : 0
+  return (
+    <div className="modalBackdrop">
+      <div className="detailModal orderModal">
+        <button className="closeBtn" onClick={onClose}><X /></button>
+        <div className="modalHeader">
+          <div>
+            <span>Vendedor #{seller.id}</span>
+            <h2>{seller.name}</h2>
+            <p>{seller.region} • {seller.phone}</p>
+          </div>
+          <Status status={seller.status} />
+        </div>
+        <div className="orderModalBody">
+          <div className="modalSplit">
+            <div>
+              <h3>Desempenho de vendas</h3>
+              <div className="detailGrid">
+                <div><b>Total vendido</b><span>{money(seller.total)}</span></div>
+                <div><b>Meta do período</b><span>{money(seller.meta)}</span></div>
+                <div><b>Atingimento</b><span>{pct}%</span></div>
+                <div><b>Nº de vendas</b><span>{seller.sales.length}</span></div>
+              </div>
+              <div className="stockLevel" style={{ marginTop: 12 }}><div style={{ width: `${pct}%` }}></div></div>
+              <small style={{ color: 'var(--muted)', fontSize: 12 }}>{money(seller.total)} de {money(seller.meta)} ({pct}%)</small>
+            </div>
+            <div className="summaryBox">
+              <h3>Dados do vendedor</h3>
+              <p><b>Nome:</b> {seller.name}</p>
+              <p><b>Região:</b> {seller.region}</p>
+              <p><b>WhatsApp:</b> {seller.phone}</p>
+              <p><b>Status:</b> {seller.status}</p>
+            </div>
+          </div>
+          <h3 style={{ marginTop: 20 }}>Vendas realizadas</h3>
+          <div className="modalItems">
+            {seller.sales.map((sale) => (
+              <div key={sale.id}>
+                <span>{sale.date}</span>
+                <b>{sale.customer} <small style={{ fontWeight: 400, color: 'var(--muted)' }}>({sale.city})</small></b>
+                <strong>{money(sale.value)}</strong>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className="orderModalFooter">
+          <button className="orderModalBtn orderModalBtnDanger" onClick={() => onToggleActive(seller)}>{seller.status === 'Ativo' ? 'Tornar inativo' : 'Tornar ativo'}</button>
+          <button className="orderModalBtn orderModalBtnPrimary" onClick={onEdit}>Editar</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function Sellers() {
+  const [sellersData, setSellersData] = useState([])
+  const [sellersLoading, setSellersLoading] = useState(false)
   const [selected, setSelected] = useState(null)
-  const seller = selected ? sellers.find((s) => s.id === selected) : null
-  const totalGeral = sellers.reduce((a, s) => a + s.total, 0)
+  const [sellerDetailOpen, setSellerDetailOpen] = useState(false)
+  const [newSellerOpen, setNewSellerOpen] = useState(false)
+  const [editSeller, setEditSeller] = useState(null)
+  const seller = selected ? sellersData.find((s) => s.id === selected) : null
+  const totalGeral = sellersData.reduce((a, s) => a + s.total, 0)
+  const bestSeller = sellersData.length > 0 ? sellersData.reduce((a, b) => a.total > b.total ? a : b) : null
+
+  useEffect(() => {
+    setSellersLoading(true)
+    fetch(`${API_URL}/api/sellers`)
+      .then((r) => r.json())
+      .then((data) => { if (data.sellers) setSellersData(data.sellers) })
+      .catch(() => {})
+      .finally(() => setSellersLoading(false))
+  }, [])
+
+  const addSeller = (newSeller) => {
+    setSellersData((prev) => [...prev, newSeller])
+  }
+
+  const updateSeller = (updatedSeller) => {
+    setSellersData((prev) => prev.map((s) => s.id === updatedSeller.id ? updatedSeller : s))
+  }
+
+  const toggleSellerStatus = async (seller) => {
+    const newIsActive = seller.status !== 'Ativo'
+    try {
+      await fetch(`${API_URL}/api/sellers`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sellerId: seller.id, isActive: newIsActive }),
+      })
+      setSellersData((prev) => prev.map((s) => s.id === seller.id ? { ...s, status: newIsActive ? 'Ativo' : 'Inativo' } : s))
+      setSellerDetailOpen(false)
+    } catch (e) {}
+  }
 
   return (
     <section className="pageStack">
-      <div className="sectionHeader"><div><p>Vendas realizadas pelo app</p></div><button className="btnSolid"><UserRound size={18} /> Novo vendedor</button></div>
+      <div className="sectionHeader"><div><p>Vendas realizadas pelo app</p></div><button className="btnSolid" onClick={() => setNewSellerOpen(true)}><UserRound size={18} /> Novo vendedor</button></div>
 
       <div className="sellersSummary">
-        <div className="card sellerStat"><span>Total de vendas</span><strong>{money(totalGeral)}</strong><small>{sellers.reduce((a, s) => a + s.sales.length, 0)} pedidos no período</small></div>
-        <div className="card sellerStat"><span>Vendedores ativos</span><strong>{sellers.filter(s => s.status === 'Ativo').length}</strong><small>de {sellers.length} cadastrados</small></div>
-        <div className="card sellerStat"><span>Melhor vendedor</span><strong>{sellers.reduce((a, b) => a.total > b.total ? a : b).name.split(' ')[0]}</strong><small>{money(Math.max(...sellers.map(s => s.total)))}</small></div>
+        <div className="card sellerStat"><span>Total de vendas</span><strong>{money(totalGeral)}</strong><small>{sellersData.reduce((a, s) => a + s.sales.length, 0)} pedidos no período</small></div>
+        <div className="card sellerStat"><span>Vendedores ativos</span><strong>{sellersData.filter(s => s.status === 'Ativo').length}</strong><small>de {sellersData.length} cadastrados</small></div>
+        <div className="card sellerStat"><span>Melhor vendedor</span><strong>{bestSeller ? bestSeller.name.split(' ')[0] : '—'}</strong><small>{bestSeller ? money(bestSeller.total) : '—'}</small></div>
       </div>
 
+      {sellersLoading && <p className="loadingText">Carregando vendedores...</p>}
+      {!sellersLoading && sellersData.length === 0 && <p className="emptyText">Nenhum vendedor cadastrado.</p>}
+
       <div className="sellersGrid">
-        {sellers.map((s) => {
-          const pct = Math.min(100, Math.round((s.total / s.meta) * 100))
+        {sellersData.map((s) => {
+          const pct = s.meta > 0 ? Math.min(100, Math.round((s.total / s.meta) * 100)) : 0
           return (
             <article className={`sellerCard${selected === s.id ? ' sellerActive' : ''}`} key={s.id} onClick={() => setSelected(selected === s.id ? null : s.id)}>
               <div className="sellerTop">
                 <div className="avatar">{s.avatar}</div>
                 <div><h3>{s.name}</h3><p>{s.region}</p></div>
-                <Status status={s.status} />
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 'auto' }}>
+                  <button style={{ border: 0, background: '#f2f6fb', color: 'var(--navy)', borderRadius: 999, padding: '9px 12px', fontWeight: 900, cursor: 'pointer' }} onClick={(e) => { e.stopPropagation(); setSelected(s.id); setSellerDetailOpen(true) }}>Detalhes</button>
+                  <Status status={s.status} />
+                </div>
               </div>
               <div className="sellerMeta">
                 <div className="stockLevel"><div style={{ width: `${pct}%` }}></div></div>
@@ -1398,6 +1666,9 @@ function Sellers() {
           <div className="sellerDetailTotal"><span>Total do período</span><strong>{money(seller.total)}</strong></div>
         </div>
       )}
+
+      {sellerDetailOpen && seller && <SellerDetailModal seller={seller} onClose={() => setSellerDetailOpen(false)} onToggleActive={toggleSellerStatus} onEdit={() => { setSellerDetailOpen(false); setEditSeller(seller) }} />}
+      {(newSellerOpen || editSeller) && <NewSellerModal onClose={() => { setNewSellerOpen(false); setEditSeller(null) }} onCreateSeller={addSeller} editSeller={editSeller} onUpdateSeller={updateSeller} />}
     </section>
   )
 }

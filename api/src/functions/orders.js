@@ -32,7 +32,7 @@ function formatDelivery(deliveryAt, status) {
 }
 
 app.http('orders', {
-  methods: ['GET', 'PATCH', 'POST'],
+  methods: ['GET', 'PATCH', 'PUT', 'POST', 'DELETE'],
   authLevel: 'anonymous',
   handler: async (request, context) => {
     try {
@@ -111,6 +111,39 @@ app.http('orders', {
         return { jsonBody: { success: true } };
       }
 
+      if (request.method === 'PUT') {
+        const body = await request.json();
+        const { orderId, source, clientName, clientCnpj, clientCity, clientPhone, totalValue, observations, items } = body;
+
+        if (!orderId || !clientName || !items || items.length === 0) {
+          return { status: 400, jsonBody: { error: 'orderId, clientName e items são obrigatórios' } };
+        }
+
+        await sql.query`
+          UPDATE GestaoOrders
+          SET source = ${source || 'Manual'},
+              clientName = ${clientName},
+              clientCnpj = ${clientCnpj || null},
+              clientCity = ${clientCity || null},
+              clientPhone = ${clientPhone || null},
+              totalValue = ${totalValue || 0},
+              observations = ${observations || null},
+              updatedAt = GETUTCDATE()
+          WHERE id = ${orderId}
+        `;
+
+        await sql.query`DELETE FROM GestaoOrderItems WHERE orderId = ${orderId}`;
+
+        for (const item of items) {
+          await sql.query`
+            INSERT INTO GestaoOrderItems (orderId, productName, quantity, unit, unitPrice)
+            VALUES (${orderId}, ${item.productName}, ${item.quantity}, ${item.unit || ''}, ${item.unitPrice || 0})
+          `;
+        }
+
+        return { jsonBody: { success: true } };
+      }
+
       if (request.method === 'POST') {
         const body = await request.json();
         const { source, clientName, clientCnpj, clientCity, clientPhone, totalValue, observations, items } = body;
@@ -178,6 +211,18 @@ app.http('orders', {
             },
           },
         };
+      }
+      if (request.method === 'DELETE') {
+        const { orderId } = await request.json();
+        if (!orderId) {
+          return { status: 400, jsonBody: { error: 'orderId é obrigatório' } };
+        }
+
+        await sql.query`DELETE FROM GestaoOrderItems WHERE orderId = ${orderId}`;
+        await sql.query`DELETE FROM GestaoFiscalDocuments WHERE orderId = ${orderId}`;
+        await sql.query`DELETE FROM GestaoOrders WHERE id = ${orderId}`;
+
+        return { jsonBody: { success: true } };
       }
     } catch (error) {
       context.error('Erro na função orders:', error);
