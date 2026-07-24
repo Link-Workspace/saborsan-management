@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import {
   LayoutDashboard,
@@ -39,6 +39,9 @@ import {
   MapPin,
   CreditCard,
   TrendingUp,
+  FileDown,
+  ExternalLink,
+  Ban,
 } from 'lucide-react'
 import './styles.css'
 
@@ -252,7 +255,7 @@ const navItems = [
 
 const statusClass = (status) => {
   const s = status.toLowerCase()
-  if (s.includes('recebido') || s.includes('aguardando')) return 'warning'
+  if (s.includes('recebido') || s.includes('aguardando') || s.includes('preparo')) return 'warning'
   if (s.includes('separação') || s.includes('rota') || s.includes('carregando')) return 'info'
   if (s.includes('entregue') || s.includes('emitida') || s.includes('ativo') || s.includes('vip')) return 'success'
   if (s.includes('atenção') || s.includes('reativar') || s.includes('baixo')) return 'danger'
@@ -298,13 +301,27 @@ function App() {
   const [employee, setEmployee] = useState(null)
   const [active, setActive] = useState('dashboard')
   const [aiEnabled, setAiEnabled] = useState(true)
-  const [orders, setOrders] = useState(initialOrders)
+  const [orders, setOrders] = useState([])
+  const [ordersLoading, setOrdersLoading] = useState(false)
   const [selectedOrder, setSelectedOrder] = useState(null)
   const [selectedProduct, setSelectedProduct] = useState(null)
   const [supplierModal, setSupplierModal] = useState(null)
   const [toast, setToast] = useState('')
   const [notifOpen, setNotifOpen] = useState(false)
   const [notaFiscalOrder, setNotaFiscalOrder] = useState(null)
+  const [newOrderOpen, setNewOrderOpen] = useState(false)
+  const [verNotaOrder, setVerNotaOrder] = useState(null)
+
+  const fetchOrders = () => {
+    setOrdersLoading(true)
+    fetch(`${API_URL}/api/orders`)
+      .then((r) => r.json())
+      .then((data) => { if (data.orders) setOrders(data.orders) })
+      .catch(() => {})
+      .finally(() => setOrdersLoading(false))
+  }
+
+  useEffect(() => { fetchOrders() }, [])
 
   const totals = useMemo(() => {
     const today = orders.filter((o) => o.time !== 'Ontem')
@@ -322,15 +339,33 @@ function App() {
     window.__saborsanToast = window.setTimeout(() => setToast(''), 2600)
   }
 
-  const updateOrderStatus = (id, status) => {
-    setOrders((items) => items.map((item) => item.id === id ? { ...item, status } : item))
-    if (selectedOrder?.id === id) setSelectedOrder((old) => ({ ...old, status }))
+  const updateOrderStatus = (id, status, extra = {}) => {
+    setOrders((items) => items.map((item) => item.id === id ? { ...item, status, ...extra } : item))
+    if (selectedOrder?.id === id) setSelectedOrder((old) => ({ ...old, status, ...extra }))
+    if (verNotaOrder?.id === id) setVerNotaOrder((old) => ({ ...old, status, ...extra }))
     notify(`Pedido ${id} atualizado para ${status}.`)
+    fetch(`${API_URL}/api/orders`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ orderId: id, status }),
+    }).catch(() => {})
   }
 
   const createInvoice = (order) => {
     updateOrderStatus(order.id, 'Nota gerada')
     notify(`Nota fiscal demonstrativa gerada para ${order.customer}.`)
+  }
+
+  const createOrder = (order) => {
+    setOrders((prev) => [order, ...prev])
+    notify(`Pedido ${order.id} criado com sucesso!`)
+  }
+
+  const sendNfeToClient = (id) => {
+    const sentAt = new Date().toISOString()
+    setOrders((items) => items.map((item) => item.id === id ? { ...item, nfeSentAt: sentAt } : item))
+    if (verNotaOrder?.id === id) setVerNotaOrder((old) => ({ ...old, nfeSentAt: sentAt }))
+    notify('Nota fiscal enviada ao cliente com sucesso.')
   }
 
   if (!employee) return <Login onLogin={setEmployee} />
@@ -377,7 +412,7 @@ function App() {
         </section>
 
         {active === 'dashboard' && <Dashboard totals={totals} orders={orders} aiEnabled={aiEnabled} setActive={setActive} />}
-        {active === 'pedidos' && <Orders orders={orders} onSelect={setSelectedOrder} updateOrderStatus={updateOrderStatus} createInvoice={createInvoice} onGerarNota={setNotaFiscalOrder} />}
+        {active === 'pedidos' && <Orders orders={orders} ordersLoading={ordersLoading} onSelect={setSelectedOrder} updateOrderStatus={updateOrderStatus} createInvoice={createInvoice} onGerarNota={setNotaFiscalOrder} onNewOrder={() => setNewOrderOpen(true)} onVerNota={setVerNotaOrder} />}
         {active === 'vendedores' && <Sellers />}
         {active === 'notas' && <Invoices orders={orders} createInvoice={createInvoice} />}
         {active === 'estoque' && <Stock onProduct={setSelectedProduct} />}
@@ -395,7 +430,9 @@ function App() {
       {selectedProduct && <ProductModal product={selectedProduct} onClose={() => setSelectedProduct(null)} notify={notify} />}
       {supplierModal && <SupplierModal supplier={supplierModal} onClose={() => setSupplierModal(null)} notify={notify} />}
       {notaFiscalOrder && <NotaFiscalModal order={notaFiscalOrder} onClose={() => setNotaFiscalOrder(null)} updateOrderStatus={updateOrderStatus} notify={notify} />}
+      {verNotaOrder && <VerNotaModal order={verNotaOrder} onClose={() => setVerNotaOrder(null)} onSendToClient={sendNfeToClient} />}
       {notifOpen && <NotifPanel onClose={() => setNotifOpen(false)} />}
+      {newOrderOpen && <NewOrderModal onClose={() => setNewOrderOpen(false)} onCreateOrder={createOrder} />}
       {toast && <div className="toast"><CheckCircle2 size={18} />{toast}</div>}
     </div>
   )
@@ -515,27 +552,29 @@ function Dashboard({ totals, orders, aiEnabled, setActive }) {
   )
 }
 
-function Orders({ orders, onSelect, updateOrderStatus, createInvoice, onGerarNota }) {
+function Orders({ orders, ordersLoading, onSelect, updateOrderStatus, createInvoice, onGerarNota, onNewOrder, onVerNota }) {
   const [filter, setFilter] = useState('Todos')
   const filtered = filter === 'Todos' ? orders : orders.filter((o) => o.status === filter)
   return (
     <section className="pageStack">
       <div className="sectionHeader">
         <div><p>Pedidos recebidos do app, WhatsApp e vendedores</p></div>
-        <button className="btnSolid"><Plus size={18} /> Novo pedido</button>
+        <button className="btnSolid" onClick={onNewOrder}><Plus size={18} /> Novo pedido</button>
       </div>
       <div className="filtersRow">
         {['Todos', 'Recebido', 'Separação', 'Rota', 'Entregue'].map((item) => <button key={item} className={filter === item ? 'active' : ''} onClick={() => setFilter(item)}><Filter size={15} />{item}</button>)}
       </div>
+      {ordersLoading && <p className="loadingText">Carregando pedidos...</p>}
       <div className="ordersBoard">
+        {!ordersLoading && filtered.length === 0 && <p className="emptyText">Nenhum pedido encontrado.</p>}
         {filtered.map((order) => (
           <article className="orderCard" key={order.id}>
-            <div className="orderTop"><div><b>{order.id}</b><span>{order.source}</span></div><Status status={order.status} /></div>
+            <div className="orderTop"><div><b>{order.id}</b><span>{order.source}</span></div><div style={{display:'flex',gap:'6px',flexWrap:'wrap',alignItems:'center'}}><Status status={order.status} />{order.status === 'Nota emitida' && <span className="status warning">Pronto para separação</span>}</div></div>
             <h3>{order.customer}</h3>
             <p>{order.city} • {order.whatsapp}</p>
             <div className="orderProducts">{order.products.map((p) => <span key={p.name}>{p.qty} {p.unit} • {p.name}</span>)}</div>
             <div className="orderFooter"><strong>{money(order.value)}</strong><small>Entrega: {order.delivery}</small></div>
-            <div className="orderActions"><button onClick={() => onSelect(order)}>Detalhes</button><button onClick={() => updateOrderStatus(order.id, 'Separação')}>Separar</button><button onClick={() => onGerarNota(order)}>Gerar nota</button></div>
+            <div className="orderActions"><button onClick={() => onSelect(order)}>Detalhes</button>{order.status === 'Nota emitida' && <button onClick={() => onVerNota(order)}>Ver nota</button>}<button onClick={() => updateOrderStatus(order.id, 'Separação')}>Separar</button>{order.status !== 'Nota emitida' && <button onClick={() => onGerarNota(order)}>Gerar nota</button>}</div>
           </article>
         ))}
       </div>
@@ -755,6 +794,176 @@ function Automation({ aiEnabled, setAiEnabled, notify }) {
         {automations.map(([title, text, active]) => <article key={title} className={active && aiEnabled ? 'on' : ''}><Settings2 size={22} /><div><h3>{title}</h3><p>{text}</p></div><span>{active && aiEnabled ? 'Ativo' : 'Manual'}</span></article>)}
       </div>
     </section>
+  )
+}
+
+function NewOrderModal({ onClose, onCreateOrder }) {
+  const [form, setForm] = useState({
+    customer: '',
+    cnpj: '',
+    city: '',
+    whatsapp: '',
+    source: 'App Saborsan',
+    priority: 'Normal',
+    delivery: '',
+    notes: '',
+  })
+  const [items, setItems] = useState([{ productId: null, qty: 0 }])
+  const [submitError, setSubmitError] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+
+  const set = (k, v) => setForm((f) => ({ ...f, [k]: v }))
+  const addItem = () => setItems((i) => [...i, { productId: null, qty: 0 }])
+  const removeItem = (idx) => setItems((i) => i.filter((_, j) => j !== idx))
+  const updateItem = (idx, field, value) =>
+    setItems((i) => i.map((item, j) => (j === idx ? { ...item, [field]: value } : item)))
+
+  const orderProducts = items
+    .filter((item) => item.productId && item.qty > 0)
+    .map((item) => {
+      const product = products.find((p) => p.id === item.productId)
+      return { ...product, qty: item.qty }
+    })
+
+  const total = orderProducts.reduce((sum, p) => sum + p.price * p.qty, 0)
+  const hasValidProducts = items.some((item) => item.productId && item.qty > 0)
+  const canSubmit = form.cnpj.trim() !== '' && form.city.trim() !== '' && form.whatsapp.trim() !== '' && form.delivery.trim() !== '' && hasValidProducts
+
+  const submit = async (e) => {
+    e.preventDefault()
+    if (!form.customer.trim() || submitting) return
+    setSubmitError('')
+    setSubmitting(true)
+    try {
+      const payload = {
+        source: form.source,
+        clientName: form.customer,
+        clientCnpj: form.cnpj || null,
+        clientCity: form.city || null,
+        clientPhone: form.whatsapp || null,
+        totalValue: total,
+        observations: form.notes || null,
+        items: orderProducts.map((p) => ({
+          productName: p.name,
+          quantity: p.qty,
+          unit: p.unit,
+          unitPrice: p.price,
+        })),
+      }
+      const res = await fetch(`${API_URL}/api/orders`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Erro ao criar pedido')
+      onCreateOrder(data.order)
+      onClose()
+    } catch (err) {
+      setSubmitError(err.message || 'Erro ao criar pedido. Tente novamente.')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <div className="modalBackdrop">
+      <div className="detailModal newOrderModal">
+        <button className="closeBtn" onClick={onClose}><X /></button>
+        <div className="modalHeader">
+          <div>
+            <span>Pedido manual</span>
+            <h2>Novo pedido</h2>
+            <p>Preencha os dados do cliente e os produtos solicitados</p>
+          </div>
+          <ShoppingCart size={36} style={{ color: 'var(--orange)', opacity: 0.5 }} />
+        </div>
+        <form onSubmit={submit}>
+          <div className="newOrderScrollArea">
+            <h3>Dados do cliente</h3>
+            <div className="settingsForm">
+              <label>Nome do cliente *
+                <input placeholder="Ex: Padaria Central" value={form.customer} onChange={(e) => set('customer', e.target.value)} required />
+              </label>
+              <label>CNPJ
+                <input placeholder="00.000.000/0001-00" value={form.cnpj} onChange={(e) => set('cnpj', e.target.value)} />
+              </label>
+              <label>Cidade / UF
+                <input placeholder="Lages - SC" value={form.city} onChange={(e) => set('city', e.target.value)} />
+              </label>
+              <label>WhatsApp
+                <input placeholder="(49) 99999-0000" value={form.whatsapp} onChange={(e) => set('whatsapp', e.target.value)} />
+              </label>
+            </div>
+
+            <h3 className="newOrderSectionTitle">Produtos solicitados</h3>
+            <div className="newOrderItems">
+              {items.map((item, idx) => {
+                const product = item.productId ? products.find((p) => p.id === item.productId) : null
+                return (
+                  <div className="newOrderItem" key={idx}>
+                    <select value={item.productId ?? ''} onChange={(e) => {
+                      const val = e.target.value ? Number(e.target.value) : null
+                      setItems((prev) => prev.map((it, j) => j === idx ? { ...it, productId: val, qty: val ? Math.max(1, it.qty) : 0 } : it))
+                    }}>
+                      <option value="">Selecione o produto</option>
+                      {products.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                    </select>
+                    <input type="number" min={item.productId ? 1 : 0} value={item.qty} disabled={!item.productId} onChange={(e) => updateItem(idx, 'qty', Math.max(1, Number(e.target.value)))} />
+                    <span className="newOrderUnit">{product ? product.unit : ''}</span>
+                    <span className="newOrderItemPrice">{product && item.qty > 0 ? money(product.price * item.qty) : ''}</span>
+                    {items.length > 1 && (
+                      <button type="button" className="newOrderRemoveBtn" onClick={() => removeItem(idx)}><X size={14} /></button>
+                    )}
+                  </div>
+                )
+              })}
+              <button type="button" className="newOrderAddBtn" onClick={addItem}>
+                <Plus size={15} /> Adicionar produto
+              </button>
+            </div>
+
+            <h3 className="newOrderSectionTitle">Detalhes do pedido</h3>
+            <div className="settingsForm">
+              <label>Origem
+                <select value={form.source} onChange={(e) => set('source', e.target.value)}>
+                  <option>App Saborsan</option>
+                  <option>WhatsApp</option>
+                  <option>Vendedor</option>
+                  <option>Telefone</option>
+                </select>
+              </label>
+              <label>Prioridade
+                <select value={form.priority} onChange={(e) => set('priority', e.target.value)}>
+                  <option>Normal</option>
+                  <option>Alta</option>
+                </select>
+              </label>
+              <label>Previsão de entrega
+                <input placeholder="Hoje, 15:00" value={form.delivery} onChange={(e) => set('delivery', e.target.value)} />
+              </label>
+            </div>
+
+            <div className="noteBox" style={{ marginTop: '16px' }}>
+              <b>Observações</b>
+              <textarea rows={4} placeholder="Instruções especiais, horário preferido, local..." value={form.notes} onChange={(e) => set('notes', e.target.value)} />
+            </div>
+          </div>
+
+          <div className="newOrderFooter">
+            <div className="newOrderTotalInline">
+              <span>Total estimado</span>
+              <strong>{money(total)}</strong>
+            </div>
+            {submitError && <small className="errorText">{submitError}</small>}
+            <div className="newOrderFooterActions">
+              <button type="submit" className="btnPrimary" disabled={!canSubmit || submitting}><CheckCircle2 size={17} /> {submitting ? 'Criando...' : 'Criar pedido'}</button>
+              <button type="button" onClick={onClose} disabled={submitting}>Cancelar</button>
+            </div>
+          </div>
+        </form>
+      </div>
+    </div>
   )
 }
 
@@ -1111,131 +1320,146 @@ const STEPS = ['previa', 'validacao', 'enviando', 'autorizada', 'cliente']
 
 function NotaFiscalModal({ order, onClose, updateOrderStatus, notify }) {
   const [step, setStep] = useState('previa')
-  const [enviandoStep, setEnviandoStep] = useState(0)
+  // 0=preparando 1=enviando para Focus 2=recebido pela Focus 3=aguardando SEFAZ
+  const [enviandoPhase, setEnviandoPhase] = useState(0)
+  const [nfeResult, setNfeResult] = useState(null)   // { status, reference, number, series, accessKey, protocol }
+  const [nfeError, setNfeError] = useState(null)     // { errorMessage, errorCode, reference? }
+  const [submitting, setSubmitting] = useState(false)
+  const pollingRef = useRef(null)
+  const mountedRef = useRef(true)
 
-  const nfNum = '000' + (Math.floor(Math.random() * 900) + 100)
-  const chave = '4226 0600 0000 0000 0000 5500 1000 0001 2310 0001 ' + nfNum
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+      if (pollingRef.current) clearTimeout(pollingRef.current)
+    }
+  }, [])
 
-  const stepIndex = STEPS.indexOf(step)
+  const productTotal = order.products.reduce((sum, p) => sum + p.qty * p.price, 0)
 
-  const startEnvio = () => {
+  // Stepper helpers: when rejected, light up steps up to 'enviando'
+  const stepIndex = step === 'rejeitada' ? STEPS.indexOf('enviando') : STEPS.indexOf(step)
+  const isActiveStep = (id) => step === id || (step === 'rejeitada' && id === 'enviando')
+
+  // ── Validation items for the 'validacao' step ───────────────────────────
+  const allPricesOk = order.products.every((p) => p.qty > 0 && p.price >= 0)
+  const allNcmMapped = order.products.every((p) => !!ncmMap[p.name])
+  const hasCnpj = !!(order.cnpj && order.cnpj !== '-')
+  const hasCity = !!(order.city && order.city !== '-')
+  const validationItems = [
+    { label: `Cliente: ${order.customer}`, ok: !!order.customer, required: true },
+    { label: `CNPJ: ${hasCnpj ? order.cnpj : 'Não informado'}`, ok: hasCnpj, required: true },
+    { label: `Cidade/UF: ${hasCity ? order.city : 'Não informada'}`, ok: hasCity, required: true },
+    { label: `${order.products.length} produto(s) no pedido`, ok: order.products.length > 0, required: true },
+    { label: 'Quantidades e preços válidos', ok: allPricesOk, required: true },
+    { label: 'NCM disponível para todos os produtos', ok: allNcmMapped, required: false },
+  ]
+  const canSubmit = validationItems.filter((v) => !v.ok && v.required).length === 0
+
+  // ── Polling ─────────────────────────────────────────────────────────────
+  const startPolling = (ref, attempt = 0) => {
+    if (!mountedRef.current) return
+    if (attempt >= 40) {
+      if (mountedRef.current) {
+        setNfeError({ errorMessage: 'Tempo de espera excedido. Consulte o painel da Focus NFe para verificar o status.' })
+        setStep('rejeitada')
+      }
+      return
+    }
+    setEnviandoPhase(3)
+    pollingRef.current = setTimeout(async () => {
+      if (!mountedRef.current) return
+      try {
+        const res = await fetch(`${API_URL}/api/emit-nfe?ref=${encodeURIComponent(ref)}`)
+        const data = await res.json()
+        if (!mountedRef.current) return
+        if (data.status === 'AUTHORIZED') {
+          setNfeResult(data)
+          setStep('autorizada')
+          updateOrderStatus(order.id, 'Nota emitida', { nfeData: { ...data, reference: ref } })
+          notify(`NF-e ${data.number ? `nº ${data.number} ` : ''}autorizada para ${order.customer}.`)
+        } else if (data.status === 'REJECTED' || data.status === 'SUBMISSION_FAILED') {
+          setNfeError(data)
+          setStep('rejeitada')
+        } else {
+          startPolling(ref, attempt + 1)
+        }
+      } catch {
+        if (mountedRef.current) startPolling(ref, attempt + 1)
+      }
+    }, 3000)
+  }
+
+  // ── Emission ─────────────────────────────────────────────────────────────
+  const startEnvio = async () => {
     setStep('enviando')
-    setEnviandoStep(0)
-    const steps = [200, 900, 1800, 2800]
-    steps.forEach((delay, i) => setTimeout(() => setEnviandoStep(i + 1), delay))
-    setTimeout(() => setStep('autorizada'), 3400)
+    setEnviandoPhase(0)
+    setSubmitting(true)
+    try {
+      setEnviandoPhase(1)
+      const res = await fetch(`${API_URL}/api/emit-nfe`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderId: order.id }),
+      })
+      const data = await res.json()
+      if (!mountedRef.current) return
+
+      if (data.configError) {
+        setNfeError({ errorMessage: data.error })
+        setStep('rejeitada')
+        return
+      }
+      if (data.status === 'AUTHORIZED') {
+        setNfeResult(data)
+        setStep('autorizada')
+        updateOrderStatus(order.id, 'Nota emitida', { nfeData: data })
+        notify(`NF-e ${data.number ? `nº ${data.number} ` : ''}autorizada para ${order.customer}.`)
+        return
+      }
+      if ((data.status === 'PROCESSING' || data.status === 'SUBMITTING') && data.reference) {
+        setEnviandoPhase(2)
+        startPolling(data.reference)
+        return
+      }
+      if (data.status === 'REJECTED' || data.status === 'SUBMISSION_FAILED') {
+        setNfeError(data)
+        setStep('rejeitada')
+        return
+      }
+      setNfeError({ errorMessage: data.error || 'Resposta inesperada do servidor.' })
+      setStep('rejeitada')
+    } catch (err) {
+      if (mountedRef.current) {
+        setNfeError({ errorMessage: 'Não foi possível conectar ao servidor. Verifique sua conexão.' })
+        setStep('rejeitada')
+      }
+    } finally {
+      if (mountedRef.current) setSubmitting(false)
+    }
   }
 
-  const finalizar = () => {
-    updateOrderStatus(order.id, 'Nota emitida')
-    notify(`NF-e ${nfNum} autorizada e enviada para ${order.customer}.`)
-    onClose()
+  const downloadFile = (type) => {
+    if (!nfeResult?.reference) return
+    window.open(`${API_URL}/api/emit-nfe?ref=${encodeURIComponent(nfeResult.reference)}&download=${type}`, '_blank')
   }
 
-  const totalImpostos = (order.value * 0.12).toFixed(2)
-  const totalNota = (order.value * 1.12).toFixed(2)
-
-  const downloadXML = () => {
-    const xml = `<?xml version="1.0" encoding="UTF-8"?>
-<nfeProc xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00">
-  <NFe>
-    <infNFe Id="NFe${chave.replace(/\s/g,'')}" versao="4.00">
-      <ide>
-        <cUF>42</cUF><cNF>${nfNum}</cNF><natOp>Venda de mercadoria</natOp>
-        <mod>55</mod><serie>1</serie><nNF>${nfNum}</nNF>
-        <dhEmi>${new Date().toISOString()}</dhEmi><tpNF>1</tpNF>
-        <idDest>1</idDest><cMunFG>4209300</cMunFG><tpImp>1</tpImp>
-        <tpEmis>1</tpEmis><tpAmb>2</tpAmb><finNFe>1</finNFe>
-        <indFinal>0</indFinal><indPres>0</indPres><procEmi>0</procEmi><verProc>1.0.0</verProc>
-      </ide>
-      <emit>
-        <CNPJ>12345678000199</CNPJ>
-        <xNome>Saborsan Distribuidora LTDA</xNome>
-        <enderEmit>
-          <xLgr>Rua das Acácias</xLgr><nro>100</nro>
-          <xBairro>Centro</xBairro><cMun>4209300</cMun>
-          <xMun>Lages</xMun><UF>SC</UF><CEP>88501000</CEP><cPais>1058</cPais><xPais>Brasil</xPais>
-        </enderEmit>
-        <IE>123456789</IE><CRT>3</CRT>
-      </emit>
-      <dest>
-        <CNPJ>${order.cnpj.replace(/\D/g,'')}</CNPJ>
-        <xNome>${order.customer}</xNome>
-        <indIEDest>1</indIEDest>
-      </dest>
-      ${order.products.map((p, i) => {
-        const info = ncmMap[p.name] || { ncm: '21069090', cfop: '5102' }
-        return `<det nItem="${i+1}">
-        <prod>
-          <cProd>00${i+1}</cProd><cEAN>SEM GTIN</cEAN>
-          <xProd>${p.name}</xProd><NCM>${info.ncm}</NCM>
-          <CFOP>${info.cfop}</CFOP><uCom>${p.unit}</uCom>
-          <qCom>${p.qty}</qCom><vUnCom>${p.price.toFixed(2)}</vUnCom>
-          <vProd>${(p.qty * p.price).toFixed(2)}</vProd>
-          <cEANTrib>SEM GTIN</cEANTrib><uTrib>${p.unit}</uTrib>
-          <qTrib>${p.qty}</qTrib><vUnTrib>${p.price.toFixed(2)}</vUnTrib>
-          <indTot>1</indTot>
-        </prod>
-        <imposto><ICMS><ICMS00><orig>0</orig><CST>00</CST><modBC>3</modBC><vBC>${(p.qty*p.price).toFixed(2)}</vBC><pICMS>12.00</pICMS><vICMS>${(p.qty*p.price*0.12).toFixed(2)}</vICMS></ICMS00></ICMS></imposto>
-      </det>`}).join('\n')}
-      <total>
-        <ICMSTot>
-          <vBC>${order.value.toFixed(2)}</vBC><vICMS>${totalImpostos}</vICMS>
-          <vProd>${order.value.toFixed(2)}</vProd><vNF>${totalNota}</vNF>
-        </ICMSTot>
-      </total>
-      <transp><modFrete>0</modFrete></transp>
-      <cobr><dup><nDup>001</nDup><dVenc>${new Date(Date.now()+30*86400000).toISOString().slice(0,10)}</dVenc><vDup>${totalNota}</vDup></dup></cobr>
-      <infAdic><infCpl>NF-e emitida em carater de demonstracao. Pedido: ${order.id}</infCpl></infAdic>
-    </infNFe>
-  </NFe>
-  <protNFe versao="4.00">
-    <infProt>
-      <tpAmb>2</tpAmb><verAplic>SP_NFE_PL_008i2</verAplic>
-      <chNFe>${chave.replace(/\s/g,'')}</chNFe>
-      <dhRecbto>${new Date().toISOString()}</dhRecbto>
-      <nProt>1${nfNum}00000001</nProt><digVal>DEMO=</digVal><cStat>100</cStat>
-      <xMotivo>Autorizado o uso da NF-e</xMotivo>
-    </infProt>
-  </protNFe>
-</nfeProc>`
-    const blob = new Blob([xml], { type: 'application/xml' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a'); a.href = url; a.download = `NFe_${nfNum}.xml`; a.click()
-    URL.revokeObjectURL(url)
+  const handleRetry = () => {
+    setNfeError(null)
+    setStep('previa')
   }
 
-  const downloadDANFE = () => {
-    const html = `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><title>DANFE - NF-e ${nfNum}</title>
-<style>body{font-family:Arial,sans-serif;font-size:11px;margin:20px;color:#222}h1{font-size:14px;text-align:center;margin-bottom:4px}table{width:100%;border-collapse:collapse;margin-bottom:12px}th,td{border:1px solid #999;padding:4px 6px}th{background:#eee;text-align:left}.header{display:flex;justify-content:space-between;align-items:flex-start;border:1px solid #999;padding:10px;margin-bottom:10px}.badge{border:2px solid #000;padding:4px 10px;font-weight:bold;font-size:13px}.section{border:1px solid #999;padding:8px;margin-bottom:8px}.label{font-weight:bold;font-size:10px;text-transform:uppercase;color:#555}</style>
-</head><body>
-<div class="header">
-  <div><div class="label">Emitente</div><b>Saborsan Distribuidora LTDA</b><br>CNPJ: 12.345.678/0001-99<br>Rua das Acácias, 100 — Lages/SC</div>
-  <div style="text-align:center"><div class="badge">NF-e</div><br><b>N° ${nfNum} Série 1</b><br><small>Folha 1/1</small></div>
-  <div style="text-align:right"><div class="label">Chave de Acesso</div><small>${chave}</small><br><br><div class="label">Data de Emissão</div>${new Date().toLocaleDateString('pt-BR')}</div>
-</div>
-<div class="section"><div class="label">Destinatário</div><b>${order.customer}</b> — CNPJ: ${order.cnpj} — ${order.city}</div>
-<table><thead><tr><th>Produto</th><th>NCM</th><th>CFOP</th><th>Qtd</th><th>Vl Unit</th><th>Vl Total</th></tr></thead><tbody>
-${order.products.map(p=>{ const info=ncmMap[p.name]||{ncm:'21069090',cfop:'5102'}; return `<tr><td>${p.name}</td><td>${info.ncm}</td><td>${info.cfop}</td><td>${p.qty} ${p.unit}</td><td>R$ ${p.price.toFixed(2)}</td><td>R$ ${(p.qty*p.price).toFixed(2)}</td></tr>` }).join('')}
-</tbody></table>
-<table><tr><th>Total Produtos</th><th>Impostos (12%)</th><th>Total NF-e</th></tr>
-<tr><td>R$ ${order.value.toFixed(2)}</td><td>R$ ${totalImpostos}</td><td><b>R$ ${totalNota}</b></td></tr></table>
-<div class="section"><div class="label">Informações Adicionais</div>NF-e emitida em caráter de demonstração. Pedido de origem: ${order.id}. Autorizado o uso da NF-e.</div>
-</body></html>`
-    const blob = new Blob([html], { type: 'text/html' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a'); a.href = url; a.download = `DANFE_${nfNum}.html`; a.click()
-    URL.revokeObjectURL(url)
-  }
+  const finalizar = () => { onClose() }
 
   return (
-    <div className="nfOverlay" onClick={(e) => e.target.classList.contains('nfOverlay') && onClose()}>
+    <div className="nfOverlay" onClick={(e) => { if (e.target.classList.contains('nfOverlay') && step !== 'enviando') onClose() }}>
       <div className="nfModal">
 
         {/* Stepper */}
         <div className="nfStepper">
           {[['Prévia', 'previa'], ['Validação', 'validacao'], ['Enviando', 'enviando'], ['Autorizada', 'autorizada'], ['Enviar cliente', 'cliente']].map(([label, id], i) => (
-            <div key={id} className={`nfStep${STEPS.indexOf(id) <= stepIndex ? ' done' : ''}${step === id ? ' active' : ''}`}>
+            <div key={id} className={`nfStep${STEPS.indexOf(id) <= stepIndex ? ' done' : ''}${isActiveStep(id) ? ' active' : ''}`}>
               <div className="nfStepDot">{STEPS.indexOf(id) < stepIndex ? <CheckCircle2 size={14} /> : i + 1}</div>
               <span>{label}</span>
             </div>
@@ -1287,26 +1511,16 @@ ${order.products.map(p=>{ const info=ncmMap[p.name]||{ncm:'21069090',cfop:'5102'
                   </div>
                 )
               })}
-              <div className="nfTableFoot">
-                <span>Subtotal</span><span>{money(order.value)}</span>
-              </div>
-              <div className="nfTableFoot">
-                <span>Impostos estimados (12%)</span><span>{money(parseFloat(totalImpostos))}</span>
-              </div>
               <div className="nfTableFoot total">
-                <span>Total da nota</span><span>{money(parseFloat(totalNota))}</span>
+                <span>Total dos produtos</span><span>{money(productTotal)}</span>
               </div>
             </div>
             <div className="nfAI">
-              <div className="nfAIHeader"><Sparkles size={16} /><b>IA Fiscal</b></div>
-              <div className="nfAIItem success"><CheckCircle2 size={14} /> Cliente com CNPJ válido</div>
-              <div className="nfAIItem success"><CheckCircle2 size={14} /> Produtos com NCM preenchido</div>
-              <div className="nfAIItem success"><CheckCircle2 size={14} /> CFOP compatível com venda interna</div>
-              <div className="nfAIItem warning"><AlertTriangle size={14} /> Verifique se há substituição tributária nos produtos congelados</div>
-            </div>
-            <div className="nfActions">
-              <button className="nfBtnGhost" onClick={onClose}>Cancelar</button>
-              <button className="btnSolid" onClick={() => setStep('validacao')}>Validar nota</button>
+              <div className="nfAIHeader"><Sparkles size={16} /><b>Emissão via Focus NFe</b></div>
+              <div className="nfAIItem success"><CheckCircle2 size={14} /> NF-e modelo 55 — transmissão direta à SEFAZ</div>
+              <div className="nfAIItem success"><CheckCircle2 size={14} /> Certificado digital gerenciado pela Focus NFe</div>
+              <div className="nfAIItem warning"><AlertTriangle size={14} /> Dados fiscais (NCM, CFOP, CST, alíquotas) devem ser validados pelo contador</div>
+              <div className="nfAIItem warning"><AlertTriangle size={14} /> Verifique substituição tributária nos produtos congelados (ICMS-ST)</div>
             </div>
           </div>
         )}
@@ -1319,15 +1533,25 @@ ${order.products.map(p=>{ const info=ncmMap[p.name]||{ncm:'21069090',cfop:'5102'
             <h2>Verificação antes do envio</h2>
             <p>Todos os dados foram conferidos automaticamente antes de enviar para a SEFAZ.</p>
             <div className="nfChecklist">
-              {['Dados do cliente', 'Dados da empresa', 'Produtos e quantidades', 'NCM dos produtos', 'CFOP da operação', 'Cálculo de impostos', 'Totais da nota', 'Certificado digital', 'XML gerado corretamente'].map((item) => (
-                <div className="nfCheckItem" key={item}><CheckCircle2 size={16} /><span>{item}</span></div>
+              {validationItems.map((item) => (
+                <div className={`nfCheckItem${!item.ok ? item.required ? ' error' : ' warn' : ''}`} key={item.label}>
+                  {item.ok ? <CheckCircle2 size={16} /> : <AlertTriangle size={16} />}
+                  <span>{item.label}</span>
+                </div>
               ))}
+              <div className="nfCheckItem warn">
+                <AlertTriangle size={16} />
+                <span>Configuração fiscal (alíquotas, CEST, ICMS-ST) deve ser validada pelo contador</span>
+              </div>
+              <div className="nfCheckItem">
+                <CheckCircle2 size={16} />
+                <span>Certificado digital gerenciado pela Focus NFe</span>
+              </div>
             </div>
-            <div className="nfStatusBadge"><ShieldCheck size={18} /> Pronto para envio à SEFAZ</div>
-            <div className="nfActions">
-              <button className="nfBtnGhost" onClick={() => setStep('previa')}>Editar dados</button>
-              <button className="btnSolid" onClick={startEnvio}>Enviar para SEFAZ</button>
-            </div>
+            {canSubmit
+              ? <div className="nfStatusBadge"><ShieldCheck size={18} /> Dados validados — pronto para envio à SEFAZ</div>
+              : <div className="nfStatusBadge error"><AlertTriangle size={18} /> Corrija os campos obrigatórios antes de enviar</div>
+            }
           </div>
         )}
 
@@ -1336,14 +1560,42 @@ ${order.products.map(p=>{ const info=ncmMap[p.name]||{ncm:'21069090',cfop:'5102'
           <div className="nfBody nfCentered">
             <div className="nfSending">
               <div className="nfSpinner" />
-              <h2>Enviando NF-e para SEFAZ...</h2>
+              <h2>Processando NF-e via Focus NFe...</h2>
               <div className="nfSendingSteps">
-                {['Gerando XML...', 'Assinando com certificado digital...', 'Enviando para SEFAZ...', 'Aguardando autorização...'].map((label, i) => (
-                  <div key={i} className={`nfSendStep${enviandoStep > i ? ' done' : ''}${enviandoStep === i ? ' current' : ''}`}>
-                    {enviandoStep > i ? <CheckCircle2 size={15} /> : <Clock3 size={15} />}
+                {[
+                  'Preparando dados fiscais...',
+                  'Enviando para Focus NFe...',
+                  'Nota recebida pela Focus — aguardando SEFAZ...',
+                  'Aguardando autorização da SEFAZ...',
+                ].map((label, i) => (
+                  <div key={i} className={`nfSendStep${enviandoPhase > i ? ' done' : ''}${enviandoPhase === i ? ' current' : ''}`}>
+                    {enviandoPhase > i ? <CheckCircle2 size={15} /> : <Clock3 size={15} />}
                     <span>{label}</span>
                   </div>
                 ))}
+              </div>
+              <p className="nfSendingNote">Não feche esta janela. O processo pode levar alguns segundos.</p>
+            </div>
+          </div>
+        )}
+
+        {/* STEP REJEITADA */}
+        {step === 'rejeitada' && (
+          <div className="nfBody nfCentered">
+            <div className="nfRejected">
+              <div className="nfRejectedIcon"><AlertTriangle size={44} /></div>
+              <h2>Emissão não concluída</h2>
+              <p>A NF-e não foi autorizada. Verifique os detalhes abaixo.</p>
+              {nfeError?.errorCode && (
+                <div className="nfErrorCode"><small>Código</small><b>{nfeError.errorCode}</b></div>
+              )}
+              <div className="nfErrorMsg">{nfeError?.errorMessage || 'Erro desconhecido. Consulte o painel da Focus NFe.'}</div>
+              {nfeError?.reference && (
+                <div className="nfErrorRef"><small>Referência: <code>{nfeError.reference}</code></small></div>
+              )}
+              <div className="nfRejectedNote">
+                <AlertTriangle size={14} />
+                <span>Não altere dados fiscais (NCM, CFOP, CST, alíquotas) sem consultar o contador.</span>
               </div>
             </div>
           </div>
@@ -1354,22 +1606,21 @@ ${order.products.map(p=>{ const info=ncmMap[p.name]||{ncm:'21069090',cfop:'5102'
           <div className="nfBody nfCentered">
             <div className="nfSuccess">
               <div className="nfSuccessIcon"><CheckCircle2 size={44} /></div>
-              <h2>NF-e autorizada com sucesso!</h2>
-              <p>A nota fiscal foi processada e autorizada pela SEFAZ.</p>
+              <h2>NF-e autorizada pela SEFAZ!</h2>
+              <p>A nota fiscal foi transmitida, processada e autorizada com sucesso.</p>
               <div className="nfAutorizadaGrid">
-                <div><small>Número da nota</small><b>{nfNum}</b></div>
-                <div><small>Série</small><b>1</b></div>
-                <div className="span2"><small>Chave de acesso</small><b className="mono">{chave}</b></div>
+                {nfeResult?.number && <div><small>Número da nota</small><b>{nfeResult.number}</b></div>}
+                {nfeResult?.series && <div><small>Série</small><b>{nfeResult.series}</b></div>}
+                {nfeResult?.protocol && <div><small>Protocolo SEFAZ</small><b>{nfeResult.protocol}</b></div>}
+                {nfeResult?.accessKey && (
+                  <div className="span2"><small>Chave de acesso</small><b className="mono">{nfeResult.accessKey}</b></div>
+                )}
               </div>
               <div className="nfDocButtons">
-                <button className="nfDocBtn" onClick={downloadXML}>Baixar XML</button>
-                <button className="nfDocBtn" onClick={downloadDANFE}>Baixar DANFE</button>
+                <button className="nfDocBtn" onClick={() => downloadFile('xml')}><FileText size={15} /> Baixar XML</button>
+                <button className="nfDocBtn" onClick={() => downloadFile('danfe')}><ReceiptText size={15} /> Baixar DANFE</button>
               </div>
-              <div className="nfStatusBadge success">Pedido atualizado para: Nota emitida — próxima etapa: separar para entrega</div>
-            </div>
-            <div className="nfActions">
-              <button className="nfBtnGhost" onClick={finalizar}>Fechar</button>
-              <button className="btnSolid" onClick={() => setStep('cliente')}>Enviar para cliente</button>
+              <div className="nfStatusBadge success">Pedido atualizado para: Nota emitida</div>
             </div>
           </div>
         )}
@@ -1382,7 +1633,7 @@ ${order.products.map(p=>{ const info=ncmMap[p.name]||{ncm:'21069090',cfop:'5102'
             <h2>Enviar documentos</h2>
             <p>Selecione como deseja enviar a nota para <b>{order.customer}</b>.</p>
             <div className="nfClienteInfo">
-              <div className="nfCard"><p className="nfLabel">E-mail</p><b>financeiro@{order.customer.toLowerCase().replace(/\s+/g, '')}.com.br</b></div>
+              <div className="nfCard"><p className="nfLabel">E-mail</p><b>financeiro@{order.customer.toLowerCase().replace(/[^a-z0-9]/gi, '')}.com.br</b></div>
               <div className="nfCard"><p className="nfLabel">WhatsApp</p><b>{order.whatsapp}</b></div>
             </div>
             <div className="nfAnexos">
@@ -1393,13 +1644,140 @@ ${order.products.map(p=>{ const info=ncmMap[p.name]||{ncm:'21069090',cfop:'5102'
               <p className="nfLabel">Mensagem</p>
               <textarea defaultValue={`Olá, segue a nota fiscal referente ao seu pedido ${order.id}. Em caso de dúvidas, entre em contato conosco.\n\nAtenciosamente,\nSaborsan Distribuidora`} />
             </div>
-            <div className="nfActions">
-              <button className="nfBtnGhost" onClick={() => setStep('autorizada')}>Voltar</button>
-              <button className="btnSolid" onClick={finalizar}>Enviar agora</button>
+          </div>
+        )}
+
+        {/* Fixed footer buttons - all steps except 'enviando' */}
+        {step !== 'enviando' && (
+          <div className="nfFooter">
+            <div className="nfFooterActions">
+              {step === 'previa' && (
+                <>
+                  <button className="nfFooterPrimary" onClick={() => setStep('validacao')}>Validar nota</button>
+                  <button className="nfFooterBtn" onClick={onClose}>Cancelar</button>
+                </>
+              )}
+              {step === 'validacao' && (
+                <>
+                  <button className="nfFooterPrimary" onClick={startEnvio} disabled={!canSubmit || submitting}>
+                    {submitting ? 'Aguarde...' : 'Enviar para SEFAZ'}
+                  </button>
+                  <button className="nfFooterBtn" onClick={() => setStep('previa')}>Voltar</button>
+                </>
+              )}
+              {step === 'rejeitada' && (
+                <>
+                  <button className="nfFooterPrimary" onClick={handleRetry}>Tentar novamente</button>
+                  <button className="nfFooterBtn" onClick={finalizar}>Fechar</button>
+                </>
+              )}
+              {step === 'autorizada' && (
+                <>
+                  <button className="nfFooterPrimary" onClick={() => setStep('cliente')}>Enviar para cliente</button>
+                  <button className="nfFooterBtn" onClick={finalizar}>Fechar</button>
+                </>
+              )}
+              {step === 'cliente' && (
+                <>
+                  <button className="nfFooterPrimary" onClick={finalizar}>Enviar agora</button>
+                  <button className="nfFooterBtn" onClick={() => setStep('autorizada')}>Voltar</button>
+                </>
+              )}
             </div>
           </div>
         )}
 
+      </div>
+    </div>
+  )
+}
+
+function VerNotaModal({ order, onClose, onSendToClient }) {
+  const nfe = order.nfeData
+  const hasSent = !!order.nfeSentAt
+
+  const downloadFile = (type) => {
+    if (!nfe?.reference) return
+    window.open(`${API_URL}/api/emit-nfe?ref=${encodeURIComponent(nfe.reference)}&download=${type}`, '_blank')
+  }
+
+  const openNfe = () => {
+    if (nfe?.accessKey) {
+      window.open(`https://www.nfe.fazenda.gov.br/portal/consultaRecaptcha.aspx?tipoConsulta=completa&tipoConteudo=7PhJ%2BgAVw2g%3D&nfe=${nfe.accessKey}`, '_blank')
+    }
+  }
+
+  const sentLabel = order.nfeSentAt
+    ? `Enviado em ${new Date(order.nfeSentAt).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })} às ${new Date(order.nfeSentAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`
+    : 'Ainda não enviado'
+
+  return (
+    <div className="modalBackdrop">
+      <div className="detailModal verNotaModal">
+        <button className="closeBtn" onClick={onClose}><X /></button>
+        <div className="modalHeader">
+          <div>
+            <span>{order.id}</span>
+            <h2>Nota Fiscal Eletrônica</h2>
+            <p>{order.customer} • {order.city}</p>
+          </div>
+          <div className="verNotaHeaderBadges">
+            <Status status="Nota emitida" />
+            {nfe?.number && <small className="verNotaNum">NF-e nº {nfe.number}</small>}
+          </div>
+        </div>
+
+        {nfe ? (
+          <>
+            <div className="verNotaGrid">
+              {nfe.number && <div className="verNotaInfo"><small>Número</small><b>{nfe.number}</b></div>}
+              {nfe.series && <div className="verNotaInfo"><small>Série</small><b>{nfe.series}</b></div>}
+              {nfe.protocol && <div className="verNotaInfo"><small>Protocolo SEFAZ</small><b>{nfe.protocol}</b></div>}
+              {nfe.accessKey && <div className="verNotaInfo verNotaSpan"><small>Chave de acesso</small><b className="mono">{nfe.accessKey}</b></div>}
+            </div>
+
+            <div className="verNotaActions">
+              <button className="verNotaActionBtn" onClick={openNfe} disabled={!nfe.accessKey}>
+                <div className="verNotaActionIcon"><ExternalLink size={20} /></div>
+                <div className="verNotaActionText"><b>Ver NF-e</b><span>Consultar na SEFAZ</span></div>
+                <ChevronRight size={15} />
+              </button>
+
+              <button className="verNotaActionBtn" onClick={() => downloadFile('xml')} disabled={!nfe.reference}>
+                <div className="verNotaActionIcon"><FileDown size={20} /></div>
+                <div className="verNotaActionText"><b>Baixar XML</b><span>Arquivo XML da nota fiscal</span></div>
+                <ChevronRight size={15} />
+              </button>
+
+              <button className="verNotaActionBtn" onClick={() => downloadFile('danfe')} disabled={!nfe.reference}>
+                <div className="verNotaActionIcon"><ReceiptText size={20} /></div>
+                <div className="verNotaActionText"><b>Baixar DANFE</b><span>Documento auxiliar em PDF</span></div>
+                <ChevronRight size={15} />
+              </button>
+
+              <button className={`verNotaActionBtn${hasSent ? ' verNotaSent' : ''}`} onClick={() => !hasSent && onSendToClient(order.id)}>
+                <div className="verNotaActionIcon"><Send size={20} /></div>
+                <div className="verNotaActionText">
+                  <b>Enviar ao cliente</b>
+                  <span className={hasSent ? 'verNotaSentText' : ''}>{sentLabel}</span>
+                </div>
+                {hasSent ? <CheckCircle2 size={15} /> : <ChevronRight size={15} />}
+              </button>
+
+              <button className="verNotaActionBtn verNotaDanger">
+                <div className="verNotaActionIcon"><Ban size={20} /></div>
+                <div className="verNotaActionText"><b>Cancelar NF-e</b><span>Disponível nas primeiras 24h após emissão</span></div>
+                <ChevronRight size={15} />
+              </button>
+            </div>
+          </>
+        ) : (
+          <div className="verNotaUnavailable">
+            <FileText size={36} />
+            <p>Dados da nota não disponíveis nesta sessão.</p>
+            <small>Para acessar os documentos, utilize o painel da Focus NFe ou gere a nota novamente para este pedido.</small>
+          </div>
+        )}
       </div>
     </div>
   )
