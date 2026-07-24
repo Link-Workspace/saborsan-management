@@ -42,6 +42,9 @@ import {
   FileDown,
   ExternalLink,
   Ban,
+  UploadCloud,
+  FileText as FileTextIcon,
+  ClipboardEdit,
 } from 'lucide-react'
 import './styles.css'
 
@@ -315,6 +318,9 @@ function App() {
   const [verNotaOrder, setVerNotaOrder] = useState(null)
   const [removeConfirmOrder, setRemoveConfirmOrder] = useState(null)
   const [editOrder, setEditOrder] = useState(null)
+  const [removeConfirmProduct, setRemoveConfirmProduct] = useState(null)
+  const [editProduct, setEditProduct] = useState(null)
+  const [stockRefreshKey, setStockRefreshKey] = useState(0)
 
   const fetchOrders = () => {
     setOrdersLoading(true)
@@ -400,6 +406,24 @@ function App() {
     notify(`Pedido ${updatedOrder.id} atualizado com sucesso!`)
   }
 
+  const removeProduct = async (id) => {
+    try {
+      const res = await fetch(`${API_URL}/api/products`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ productId: id }),
+      })
+      if (!res.ok) throw new Error('Falha ao remover produto')
+    } catch {
+      notify('Erro ao remover produto do servidor.')
+      return
+    }
+    setRemoveConfirmProduct(null)
+    setSelectedProduct(null)
+    setStockRefreshKey((k) => k + 1)
+    notify('Produto removido com sucesso.')
+  }
+
   if (!employee) return <Login onLogin={setEmployee} />
 
   const title = navItems.find((item) => item.id === active)?.label || 'Dashboard'
@@ -447,7 +471,7 @@ function App() {
         {active === 'pedidos' && <Orders orders={orders} ordersLoading={ordersLoading} onSelect={setSelectedOrder} updateOrderStatus={updateOrderStatus} createInvoice={createInvoice} onGerarNota={setNotaFiscalOrder} onNewOrder={() => setNewOrderOpen(true)} onVerNota={setVerNotaOrder} />}
         {active === 'vendedores' && <Sellers />}
         {active === 'notas' && <Invoices orders={orders} onGerarNota={setNotaFiscalOrder} onVerNota={setVerNotaOrder} />}
-        {active === 'estoque' && <Stock onProduct={setSelectedProduct} />}
+        {active === 'estoque' && <Stock onProduct={setSelectedProduct} refreshKey={stockRefreshKey} />}
         {active === 'fornecedores' && <Suppliers onMessage={setSupplierModal} />}
         {active === 'compras' && <Purchases notify={notify} />}
         {active === 'entregas' && <Deliveries />}
@@ -459,12 +483,13 @@ function App() {
       </main>
 
       {selectedOrder && <OrderModal order={selectedOrder} onClose={() => setSelectedOrder(null)} updateOrderStatus={updateOrderStatus} createInvoice={createInvoice} onRemove={() => setRemoveConfirmOrder(selectedOrder)} onEdit={() => { setEditOrder(selectedOrder); setSelectedOrder(null) }} />}
-      {selectedProduct && <ProductModal product={selectedProduct} onClose={() => setSelectedProduct(null)} notify={notify} />}
+      {selectedProduct && <ProductModal product={selectedProduct} onClose={() => setSelectedProduct(null)} onRemove={() => setRemoveConfirmProduct(selectedProduct)} onEdit={() => { setEditProduct(selectedProduct); setSelectedProduct(null) }} />}
       {supplierModal && <SupplierModal supplier={supplierModal} onClose={() => setSupplierModal(null)} notify={notify} />}
       {notaFiscalOrder && <NotaFiscalModal order={notaFiscalOrder} onClose={() => setNotaFiscalOrder(null)} updateOrderStatus={updateOrderStatus} notify={notify} />}
       {verNotaOrder && <VerNotaModal order={verNotaOrder} onClose={() => setVerNotaOrder(null)} onSendToClient={sendNfeToClient} />}
       {notifOpen && <NotifPanel onClose={() => setNotifOpen(false)} />}
       {(newOrderOpen || editOrder) && <NewOrderModal onClose={() => { setNewOrderOpen(false); setEditOrder(null) }} onCreateOrder={createOrder} onUpdateOrder={updateOrder} editOrder={editOrder} />}
+      {editProduct && <NewProductModal editProduct={editProduct} onClose={() => setEditProduct(null)} onCreated={() => {}} onUpdated={() => { setStockRefreshKey((k) => k + 1); notify('Produto atualizado com sucesso!') }} />}
       {removeConfirmOrder && (
         <div className="cancelSepOverlay" onClick={(e) => { if (e.target.classList.contains('cancelSepOverlay')) setRemoveConfirmOrder(null) }}>
           <div className="cancelSepModal">
@@ -473,6 +498,18 @@ function App() {
             <div className="cancelSepActions">
               <button className="cancelSepConfirm" style={{background:'var(--red)'}} onClick={() => removeOrder(removeConfirmOrder.id)}>Sim, remover pedido</button>
               <button className="cancelSepDeny" onClick={() => setRemoveConfirmOrder(null)}>Não, voltar</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {removeConfirmProduct && (
+        <div className="cancelSepOverlay" onClick={(e) => { if (e.target.classList.contains('cancelSepOverlay')) setRemoveConfirmProduct(null) }}>
+          <div className="cancelSepModal">
+            <h3>Remover produto?</h3>
+            <p>O produto <b>{removeConfirmProduct.name}</b> será removido permanentemente do estoque.</p>
+            <div className="cancelSepActions">
+              <button className="cancelSepConfirm" style={{background:'var(--red)'}} onClick={() => removeProduct(removeConfirmProduct.id)}>Sim, remover produto</button>
+              <button className="cancelSepDeny" onClick={() => setRemoveConfirmProduct(null)}>Não, voltar</button>
             </div>
           </div>
         </div>
@@ -713,28 +750,395 @@ function Invoices({ orders, onGerarNota, onVerNota }) {
   )
 }
 
-function Stock({ onProduct }) {
+function NewProductModal({ onClose, onCreated, editProduct, onUpdated }) {
+  const [tab, setTab] = useState('manual')
+  const [form, setForm] = useState(() => editProduct ? {
+    name: editProduct.name || '',
+    category: editProduct.category || '',
+    price: editProduct.price ? String(editProduct.price) : '',
+    availableQuantity: editProduct.stock != null ? String(editProduct.stock) : '',
+    packaging: editProduct.unit || editProduct.packaging || '',
+    conservation: editProduct.temperature || editProduct.conservation || '',
+    description: editProduct.description || '',
+    details: editProduct.details || '',
+    preparation: editProduct.preparation || '',
+    idealFor: editProduct.idealFor || '',
+    badge: editProduct.badge || '',
+    imageUrl: editProduct.image || editProduct.imageUrl || '',
+  } : {
+    name: '', category: '', price: '', availableQuantity: '',
+    packaging: '', conservation: '', description: '', details: '',
+    preparation: '', idealFor: '', badge: '', imageUrl: '',
+  })
+  const [submitting, setSubmitting] = useState(false)
+  const [submitError, setSubmitError] = useState('')
+
+  // Upload tab state
+  const [dragOver, setDragOver] = useState(false)
+  const [parsedRows, setParsedRows] = useState(null)
+  const [parseError, setParseError] = useState('')
+  const [uploadSubmitting, setUploadSubmitting] = useState(false)
+  const [uploadResult, setUploadResult] = useState(null)
+  const fileInputRef = useRef(null)
+
+  const set = (k, v) => setForm((f) => ({ ...f, [k]: v }))
+
+  const canSubmit = form.name.trim() && form.category.trim() && form.price.trim()
+
+  const submitManual = async (e) => {
+    e.preventDefault()
+    if (!canSubmit || submitting) return
+    setSubmitError('')
+    setSubmitting(true)
+    try {
+      if (editProduct) {
+        const res = await fetch(`${API_URL}/api/products`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id: editProduct.id,
+            name: form.name.trim(),
+            category: form.category.trim(),
+            price: form.price,
+            availableQuantity: parseInt(form.availableQuantity || '0', 10),
+            packaging: form.packaging || null,
+            conservation: form.conservation || null,
+            description: form.description || null,
+            details: form.details || null,
+            preparation: form.preparation || null,
+            idealFor: form.idealFor || null,
+            badge: form.badge || null,
+            imageUrl: form.imageUrl || null,
+          }),
+        })
+        const data = await res.json()
+        if (!res.ok) throw new Error(data.error || 'Erro ao atualizar produto')
+        onUpdated && onUpdated()
+        onClose()
+        return
+      }
+      const res = await fetch(`${API_URL}/api/products`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: form.name.trim(),
+          category: form.category.trim(),
+          price: form.price,
+          availableQuantity: parseInt(form.availableQuantity || '0', 10),
+          packaging: form.packaging || null,
+          conservation: form.conservation || null,
+          description: form.description || null,
+          details: form.details || null,
+          preparation: form.preparation || null,
+          idealFor: form.idealFor || null,
+          badge: form.badge || null,
+          imageUrl: form.imageUrl || null,
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Erro ao criar produto')
+      onCreated()
+      onClose()
+    } catch (err) {
+      setSubmitError(err.message || (editProduct ? 'Erro ao atualizar produto. Tente novamente.' : 'Erro ao criar produto. Tente novamente.'))
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const parseTxt = (text) => {
+    const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
+    const rows = []
+    for (const line of lines) {
+      if (line.startsWith('#') || line.startsWith('//')) continue
+      const parts = line.split(';').map((p) => p.trim())
+      const [name, category, price, qty, packaging, conservation, description] = parts
+      if (!name && !category) continue
+      rows.push({
+        name: name || '',
+        category: category || '',
+        price: price || '0',
+        availableQuantity: parseInt(qty || '0', 10),
+        packaging: packaging || null,
+        conservation: conservation || null,
+        description: description || null,
+        valid: !!(name && category),
+      })
+    }
+    return rows
+  }
+
+  const handleFile = (file) => {
+    setParsedRows(null)
+    setParseError('')
+    setUploadResult(null)
+    if (!file) return
+    const ext = file.name.split('.').pop().toLowerCase()
+    if (!['txt', 'csv', 'pdf'].includes(ext)) {
+      setParseError('Formato não suportado. Use TXT, CSV ou PDF.')
+      return
+    }
+    const reader = new FileReader()
+    reader.onload = (e) => {
+      const text = e.target.result
+      const rows = parseTxt(text)
+      if (!rows.length) {
+        setParseError('Nenhum produto identificado. Verifique o formato do arquivo.')
+      } else {
+        setParsedRows(rows)
+      }
+    }
+    reader.onerror = () => setParseError('Erro ao ler o arquivo.')
+    reader.readAsText(file)
+  }
+
+  const submitUpload = async () => {
+    if (!parsedRows) return
+    const valid = parsedRows.filter((r) => r.valid)
+    if (!valid.length) return
+    setUploadSubmitting(true)
+    setUploadResult(null)
+    try {
+      const res = await fetch(`${API_URL}/api/products`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ products: valid }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Erro no envio')
+      setUploadResult(data)
+      if (data.created?.length) onCreated()
+    } catch (err) {
+      setParseError(err.message || 'Erro ao enviar produtos.')
+    } finally {
+      setUploadSubmitting(false)
+    }
+  }
+
   return (
-    <section className="pageStack">
-      <div className="sectionHeader"><div><p>Controle de produtos congelados</p></div><button className="btnSolid"><PackageCheck size={18} /> Entrada de estoque</button></div>
-      <div className="stockGrid">
-        {products.map((product) => {
-          const percent = Math.min(100, Math.round((product.stock / (product.min * 2)) * 100))
-          return (
-            <article className="stockCard" key={product.id} onClick={() => onProduct(product)}>
-              <img src={product.image} alt={product.name} />
-              <div className="stockBody">
-                <span>{product.category}</span>
-                <h3>{product.name}</h3>
-                <p>{product.supplier} • {product.temperature}</p>
-                <div className="stockLevel"><div style={{ width: `${percent}%` }}></div></div>
-                <div className="stockMeta"><b>{product.stock} {product.unit}</b><small>Mínimo: {product.min}</small></div>
+    <div className="modalBackdrop">
+      <div className="detailModal newProductModal">
+        <button className="closeBtn" onClick={onClose}><X /></button>
+        <div className="modalHeader">
+          <div>
+            <span>Estoque</span>
+            <h2>{editProduct ? 'Editar produto' : 'Entrada de estoque'}</h2>
+            <p>{editProduct ? 'Altere os dados do produto e salve as modificações' : 'Cadastre um novo produto manualmente ou importe via arquivo'}</p>
+          </div>
+          <PackageCheck size={36} style={{ color: 'var(--orange)', opacity: 0.5 }} />
+        </div>
+
+        <div className="newProductTabs">
+          <button className={`newProductTab${tab === 'manual' ? ' active' : ''}`} onClick={() => setTab('manual')}>
+            <ClipboardEdit size={16} /> {editProduct ? 'Dados do produto' : 'Cadastro manual'}
+          </button>
+          {!editProduct && (
+            <button className={`newProductTab${tab === 'upload' ? ' active' : ''}`} onClick={() => setTab('upload')}>
+              <UploadCloud size={16} /> Importar arquivo
+            </button>
+          )}
+        </div>
+
+        {tab === 'manual' && (
+          <form onSubmit={submitManual} style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden', minHeight: 0 }}>
+            <div className="newProductScrollArea">
+              <div className="newProductForm">
+                <label className="full">Nome do produto *
+                  <input placeholder="Ex: Pão de Queijo Tradicional" value={form.name} onChange={(e) => set('name', e.target.value)} required />
+                </label>
+                <label>Categoria *
+                  <input placeholder="Ex: Pão de queijo" value={form.category} onChange={(e) => set('category', e.target.value)} required />
+                </label>
+                <label>Preço base (R$) *
+                  <input type="number" step="0.01" min="0" placeholder="0,00" value={form.price} onChange={(e) => set('price', e.target.value)} required />
+                </label>
+                <label>Quantidade em estoque
+                  <input type="number" min="0" placeholder="0" value={form.availableQuantity} onChange={(e) => set('availableQuantity', e.target.value)} />
+                </label>
+                <label>Embalagem / Unidade
+                  <input placeholder="Ex: cx 5kg, balde 10L" value={form.packaging} onChange={(e) => set('packaging', e.target.value)} />
+                </label>
+                <label>Conservação / Temperatura
+                  <input placeholder="Ex: -18°C, Refrigerado" value={form.conservation} onChange={(e) => set('conservation', e.target.value)} />
+                </label>
+                <label className="full">Descrição
+                  <input placeholder="Breve descrição do produto" value={form.description} onChange={(e) => set('description', e.target.value)} />
+                </label>
+                <label className="full">Detalhes
+                  <textarea rows={2} placeholder="Informações adicionais sobre o produto" value={form.details} onChange={(e) => set('details', e.target.value)} />
+                </label>
+                <label>Indicado para
+                  <input placeholder="Ex: Padarias, cafeterias" value={form.idealFor} onChange={(e) => set('idealFor', e.target.value)} />
+                </label>
+                <label>Modo de preparo
+                  <input placeholder="Ex: Assar por 15 min a 180°C" value={form.preparation} onChange={(e) => set('preparation', e.target.value)} />
+                </label>
+                <label>Badge / Destaque
+                  <input placeholder="Ex: Mais vendido, Novo" value={form.badge} onChange={(e) => set('badge', e.target.value)} />
+                </label>
+                <label>URL da imagem
+                  <input placeholder="https://..." value={form.imageUrl} onChange={(e) => set('imageUrl', e.target.value)} />
+                </label>
               </div>
-            </article>
-          )
-        })}
+              {submitError && <small className="errorText" style={{ marginTop: 12, display: 'block' }}>{submitError}</small>}
+            </div>
+            <div className="newProductFooter">
+              <button type="button" onClick={onClose} disabled={submitting}>Cancelar</button>
+              <button type="submit" className="btnPrimary" disabled={!canSubmit || submitting}>
+                <CheckCircle2 size={17} /> {submitting ? 'Salvando...' : (editProduct ? 'Salvar alterações' : 'Salvar produto')}
+              </button>
+            </div>
+          </form>
+        )}
+
+        {tab === 'upload' && (
+          <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden', minHeight: 0 }}>
+            <div className="newProductScrollArea">
+              {!parsedRows && !uploadResult && (
+                <>
+                  <div
+                    className={`uploadZone${dragOver ? ' drag' : ''}`}
+                    onClick={() => fileInputRef.current?.click()}
+                    onDragOver={(e) => { e.preventDefault(); setDragOver(true) }}
+                    onDragLeave={() => setDragOver(false)}
+                    onDrop={(e) => { e.preventDefault(); setDragOver(false); handleFile(e.dataTransfer.files[0]) }}
+                  >
+                    <UploadCloud size={40} style={{ color: 'var(--orange)' }} />
+                    <p>Clique ou arraste o arquivo aqui</p>
+                    <small>Formatos aceitos: TXT, CSV, PDF</small>
+                    <input ref={fileInputRef} type="file" accept=".txt,.csv,.pdf" onChange={(e) => handleFile(e.target.files[0])} />
+                  </div>
+                  {parseError && <small className="errorText" style={{ marginTop: 10, display: 'block' }}>{parseError}</small>}
+                  <div className="uploadFormatHint">
+                    <b>Formato esperado (uma linha por produto):</b>
+                    <code>
+                      nome;categoria;preço;quantidade;embalagem;conservação;descrição<br />
+                      Pão de Queijo Tradicional;Pão de queijo;128.90;100;cx 5kg;-18°C;Produto congelado<br />
+                      Açaí Premium Balde;Açaí;154.90;50;balde 10L;-18°C;
+                    </code>
+                  </div>
+                </>
+              )}
+
+              {parsedRows && !uploadResult && (
+                <div className="uploadPreview">
+                  <div className="uploadPreviewHeader">
+                    <h4>{parsedRows.length} produto(s) identificado(s) — {parsedRows.filter((r) => r.valid).length} válido(s)</h4>
+                    <div className="uploadBtnRow">
+                      <button className="btnReset" onClick={() => { setParsedRows(null); setParseError(''); fileInputRef.current && (fileInputRef.current.value = '') }}>
+                        <X size={14} /> Trocar arquivo
+                      </button>
+                    </div>
+                  </div>
+                  <table className="uploadPreviewTable">
+                    <thead>
+                      <tr>
+                        <th>Nome</th>
+                        <th>Categoria</th>
+                        <th>Preço</th>
+                        <th>Qtd.</th>
+                        <th>Embalagem</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {parsedRows.map((row, i) => (
+                        <tr key={i} className={row.valid ? '' : 'err'}>
+                          <td>{row.name || <em>—</em>}</td>
+                          <td>{row.category || <em>—</em>}</td>
+                          <td>{row.price}</td>
+                          <td>{row.availableQuantity}</td>
+                          <td>{row.packaging || '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {parseError && <small className="errorText" style={{ marginTop: 8, display: 'block' }}>{parseError}</small>}
+                </div>
+              )}
+
+              {uploadResult && (
+                <div style={{ padding: '16px 0' }}>
+                  {uploadResult.created?.length > 0 && (
+                    <div className="noteBox" style={{ background: '#f0fdf4', borderColor: '#bbf7d0' }}>
+                      <b style={{ color: '#16a34a' }}><CheckCircle2 size={16} style={{ verticalAlign: 'middle' }} /> {uploadResult.created.length} produto(s) importado(s) com sucesso</b>
+                    </div>
+                  )}
+                  {uploadResult.errors?.length > 0 && (
+                    <div className="noteBox" style={{ background: '#fff5f5', borderColor: '#fecaca', marginTop: 10 }}>
+                      <b style={{ color: 'var(--red)' }}>{uploadResult.errors.length} produto(s) com erro</b>
+                      {uploadResult.errors.map((e, i) => <p key={i} style={{ fontSize: '.82rem', margin: '4px 0 0' }}>{e.name}: {e.error}</p>)}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div className="newProductFooter">
+              <button type="button" onClick={onClose}>Fechar</button>
+              {parsedRows && !uploadResult && (
+                <button
+                  className="btnPrimary"
+                  disabled={!parsedRows.filter((r) => r.valid).length || uploadSubmitting}
+                  onClick={submitUpload}
+                >
+                  <UploadCloud size={17} /> {uploadSubmitting ? 'Importando...' : `Importar ${parsedRows.filter((r) => r.valid).length} produto(s)`}
+                </button>
+              )}
+            </div>
+          </div>
+        )}
       </div>
-    </section>
+    </div>
+  )
+}
+
+function Stock({ onProduct, refreshKey }) {
+  const [stockProducts, setStockProducts] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [newProductOpen, setNewProductOpen] = useState(false)
+
+  const fetchProducts = () => {
+    setLoading(true)
+    fetch(`${API_URL}/api/products`)
+      .then((r) => r.json())
+      .then((data) => { if (data.products) setStockProducts(data.products) })
+      .catch(() => {})
+      .finally(() => setLoading(false))
+  }
+
+  useEffect(() => { fetchProducts() }, [refreshKey])
+
+  return (
+    <>
+      <section className="pageStack">
+        <div className="sectionHeader"><div><p>Controle de produtos congelados</p></div><button className="btnSolid" onClick={() => setNewProductOpen(true)}><PackageCheck size={18} /> Entrada de estoque</button></div>
+        {loading && <p className="loadingText">Carregando produtos...</p>}
+        <div className="stockGrid">
+          {!loading && stockProducts.length === 0 && <p className="emptyText">Nenhum produto encontrado.</p>}
+          {stockProducts.map((product) => {
+            const percent = product.min > 0 ? Math.min(100, Math.round((product.stock / (product.min * 2)) * 100)) : 100
+            return (
+              <article className="stockCard" key={product.id} onClick={() => onProduct(product)}>
+                {product.image && <img src={product.image} alt={product.name} />}
+                <div className="stockBody">
+                  <span>{product.category}</span>
+                  <h3>{product.name}</h3>
+                  <p>{[product.temperature, product.description].filter(Boolean).join(' • ')}</p>
+                  <div className="stockLevel"><div style={{ width: `${percent}%` }}></div></div>
+                  <div className="stockMeta"><b>{product.stock}{product.unit ? ` ${product.unit}` : ''}</b><small>{product.min > 0 ? `Mínimo: ${product.min}` : 'Sem mínimo definido'}</small></div>
+                </div>
+              </article>
+            )
+          })}
+        </div>
+      </section>
+      {newProductOpen && (
+        <NewProductModal
+          onClose={() => setNewProductOpen(false)}
+          onCreated={() => { fetchProducts() }}
+        />
+      )}
+    </>
   )
 }
 
@@ -1165,18 +1569,28 @@ function OrderModal({ order, onClose, updateOrderStatus, createInvoice, onRemove
   )
 }
 
-function ProductModal({ product, onClose, notify }) {
+function ProductModal({ product, onClose, onRemove, onEdit }) {
   return (
     <div className="modalBackdrop">
       <div className="productModal">
         <button className="closeBtn" onClick={onClose}><X /></button>
-        <img src={product.image} alt={product.name} />
+        {product.image && <img src={product.image} alt={product.name} />}
         <div>
           <span className="badge">{product.category}</span>
           <h2>{product.name}</h2>
-          <p>Produto controlado no estoque da Saborsan com gestão de validade, temperatura, fornecedor, custo e disponibilidade para pedidos do app.</p>
-          <div className="detailGrid"><div><b>Estoque</b><span>{product.stock} {product.unit}</span></div><div><b>Fornecedor</b><span>{product.supplier}</span></div><div><b>Temperatura</b><span>{product.temperature}</span></div><div><b>Preço base</b><span>{money(product.price)}</span></div></div>
-          <button className="btnSolid" onClick={() => notify(`Pedido de reposição criado para ${product.name}.`)}>Criar reposição</button>
+          <p>{product.description || 'Produto controlado no estoque da Saborsan com gestão de validade, temperatura, fornecedor, custo e disponibilidade para pedidos do app.'}</p>
+          <div className="detailGrid">
+            <div><b>Estoque</b><span>{product.stock}{product.unit ? ` ${product.unit}` : ''}</span></div>
+            {product.temperature && <div><b>Conservação</b><span>{product.temperature}</span></div>}
+            {product.packaging && <div><b>Embalagem</b><span>{product.packaging}</span></div>}
+            <div><b>Preço base</b><span>{money(product.price)}</span></div>
+            {product.idealFor && <div><b>Indicado para</b><span>{product.idealFor}</span></div>}
+            {product.preparation && <div><b>Preparo</b><span>{product.preparation}</span></div>}
+          </div>
+          <div className="orderModalFooter" style={{ marginTop: '16px' }}>
+            <button className="orderModalBtn orderModalBtnDanger" onClick={onRemove}>Remover</button>
+            <button className="orderModalBtn orderModalBtnPrimary" onClick={onEdit}>Editar</button>
+          </div>
         </div>
       </div>
     </div>
