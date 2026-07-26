@@ -1267,6 +1267,7 @@ function Suppliers({ onMessage, search = '' }) {
   const [newSupplierOpen, setNewSupplierOpen] = useState(false)
   const [editSupplier, setEditSupplier] = useState(null)
   const [transcript, setTranscript] = useState(null)
+  const [removeConfirmSupplier, setRemoveConfirmSupplier] = useState(null)
 
   useEffect(() => {
     setLoading(true)
@@ -1279,6 +1280,22 @@ function Suppliers({ onMessage, search = '' }) {
 
   const addSupplier = (s) => setSuppliersData((prev) => [...prev, s])
   const updateSupplier = (s) => setSuppliersData((prev) => prev.map((x) => x.id === s.id ? s : x))
+  const removeSupplier = async (id) => {
+    try {
+      const res = await fetch(`${API_URL}/api/suppliers`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id }),
+      })
+      if (!res.ok) throw new Error('Falha ao remover fornecedor')
+    } catch {
+      return
+    }
+    setSuppliersData((prev) => prev.filter((s) => s.id !== id))
+    setRemoveConfirmSupplier(null)
+    setNewSupplierOpen(false)
+    setEditSupplier(null)
+  }
 
   const filtered = !search ? suppliersData : suppliersData.filter((s) => s.name.toLowerCase().includes(search.toLowerCase()))
 
@@ -1320,14 +1337,27 @@ function Suppliers({ onMessage, search = '' }) {
           onCreated={addSupplier}
           editSupplier={editSupplier}
           onUpdated={updateSupplier}
+          onRemove={(supplier) => { setNewSupplierOpen(false); setRemoveConfirmSupplier(supplier) }}
         />
       )}
       {transcript && <SupplierTranscriptModal supplier={transcript} onClose={() => setTranscript(null)} />}
+      {removeConfirmSupplier && (
+        <div className="cancelSepOverlay" onClick={(e) => { if (e.target.classList.contains('cancelSepOverlay')) setRemoveConfirmSupplier(null) }}>
+          <div className="cancelSepModal">
+            <h3>Remover fornecedor?</h3>
+            <p>O fornecedor <b>{removeConfirmSupplier.name}</b> será removido permanentemente do sistema.</p>
+            <div className="cancelSepActions">
+              <button className="cancelSepConfirm" style={{ background: 'var(--red)' }} onClick={() => removeSupplier(removeConfirmSupplier.id)}>Sim, remover fornecedor</button>
+              <button className="cancelSepDeny" onClick={() => setRemoveConfirmSupplier(null)}>Não, voltar</button>
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   )
 }
 
-function NewSupplierModal({ onClose, onCreated, editSupplier, onUpdated }) {
+function NewSupplierModal({ onClose, onCreated, editSupplier, onUpdated, onRemove }) {
   const [form, setForm] = useState(() => editSupplier ? {
     name: editSupplier.name || '',
     foodTypes: editSupplier.foodTypes || '',
@@ -1340,7 +1370,17 @@ function NewSupplierModal({ onClose, onCreated, editSupplier, onUpdated }) {
   const [submitting, setSubmitting] = useState(false)
 
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }))
-  const canSubmit = form.name.trim() !== ''
+
+  const isDirty = editSupplier ? (
+    form.name !== (editSupplier.name || '') ||
+    form.foodTypes !== (editSupplier.foodTypes || '') ||
+    form.contactName !== (editSupplier.contactName || '') ||
+    form.contactPhone !== (editSupplier.contactPhone || '') ||
+    form.address !== (editSupplier.address || '') ||
+    form.leadTimeDays !== (editSupplier.leadTimeDays != null ? String(editSupplier.leadTimeDays) : '')
+  ) : true
+
+  const canSubmit = form.name.trim() !== '' && isDirty
 
   const submit = async (e) => {
     e.preventDefault()
@@ -1423,6 +1463,9 @@ function NewSupplierModal({ onClose, onCreated, editSupplier, onUpdated }) {
           <div className="newOrderFooter">
             {submitError && <small className="errorText">{submitError}</small>}
             <div className="newOrderFooterActions" style={{ marginLeft: 'auto' }}>
+              {editSupplier && (
+                <button type="button" className="orderModalBtn orderModalBtnDanger" onClick={() => onRemove(editSupplier)} disabled={submitting}>Remover</button>
+              )}
               <button type="button" onClick={onClose} disabled={submitting}>Cancelar</button>
               <button type="submit" className="btnPrimary" disabled={!canSubmit || submitting}>
                 <CheckCircle2 size={17} /> {submitting ? (editSupplier ? 'Salvando...' : 'Cadastrando...') : (editSupplier ? 'Salvar alterações' : 'Cadastrar fornecedor')}
