@@ -941,7 +941,6 @@ function NewProductModal({ onClose, onCreated, editProduct, onUpdated }) {
             <h2>{editProduct ? 'Editar produto' : 'Entrada de estoque'}</h2>
             <p>{editProduct ? 'Altere os dados do produto e salve as modificações' : 'Cadastre um novo produto manualmente ou importe via arquivo'}</p>
           </div>
-          <PackageCheck size={36} style={{ color: 'var(--orange)', opacity: 0.5 }} />
         </div>
 
         <div className="newProductTabs">
@@ -1034,7 +1033,6 @@ function NewProductModal({ onClose, onCreated, editProduct, onUpdated }) {
               {submitError && <small className="errorText" style={{ marginTop: 12, display: 'block' }}>{submitError}</small>}
             </div>
             <div className="newProductFooter">
-              <button type="button" onClick={onClose} disabled={submitting}>Cancelar</button>
               <button type="submit" className="btnPrimary" disabled={!canSubmit || submitting}>
                 <CheckCircle2 size={17} /> {submitting ? 'Salvando...' : (editProduct ? 'Salvar alterações' : 'Salvar produto')}
               </button>
@@ -1434,7 +1432,6 @@ function NewSupplierModal({ onClose, onCreated, editSupplier, onUpdated, onRemov
             <h2>{editSupplier ? 'Editar fornecedor' : 'Novo fornecedor'}</h2>
             <p>{editSupplier ? 'Altere os dados do fornecedor e salve as modificações' : 'Preencha os dados para cadastrar o fornecedor no sistema'}</p>
           </div>
-          <Factory size={36} style={{ color: 'var(--orange)', opacity: 0.5 }} />
         </div>
         <form onSubmit={submit}>
           <div className="newOrderScrollArea">
@@ -1466,7 +1463,6 @@ function NewSupplierModal({ onClose, onCreated, editSupplier, onUpdated, onRemov
               {editSupplier && (
                 <button type="button" className="orderModalBtn orderModalBtnDanger" onClick={() => onRemove(editSupplier)} disabled={submitting}>Remover</button>
               )}
-              <button type="button" onClick={onClose} disabled={submitting}>Cancelar</button>
               <button type="submit" className="btnPrimary" disabled={!canSubmit || submitting}>
                 <CheckCircle2 size={17} /> {submitting ? (editSupplier ? 'Salvando...' : 'Cadastrando...') : (editSupplier ? 'Salvar alterações' : 'Cadastrar fornecedor')}
               </button>
@@ -1758,7 +1754,6 @@ function NewOrderModal({ onClose, onCreateOrder, onUpdateOrder, editOrder }) {
             <h2>{editOrder ? 'Editar pedido' : 'Novo pedido'}</h2>
             <p>{editOrder ? 'Altere os dados do pedido e salve as modificações' : 'Preencha os dados do cliente e os produtos solicitados'}</p>
           </div>
-          <ShoppingCart size={36} style={{ color: 'var(--orange)', opacity: 0.5 }} />
         </div>
         <form onSubmit={submit}>
           <div className="newOrderScrollArea">
@@ -1840,7 +1835,6 @@ function NewOrderModal({ onClose, onCreateOrder, onUpdateOrder, editOrder }) {
             {submitError && <small className="errorText">{submitError}</small>}
             <div className="newOrderFooterActions">
               <button type="submit" className="btnPrimary" disabled={!canSubmit || submitting}><CheckCircle2 size={17} /> {submitting ? (editOrder ? 'Salvando...' : 'Criando...') : (editOrder ? 'Salvar alterações' : 'Criar pedido')}</button>
-              <button type="button" onClick={onClose} disabled={submitting}>Cancelar</button>
             </div>
           </div>
         </form>
@@ -2226,7 +2220,6 @@ function NewSellerModal({ onClose, onCreateSeller, editSeller, onUpdateSeller })
             <h2>{editSeller ? 'Editar vendedor' : 'Novo vendedor'}</h2>
             <p>{editSeller ? 'Altere os dados do vendedor e salve as modificações' : 'Preencha os dados do vendedor para cadastrá-lo no sistema'}</p>
           </div>
-          <UserRound size={36} style={{ color: 'var(--orange)', opacity: 0.5 }} />
         </div>
         <form onSubmit={submit}>
           <div className="newOrderScrollArea">
@@ -2259,7 +2252,6 @@ function NewSellerModal({ onClose, onCreateSeller, editSeller, onUpdateSeller })
           <div className="newOrderFooter">
             {submitError && <small className="errorText">{submitError}</small>}
             <div className="newOrderFooterActions" style={{ marginLeft: 'auto' }}>
-              <button type="button" onClick={onClose} disabled={submitting}>Cancelar</button>
               <button type="submit" className="btnPrimary" disabled={!canSubmit || submitting}>
                 <CheckCircle2 size={17} /> {submitting ? (editSeller ? 'Salvando...' : 'Cadastrando...') : (editSeller ? 'Salvar alterações' : 'Cadastrar vendedor')}
               </button>
