@@ -45,6 +45,9 @@ import {
   UploadCloud,
   FileText as FileTextIcon,
   ClipboardEdit,
+  LayoutGrid,
+  List,
+  ChevronDown,
 } from 'lucide-react'
 import './styles.css'
 
@@ -141,10 +144,10 @@ const initialOrders = [
 ]
 
 const suppliers = [
-  { id: 1, name: 'Queijos Serra Alta', type: 'Laticínios e massas', contact: 'Marcos', phone: '(49) 99910-1111', status: 'Ativo', lead: '2 dias', pending: 'Reposição de pão de queijo', reliability: 96 },
-  { id: 2, name: 'Forno Sul Alimentos', type: 'Assados e pizzas', contact: 'Carolina', phone: '(48) 99122-4400', status: 'Ativo', lead: '3 dias', pending: 'Tabela de preço mensal', reliability: 91 },
-  { id: 3, name: 'Amazônia Mix', type: 'Açaí e sobremesas', contact: 'Rafael', phone: '(47) 99700-2211', status: 'Atenção', lead: '5 dias', pending: 'Estoque de açaí baixo', reliability: 84 },
-  { id: 4, name: 'Frutas do Vale', type: 'Polpas e frutas', contact: 'Fernanda', phone: '(49) 99870-4451', status: 'Ativo', lead: '2 dias', pending: 'Sem pendências', reliability: 98 },
+  { id: 1, name: 'Queijos Serra Alta', type: 'Laticínios e massas', contact: 'Marcos', phone: '(49) 99910-1111', status: 'Ativo', lead: '2 dias', contactNumber: 9654564 },
+  { id: 2, name: 'Forno Sul Alimentos', type: 'Assados e pizzas', contact: 'Carolina', phone: '(48) 99122-4400', status: 'Ativo', lead: '3 dias', contactNumber: 9154564 },
+  { id: 3, name: 'Amazônia Mix', type: 'Açaí e sobremesas', contact: 'Rafael', phone: '(47) 99700-2211', status: 'Atenção', lead: '5 dias', contactNumber: 844565465 },
+  { id: 4, name: 'Frutas do Vale', type: 'Polpas e frutas', contact: 'Fernanda', phone: '(49) 99870-4451', status: 'Ativo', lead: '2 dias', contactNumber: 984564654 },
 ]
 
 const supplierTranscripts = {
@@ -1152,6 +1155,9 @@ function Stock({ onProduct, refreshKey, search = '' }) {
   const [stockProducts, setStockProducts] = useState([])
   const [loading, setLoading] = useState(true)
   const [newProductOpen, setNewProductOpen] = useState(false)
+  const [viewMode, setViewMode] = useState('grid')
+  const [viewMenuOpen, setViewMenuOpen] = useState(false)
+  const viewMenuRef = useRef(null)
 
   const fetchProducts = () => {
     setLoading(true)
@@ -1164,29 +1170,86 @@ function Stock({ onProduct, refreshKey, search = '' }) {
 
   useEffect(() => { fetchProducts() }, [refreshKey])
 
+  useEffect(() => {
+    if (!viewMenuOpen) return
+    const handleClick = (e) => {
+      if (viewMenuRef.current && !viewMenuRef.current.contains(e.target)) setViewMenuOpen(false)
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [viewMenuOpen])
+
+  const filtered = stockProducts.filter((p) => !search || p.name.toLowerCase().includes(search.toLowerCase()))
+
+  const viewOptions = [
+    { key: 'grid', icon: LayoutGrid, label: 'Cards com imagem' },
+    { key: 'grid-no-image', icon: Boxes, label: 'Cards sem imagem' },
+    { key: 'list', icon: List, label: 'Lista' },
+  ]
+
   return (
     <>
       <section className="pageStack">
-        <div className="sectionHeader"><div><p>Controle de produtos congelados</p></div><button className="btnSolid" onClick={() => setNewProductOpen(true)}><PackageCheck size={18} /> Entrada de estoque</button></div>
-        {loading && <p className="loadingText">Carregando produtos...</p>}
-        <div className="stockGrid">
-          {!loading && stockProducts.filter((p) => !search || p.name.toLowerCase().includes(search.toLowerCase())).length === 0 && <p className="emptyText">Nenhum produto encontrado.</p>}
-          {stockProducts.filter((p) => !search || p.name.toLowerCase().includes(search.toLowerCase())).map((product) => {
-            const percent = product.min > 0 ? Math.min(100, Math.round((product.stock / (product.min * 2)) * 100)) : 100
-            return (
-              <article className="stockCard" key={product.id} onClick={() => onProduct(product)}>
-                {product.image && <img src={product.image} alt={product.name} />}
-                <div className="stockBody">
-                  <span>{product.category}</span>
-                  <h3>{product.name}</h3>
-                  <p>{[product.temperature, product.description].filter(Boolean).join(' • ')}</p>
-                  <div className="stockLevel"><div style={{ width: `${percent}%` }}></div></div>
-                  <div className="stockMeta"><b>{product.stock}{product.unit ? ` ${product.unit}` : ''}</b><small>{product.min > 0 ? `Mínimo: ${product.min}` : 'Sem mínimo definido'}</small></div>
-                </div>
-              </article>
-            )
-          })}
+        <div className="sectionHeader stockSectionHeader">
+          <div><p>Controle de produtos congelados</p></div>
+          <div className="viewFilterWrap" ref={viewMenuRef}>
+            <button className="viewFilterBtn" onClick={() => setViewMenuOpen(!viewMenuOpen)}>
+              <LayoutGrid size={16} /> Visualização <ChevronDown size={14} style={{ transform: viewMenuOpen ? 'rotate(180deg)' : 'none', transition: 'transform .2s' }} />
+            </button>
+            {viewMenuOpen && (
+              <div className="viewFilterDropdown">
+                {viewOptions.map(({ key, icon: Icon, label }) => (
+                  <button key={key} className={viewMode === key ? 'active' : ''} onClick={() => { setViewMode(key); setViewMenuOpen(false) }}>
+                    <Icon size={16} /> {label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          <button className="btnSolid" onClick={() => setNewProductOpen(true)}><PackageCheck size={18} /> Entrada de estoque</button>
         </div>
+        {loading && <p className="loadingText">Carregando produtos...</p>}
+        {viewMode !== 'list' ? (
+          <div className="stockGrid">
+            {!loading && filtered.length === 0 && <p className="emptyText">Nenhum produto encontrado.</p>}
+            {filtered.map((product) => {
+              const percent = product.min > 0 ? Math.min(100, Math.round((product.stock / (product.min * 2)) * 100)) : 100
+              return (
+                <article className="stockCard" key={product.id} onClick={() => onProduct(product)}>
+                  {viewMode === 'grid' && product.image && <img src={product.image} alt={product.name} />}
+                  <div className="stockBody">
+                    <span>{product.category}</span>
+                    <h3>{product.name}</h3>
+                    <p>{[product.temperature, product.description].filter(Boolean).join(' • ')}</p>
+                    <div className="stockLevel"><div style={{ width: `${percent}%` }}></div></div>
+                    <div className="stockMeta"><b>{product.stock}{product.unit ? ` ${product.unit}` : ''}</b><small>{product.min > 0 ? `Mínimo: ${product.min}` : 'Sem mínimo definido'}</small></div>
+                  </div>
+                </article>
+              )
+            })}
+          </div>
+        ) : (
+          <div className="stockListView">
+            {!loading && filtered.length === 0 && <p className="emptyText">Nenhum produto encontrado.</p>}
+            {filtered.map((product) => {
+              const percent = product.min > 0 ? Math.min(100, Math.round((product.stock / (product.min * 2)) * 100)) : 100
+              return (
+                <article className="stockListItem" key={product.id} onClick={() => onProduct(product)}>
+                  <div className="stockListInfo">
+                    <span>{product.category}</span>
+                    <h3>{product.name}</h3>
+                    <p>{[product.temperature, product.description].filter(Boolean).join(' • ')}</p>
+                  </div>
+                  <div className="stockLevel stockListLevel"><div style={{ width: `${percent}%` }}></div></div>
+                  <div className="stockMeta stockListMeta">
+                    <b>{product.stock} Unidades</b>
+                    <small>{product.min > 0 ? `Mínimo: ${product.min}` : 'Sem mínimo definido'}</small>
+                  </div>
+                </article>
+              )
+            })}
+          </div>
+        )}
       </section>
       {newProductOpen && (
         <NewProductModal
@@ -1199,29 +1262,176 @@ function Stock({ onProduct, refreshKey, search = '' }) {
 }
 
 function Suppliers({ onMessage, search = '' }) {
+  const [suppliersData, setSuppliersData] = useState([])
+  const [loading, setLoading] = useState(false)
+  const [newSupplierOpen, setNewSupplierOpen] = useState(false)
+  const [editSupplier, setEditSupplier] = useState(null)
   const [transcript, setTranscript] = useState(null)
-  const filtered = !search ? suppliers : suppliers.filter((s) => s.name.toLowerCase().includes(search.toLowerCase()))
+
+  useEffect(() => {
+    setLoading(true)
+    fetch(`${API_URL}/api/suppliers`)
+      .then((r) => r.json())
+      .then((data) => { if (data.suppliers) setSuppliersData(data.suppliers) })
+      .catch(() => {})
+      .finally(() => setLoading(false))
+  }, [])
+
+  const addSupplier = (s) => setSuppliersData((prev) => [...prev, s])
+  const updateSupplier = (s) => setSuppliersData((prev) => prev.map((x) => x.id === s.id ? s : x))
+
+  const filtered = !search ? suppliersData : suppliersData.filter((s) => s.name.toLowerCase().includes(search.toLowerCase()))
+
   return (
     <section className="pageStack">
-      <div className="sectionHeader"><div><p>Relação com fornecedores de alimentos</p></div><button className="btnSolid"><Plus size={18} /> Novo fornecedor</button></div>
+      <div className="sectionHeader">
+        <div><p>Relação com fornecedores de alimentos</p></div>
+        <button className="btnSolid" onClick={() => { setEditSupplier(null); setNewSupplierOpen(true) }}>
+          <Plus size={18} /> Novo fornecedor
+        </button>
+      </div>
+      {loading && <p className="loadingText">Carregando fornecedores...</p>}
+      {!loading && filtered.length === 0 && <p className="emptyText">Nenhum fornecedor cadastrado.</p>}
       <div className="supplierGrid">
         {filtered.map((supplier) => (
           <article className="supplierCard" key={supplier.id}>
             <div className="supplierIcon"><Factory size={24} /></div>
-            <div className="supplierTop"><h3>{supplier.name}</h3><Status status={supplier.status} /></div>
-            <p>{supplier.type}</p>
-            <div className="supplierInfo"><span>Contato: <b>{supplier.contact}</b></span><span>Prazo médio: <b>{supplier.lead}</b></span><span>Confiabilidade: <b>{supplier.reliability}%</b></span></div>
-            <div className="supplierPending"><AlertTriangle size={16} />{supplier.pending}</div>
+            <div className="supplierTop"><h3>{supplier.name}</h3><Status status="Ativo" /></div>
+            <p>{supplier.foodTypes || '—'}</p>
+            <div className="supplierInfo">
+              <span>Contato: <b>{supplier.contactName || '—'}</b></span>
+              <span>Prazo médio: <b>{supplier.leadTimeDays != null ? `${supplier.leadTimeDays} dia${supplier.leadTimeDays !== 1 ? 's' : ''}` : '—'}</b></span>
+              <span>WhatsApp: <b>{supplier.contactPhone || '—'}</b></span>
+            </div>
+            {supplier.address && (
+              <div className="supplierInfo"><span><MapPin size={12} /> {supplier.address}</span></div>
+            )}
             <div className="orderActions">
               <button onClick={() => onMessage(supplier)}>Comunicar</button>
               <button onClick={() => setTranscript(supplier)}>Ver conversa IA</button>
-              <button>Solicitar cotação</button>
+              <button onClick={() => { setEditSupplier(supplier); setNewSupplierOpen(true) }}>Editar</button>
             </div>
           </article>
         ))}
       </div>
+      {newSupplierOpen && (
+        <NewSupplierModal
+          onClose={() => setNewSupplierOpen(false)}
+          onCreated={addSupplier}
+          editSupplier={editSupplier}
+          onUpdated={updateSupplier}
+        />
+      )}
       {transcript && <SupplierTranscriptModal supplier={transcript} onClose={() => setTranscript(null)} />}
     </section>
+  )
+}
+
+function NewSupplierModal({ onClose, onCreated, editSupplier, onUpdated }) {
+  const [form, setForm] = useState(() => editSupplier ? {
+    name: editSupplier.name || '',
+    foodTypes: editSupplier.foodTypes || '',
+    contactName: editSupplier.contactName || '',
+    contactPhone: editSupplier.contactPhone || '',
+    address: editSupplier.address || '',
+    leadTimeDays: editSupplier.leadTimeDays != null ? String(editSupplier.leadTimeDays) : '',
+  } : { name: '', foodTypes: '', contactName: '', contactPhone: '', address: '', leadTimeDays: '' })
+  const [submitError, setSubmitError] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+
+  const set = (k, v) => setForm((f) => ({ ...f, [k]: v }))
+  const canSubmit = form.name.trim() !== ''
+
+  const submit = async (e) => {
+    e.preventDefault()
+    if (!canSubmit || submitting) return
+    setSubmitError('')
+    setSubmitting(true)
+    try {
+      const payload = {
+        name: form.name.trim(),
+        foodTypes: form.foodTypes || null,
+        contactName: form.contactName || null,
+        contactPhone: form.contactPhone || null,
+        address: form.address || null,
+        leadTimeDays: form.leadTimeDays !== '' ? parseInt(form.leadTimeDays, 10) : null,
+      }
+      if (editSupplier) {
+        const res = await fetch(`${API_URL}/api/suppliers`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: editSupplier.id, ...payload }),
+        })
+        const data = await res.json()
+        if (!res.ok) throw new Error(data.error || 'Erro ao atualizar fornecedor')
+        onUpdated({ ...editSupplier, ...payload })
+        onClose()
+      } else {
+        const res = await fetch(`${API_URL}/api/suppliers`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        })
+        const data = await res.json()
+        if (!res.ok) throw new Error(data.error || 'Erro ao cadastrar fornecedor')
+        onCreated(data.supplier)
+        onClose()
+      }
+    } catch (err) {
+      setSubmitError(err.message || 'Erro ao salvar fornecedor. Tente novamente.')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <div className="modalBackdrop">
+      <div className="detailModal newOrderModal">
+        <button className="closeBtn" onClick={onClose}><X /></button>
+        <div className="modalHeader">
+          <div>
+            <span>{editSupplier ? 'Edição' : 'Cadastro'}</span>
+            <h2>{editSupplier ? 'Editar fornecedor' : 'Novo fornecedor'}</h2>
+            <p>{editSupplier ? 'Altere os dados do fornecedor e salve as modificações' : 'Preencha os dados para cadastrar o fornecedor no sistema'}</p>
+          </div>
+          <Factory size={36} style={{ color: 'var(--orange)', opacity: 0.5 }} />
+        </div>
+        <form onSubmit={submit}>
+          <div className="newOrderScrollArea">
+            <h3>Dados do fornecedor</h3>
+            <div className="settingsForm">
+              <label>Nome do fornecedor *
+                <input placeholder="Ex: Queijos Serra Alta" value={form.name} onChange={(e) => set('name', e.target.value)} required />
+              </label>
+              <label>Tipos de alimentos
+                <input placeholder="Ex: Laticínios, massas, frios" value={form.foodTypes} onChange={(e) => set('foodTypes', e.target.value)} />
+              </label>
+              <label>Nome do contato
+                <input placeholder="Ex: Marcos" value={form.contactName} onChange={(e) => set('contactName', e.target.value)} />
+              </label>
+              <label>WhatsApp / Número do contato
+                <input placeholder="(49) 99910-1111" value={form.contactPhone} onChange={(e) => set('contactPhone', e.target.value)} />
+              </label>
+              <label>Endereço
+                <input placeholder="Ex: Rua das Flores, 123 – Lages, SC" value={form.address} onChange={(e) => set('address', e.target.value)} />
+              </label>
+              <label>Prazo médio (dias)
+                <input type="number" min="0" placeholder="Ex: 2" value={form.leadTimeDays} onChange={(e) => set('leadTimeDays', e.target.value)} />
+              </label>
+            </div>
+          </div>
+          <div className="newOrderFooter">
+            {submitError && <small className="errorText">{submitError}</small>}
+            <div className="newOrderFooterActions" style={{ marginLeft: 'auto' }}>
+              <button type="button" onClick={onClose} disabled={submitting}>Cancelar</button>
+              <button type="submit" className="btnPrimary" disabled={!canSubmit || submitting}>
+                <CheckCircle2 size={17} /> {submitting ? (editSupplier ? 'Salvando...' : 'Cadastrando...') : (editSupplier ? 'Salvar alterações' : 'Cadastrar fornecedor')}
+              </button>
+            </div>
+          </div>
+        </form>
+      </div>
+    </div>
   )
 }
 
@@ -1660,8 +1870,8 @@ function SupplierModal({ supplier, onClose, notify }) {
     <div className="modalBackdrop">
       <div className="detailModal small">
         <button className="closeBtn" onClick={onClose}><X /></button>
-        <div className="modalHeader"><div><span>Comunicação com fornecedor</span><h2>{supplier.name}</h2><p>{supplier.contact} • {supplier.phone}</p></div><MessageCircle /></div>
-        <textarea defaultValue={`Olá, ${supplier.contact}. Tudo bem? Aqui é da Saborsan. Gostaríamos de consultar disponibilidade e prazo para reposição dos produtos relacionados a ${supplier.type}. Pode nos enviar as condições comerciais atualizadas?`} />
+        <div className="modalHeader"><div><span>Comunicação com fornecedor</span><h2>{supplier.name}</h2><p>{supplier.contactName || '—'} • {supplier.contactPhone || '—'}</p></div><MessageCircle /></div>
+        <textarea defaultValue={`Olá, ${supplier.contactName || supplier.name}. Tudo bem? Aqui é da Saborsan. Gostaríamos de consultar disponibilidade e prazo para reposição dos produtos relacionados a ${supplier.foodTypes || 'seus produtos'}. Pode nos enviar as condições comerciais atualizadas?`} />
         <div className="stackButtons horizontal"><button onClick={() => notify(`Mensagem demonstrativa enviada para ${supplier.name}.`)}>Enviar mensagem</button><button onClick={() => notify(`Cotação demonstrativa solicitada para ${supplier.name}.`)}>Solicitar cotação</button></div>
       </div>
     </div>
@@ -2005,11 +2215,11 @@ function NewSellerModal({ onClose, onCreateSeller, editSeller, onUpdateSeller })
           </div>
           <div className="newOrderFooter">
             {submitError && <small className="errorText">{submitError}</small>}
-            <div className="newOrderFooterActions">
+            <div className="newOrderFooterActions" style={{ marginLeft: 'auto' }}>
+              <button type="button" onClick={onClose} disabled={submitting}>Cancelar</button>
               <button type="submit" className="btnPrimary" disabled={!canSubmit || submitting}>
                 <CheckCircle2 size={17} /> {submitting ? (editSeller ? 'Salvando...' : 'Cadastrando...') : (editSeller ? 'Salvar alterações' : 'Cadastrar vendedor')}
               </button>
-              <button type="button" onClick={onClose} disabled={submitting}>Cancelar</button>
             </div>
           </div>
         </form>
@@ -2685,6 +2895,26 @@ function VerNotaModal({ order, onClose, onSendToClient }) {
 
 function SupplierTranscriptModal({ supplier, onClose }) {
   const transcript = supplierTranscripts[supplier.id]
+  if (!transcript) {
+    return (
+      <div className="nfOverlay" onClick={(e) => e.target.classList.contains('nfOverlay') && onClose()}>
+        <div className="transcriptModal">
+          <div className="transcriptHeader">
+            <div className="transcriptHeaderInfo">
+              <div className="supplierIcon small"><Factory size={16} /></div>
+              <div><h3>{supplier.name}</h3><p>Sem histórico de conversa IA</p></div>
+            </div>
+            <div className="transcriptHeaderRight">
+              <button className="nfClose" style={{position:'static'}} onClick={onClose}><X size={18} /></button>
+            </div>
+          </div>
+          <div className="transcriptBody">
+            <p style={{padding:'24px',color:'var(--muted)',textAlign:'center'}}>Nenhuma conversa registrada para este fornecedor ainda.</p>
+          </div>
+        </div>
+      </div>
+    )
+  }
   return (
     <div className="nfOverlay" onClick={(e) => e.target.classList.contains('nfOverlay') && onClose()}>
       <div className="transcriptModal">
@@ -2693,7 +2923,7 @@ function SupplierTranscriptModal({ supplier, onClose }) {
             <div className="supplierIcon small"><Factory size={16} /></div>
             <div>
               <h3>{supplier.name}</h3>
-              <p>{supplier.type} • {transcript.date}</p>
+              <p>{supplier.foodTypes || '—'} • {transcript ? transcript.date : ''}</p>
             </div>
           </div>
           <div className="transcriptHeaderRight">
@@ -2707,7 +2937,7 @@ function SupplierTranscriptModal({ supplier, onClose }) {
 
         <div className="transcriptBody">
           <div className="transcriptInfo">
-            <Bot size={14} /><span>Conversa conduzida pela IA da Saborsan com <b>{supplier.contact}</b> ({supplier.phone})</span>
+            <Bot size={14} /><span>Conversa conduzida pela IA da Saborsan com <b>{supplier.contactName || supplier.name}</b> ({supplier.contactPhone || '—'})</span>
           </div>
           <div className="transcriptMessages">
             {transcript.messages.map((msg, i) => (
@@ -2717,7 +2947,7 @@ function SupplierTranscriptModal({ supplier, onClose }) {
                 </div>
                 <div className="transcriptMsgContent">
                   <div className="transcriptMsgMeta">
-                    <b>{msg.from === 'ia' ? 'IA Saborsan' : supplier.contact}</b>
+                    <b>{msg.from === 'ia' ? 'IA Saborsan' : (supplier.contactName || supplier.name)}</b>
                     <small>{msg.time}</small>
                   </div>
                   <p>{msg.text}</p>
@@ -2730,11 +2960,11 @@ function SupplierTranscriptModal({ supplier, onClose }) {
         <div className="transcriptFooter">
           <div className="transcriptFooterInfo">
             <Smartphone size={14} />
-            <span>Contato do fornecedor: <b>{supplier.phone}</b></span>
+            <span>Contato do fornecedor: <b>{supplier.contactPhone || '—'}</b></span>
           </div>
           <div style={{display:'flex', gap:'10px'}}>
             <button className="nfBtnGhost" onClick={onClose}>Fechar</button>
-            <a className="btnSolid transcriptCallBtn" href={`tel:${supplier.phone.replace(/\D/g,'')}`}>
+            <a className="btnSolid transcriptCallBtn" href={`tel:${(supplier.contactPhone || '').replace(/\D/g,'')}`}>
               <Smartphone size={15} /> Ligar agora
             </a>
           </div>
