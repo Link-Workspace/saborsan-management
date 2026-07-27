@@ -44,22 +44,28 @@ app.http('supplier-purchases', {
       await ensureTable();
 
       const supplierId = request.query.get('supplierId');
-      if (!supplierId) {
-        return { status: 400, jsonBody: { error: 'supplierId é obrigatório.' } };
-      }
 
-      const id = parseInt(supplierId, 10);
-      if (isNaN(id)) {
-        return { status: 400, jsonBody: { error: 'supplierId inválido.' } };
+      let result;
+      if (supplierId) {
+        const id = parseInt(supplierId, 10);
+        if (isNaN(id)) {
+          return { status: 400, jsonBody: { error: 'supplierId inválido.' } };
+        }
+        result = await sql.query`
+          SELECT id, supplierId, purchaseName, description, quantity, totalAmount,
+                 scheduledPurchaseDate, completedAt, status, notes, createdAt, updatedAt
+          FROM SupplierPurchases
+          WHERE supplierId = ${id}
+          ORDER BY createdAt DESC
+        `;
+      } else {
+        result = await sql.query`
+          SELECT id, supplierId, purchaseName, description, quantity, totalAmount,
+                 scheduledPurchaseDate, completedAt, status, notes, createdAt, updatedAt
+          FROM SupplierPurchases
+          ORDER BY createdAt DESC
+        `;
       }
-
-      const result = await sql.query`
-        SELECT id, supplierId, purchaseName, description, quantity, totalAmount,
-               scheduledPurchaseDate, completedAt, status, notes, createdAt, updatedAt
-        FROM SupplierPurchases
-        WHERE supplierId = ${id}
-        ORDER BY createdAt DESC
-      `;
 
       return {
         jsonBody: {

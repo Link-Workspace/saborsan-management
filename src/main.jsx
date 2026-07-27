@@ -1262,6 +1262,7 @@ function Stock({ onProduct, refreshKey, search = '' }) {
 function Suppliers({ onMessage, search = '' }) {
   const [suppliersData, setSuppliersData] = useState([])
   const [loading, setLoading] = useState(false)
+  const [scheduledCounts, setScheduledCounts] = useState({})
   const [newSupplierOpen, setNewSupplierOpen] = useState(false)
   const [editSupplier, setEditSupplier] = useState(null)
   const [detailSupplier, setDetailSupplier] = useState(null)
@@ -1275,6 +1276,20 @@ function Suppliers({ onMessage, search = '' }) {
       .then((data) => { if (data.suppliers) setSuppliersData(data.suppliers) })
       .catch(() => {})
       .finally(() => setLoading(false))
+    fetch(`${API_URL}/api/supplier-purchases`)
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.purchases) {
+          const counts = {}
+          data.purchases.forEach((p) => {
+            if (p.status !== 'Concluída' && !p.completedAt) {
+              counts[p.supplierId] = (counts[p.supplierId] || 0) + 1
+            }
+          })
+          setScheduledCounts(counts)
+        }
+      })
+      .catch(() => {})
   }, [])
 
   const addSupplier = (s) => setSuppliersData((prev) => [...prev, s])
@@ -1320,9 +1335,9 @@ function Suppliers({ onMessage, search = '' }) {
               <span>Prazo médio: <b>{supplier.leadTimeDays != null ? `${supplier.leadTimeDays} dia${supplier.leadTimeDays !== 1 ? 's' : ''}` : '—'}</b></span>
               <span>WhatsApp: <b>{supplier.contactPhone || '—'}</b></span>
             </div>
-            {supplier.address && (
-              <div className="supplierInfo"><span><MapPin size={12} /> {supplier.address}</span></div>
-            )}
+            <div className="supplierInfo">
+              <span>Compras agendadas: <b>{scheduledCounts[supplier.id] ?? 0}</b></span>
+            </div>
             <div className="orderActions">
               <button onClick={() => setTranscript(supplier)}>Ver conversa IA</button>
               <button onClick={() => setDetailSupplier(supplier)}>Detalhes</button>
@@ -1473,10 +1488,8 @@ function SupplierDetailModal({ supplier, onClose, onEdit, onRemove }) {
           )}
         </div>
         <div className="newOrderFooter">
-          <div className="newOrderFooterActions">
+          <div className="newOrderFooterActions" style={{ marginLeft: 'auto' }}>
             <button type="button" className="orderModalBtn orderModalBtnDanger" onClick={() => onRemove(supplier)}>Remover</button>
-          </div>
-          <div className="newOrderFooterActions">
             <button type="button" className="btnPrimary" onClick={() => onEdit(supplier)}>
               <ClipboardEdit size={16} /> Editar
             </button>
@@ -1592,9 +1605,6 @@ function NewSupplierModal({ onClose, onCreated, editSupplier, onUpdated, onRemov
           <div className="newOrderFooter">
             {submitError && <small className="errorText">{submitError}</small>}
             <div className="newOrderFooterActions" style={{ marginLeft: 'auto' }}>
-              {editSupplier && (
-                <button type="button" className="orderModalBtn orderModalBtnDanger" onClick={() => onRemove(editSupplier)} disabled={submitting}>Remover</button>
-              )}
               <button type="submit" className="btnPrimary" disabled={!canSubmit || submitting}>
                 <CheckCircle2 size={17} /> {submitting ? (editSupplier ? 'Salvando...' : 'Cadastrando...') : (editSupplier ? 'Salvar alterações' : 'Cadastrar fornecedor')}
               </button>
