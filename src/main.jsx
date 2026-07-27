@@ -1616,12 +1616,221 @@ function NewSupplierModal({ onClose, onCreated, editSupplier, onUpdated, onRemov
   )
 }
 
+function SendPurchaseModal({ suggestion, suppliers, onClose, notify, onConfirmed }) {
+  const defaultTime = useMemo(() => {
+    try { return localStorage.getItem('saborsan_purchase_default_time') || '09:00' } catch { return '09:00' }
+  }, [])
+
+  const bestSupplier = useMemo(() => {
+    if (!suppliers.length) return null
+    const byName = suppliers.find((s) => s.name.toLowerCase() === suggestion.supplier.toLowerCase())
+    if (byName) return byName
+    const byType = suppliers.find((s) =>
+      s.foodTypes && s.foodTypes.toLowerCase().includes(suggestion.category.toLowerCase())
+    )
+    return byType || null
+  }, [suppliers, suggestion])
+
+  const [selectedSupplierId, setSelectedSupplierId] = useState(() => bestSupplier?.id || (suppliers[0]?.id ?? ''))
+  const [scheduleMode, setScheduleMode] = useState('default')
+  const [customDate, setCustomDate] = useState(() => new Date().toISOString().split('T')[0])
+  const [customTime, setCustomTime] = useState('09:00')
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState('')
+
+  const selectedSupplier = suppliers.find((s) => s.id === selectedSupplierId)
+  const scheduledDate = scheduleMode === 'custom' ? customDate : new Date().toISOString().split('T')[0]
+  const scheduledTime = scheduleMode === 'custom' ? customTime : defaultTime
+
+  const submit = async () => {
+    if (!selectedSupplierId) { setError('Selecione um fornecedor.'); return }
+    setError('')
+    setSubmitting(true)
+    try {
+      const scheduledDateTime = new Date(`${scheduledDate}T${scheduledTime}:00`)
+
+      const purchaseRes = await fetch(`${API_URL}/api/supplier-purchases`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          supplierId: selectedSupplierId,
+          purchaseName: suggestion.item,
+          description: suggestion.reason,
+          quantity: suggestion.qty,
+          totalAmount: suggestion.value,
+          scheduledPurchaseDate: scheduledDateTime.toISOString(),
+          status: 'Pendente',
+          notes: `${suggestion.qty} ${suggestion.unit}`,
+        }),
+      })
+      const purchaseData = await purchaseRes.json()
+      if (!purchaseRes.ok) throw new Error(purchaseData.error || 'Erro ao registrar compra no fornecedor.')
+
+      const planningTitle = `Compra: ${suggestion.item} com ${selectedSupplier?.name || suggestion.supplier}`
+      const planningRes = await fetch(`${API_URL}/api/purchase-planning`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: planningTitle,
+          scheduledDate,
+          notes: `${suggestion.qty} ${suggestion.unit} — ${money(suggestion.value)}`,
+        }),
+      })
+      const planningData = await planningRes.json()
+      if (!planningRes.ok) throw new Error(planningData.error || 'Erro ao agendar no planejamento.')
+
+      notify(`Compra de ${suggestion.item} registrada para ${selectedSupplier?.name || suggestion.supplier}.`)
+      onConfirmed(planningData.item)
+      onClose()
+    } catch (err) {
+      setError(err.message || 'Erro ao confirmar compra.')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <div className="modalBackdrop">
+      <div className="detailModal newOrderModal">
+        <button className="closeBtn" onClick={onClose}><X /></button>
+        <div className="modalHeader">
+          <div>
+            <span>Compras</span>
+            <h2>Enviar para fornecedor</h2>
+            <p>Confirme o fornecedor e o agendamento desta compra</p>
+          </div>
+        </div>
+        <div className="newOrderScrollArea">
+          <h3>Produto solicitado</h3>
+          <div className="supplierDetailGrid">
+            <div className="supplierDetailItem"><span>Item</span><b>{suggestion.item}</b></div>
+            <div className="supplierDetailItem"><span>Quantidade</span><b>{suggestion.qty} {suggestion.unit}</b></div>
+            <div className="supplierDetailItem"><span>Valor estimado</span><b>{money(suggestion.value)}</b></div>
+            <div className="supplierDetailItem supplierDetailFull"><span>Motivo da sugestão</span><b>{suggestion.reason}</b></div>
+          </div>
+
+          <h3 className="newOrderSectionTitle">Fornecedor</h3>
+          {bestSupplier && (
+            <div
+              className={`sendPurchaseSuggested${selectedSupplierId === bestSupplier.id ? ' selected' : ''}`}
+              onClick={() => setSelectedSupplierId(bestSupplier.id)}
+            >
+              <b><Sparkles size={13} style={{ color: 'var(--orange)', verticalAlign: 'middle', marginRight: 5 }} />Sugerido: {bestSupplier.name}</b>
+              <p>{bestSupplier.foodTypes || '—'} &bull; Contato: {bestSupplier.contactName || '—'} &bull; Prazo: {bestSupplier.leadTimeDays != null ? `${bestSupplier.leadTimeDays} dia(s)` : '—'}</p>
+            </div>
+          )}
+          <div className="settingsForm" style={{ marginTop: 10 }}>
+            <label>Selecionar fornecedor
+              <select value={selectedSupplierId || ''} onChange={(e) => setSelectedSupplierId(Number(e.target.value))}>
+                <option value="">Selecione...</option>
+                {suppliers.map((s) => (
+                  <option key={s.id} value={s.id}>{s.name}{s.id === bestSupplier?.id ? ' ★ Sugerido' : ''}</option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          <h3 className="newOrderSectionTitle">Agendamento</h3>
+          <div className="iaModeSelector">
+            <button type="button" className={`iaModeBtn${scheduleMode === 'default' ? ' active' : ''}`} onClick={() => setScheduleMode('default')}>
+              <Clock3 size={18} />
+              <div><b>Horário padrão</b><small>Hoje, às {defaultTime} — conforme configurações</small></div>
+            </button>
+            <button type="button" className={`iaModeBtn${scheduleMode === 'custom' ? ' active' : ''}`} onClick={() => setScheduleMode('custom')}>
+              <CalendarDays size={18} />
+              <div><b>Data e hora personalizadas</b><small>Escolha quando realizar esta compra</small></div>
+            </button>
+          </div>
+          {scheduleMode === 'custom' && (
+            <div className="settingsForm settingsTwoCols" style={{ marginTop: 12 }}>
+              <label>Data<input type="date" value={customDate} min={new Date().toISOString().split('T')[0]} onChange={(e) => setCustomDate(e.target.value)} /></label>
+              <label>Horário<input type="time" value={customTime} onChange={(e) => setCustomTime(e.target.value)} /></label>
+            </div>
+          )}
+
+          {error && <small className="errorText" style={{ marginTop: 12, display: 'block' }}>{error}</small>}
+        </div>
+        <div className="newOrderFooter">
+          <div className="newOrderFooterActions" style={{ marginLeft: 'auto' }}>
+            <button type="button" onClick={onClose}>Cancelar</button>
+            <button type="button" className="btnPrimary" disabled={!selectedSupplierId || submitting} onClick={submit}>
+              <CheckCircle2 size={17} /> {submitting ? 'Confirmando...' : 'Confirmar compra'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function Purchases({ notify }) {
+  const [planningItems, setPlanningItems] = useState([])
+  const [planningLoading, setPlanningLoading] = useState(true)
+  const [suppliersData, setSuppliersData] = useState([])
+  const [sendModal, setSendModal] = useState(null)
+
+  useEffect(() => {
+    setPlanningLoading(true)
+    fetch(`${API_URL}/api/purchase-planning`)
+      .then((r) => r.json())
+      .then((data) => { if (data.items) setPlanningItems(data.items) })
+      .catch(() => {})
+      .finally(() => setPlanningLoading(false))
+
+    fetch(`${API_URL}/api/suppliers`)
+      .then((r) => r.json())
+      .then((data) => { if (data.suppliers) setSuppliersData(data.suppliers) })
+      .catch(() => {})
+  }, [])
+
   const purchaseSuggestions = [
-    { item: 'Açaí Premium Balde', supplier: 'Amazônia Mix', qty: '24 baldes', reason: 'Estoque abaixo do mínimo e alta saída no fim de semana', value: 3717.6 },
-    { item: 'Mix de Salgados', supplier: 'Salgados San Pietro', qty: '18 caixas', reason: 'Reposição preventiva para pedidos recorrentes', value: 1614.6 },
-    { item: 'Croissant Folhado', supplier: 'La Maison Congelados', qty: '12 caixas', reason: 'Crescimento de 22% em cafeterias', value: 1344.0 },
+    { item: 'Açaí Premium Balde', category: 'Açaí', supplier: 'Amazônia Mix', qty: 24, unit: 'baldes', reason: 'Estoque abaixo do mínimo e alta saída no fim de semana', value: 3717.6 },
+    { item: 'Mix de Salgados', category: 'Salgados', supplier: 'Salgados San Pietro', qty: 18, unit: 'caixas', reason: 'Reposição preventiva para pedidos recorrentes', value: 1614.6 },
+    { item: 'Croissant Folhado', category: 'Croissant', supplier: 'La Maison Congelados', qty: 12, unit: 'caixas', reason: 'Crescimento de 22% em cafeterias', value: 1344.0 },
   ]
+
+  const getDayLabel = (dateStr) => {
+    const date = new Date(dateStr + 'T00:00:00')
+    const today = new Date()
+    const tomorrow = new Date(today)
+    tomorrow.setDate(today.getDate() + 1)
+    if (date.toDateString() === today.toDateString()) return 'Hoje'
+    if (date.toDateString() === tomorrow.toDateString()) return 'Amanhã'
+    const fullDays = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado']
+    const diffMs = date - new Date(today.getFullYear(), today.getMonth(), today.getDate())
+    const diffDays = Math.round(diffMs / (1000 * 60 * 60 * 24))
+    if (diffDays > 0 && diffDays < 7) return fullDays[date.getDay()]
+    return date.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })
+  }
+
+  const completePlanningItem = (id) => {
+    fetch(`${API_URL}/api/purchase-planning`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, completed: true }),
+    }).catch(() => {})
+    setPlanningItems((prev) => prev.map((item) => item.id === id ? { ...item, completed: true } : item))
+  }
+
+  const removePlanningItem = (id) => {
+    fetch(`${API_URL}/api/purchase-planning`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id }),
+    }).catch(() => {})
+    setPlanningItems((prev) => prev.filter((item) => item.id !== id))
+  }
+
+  const handleSendConfirmed = (newItem) => {
+    if (newItem) {
+      setPlanningItems((prev) =>
+        [...prev, newItem].sort((a, b) => new Date(a.scheduledDate) - new Date(b.scheduledDate))
+      )
+    }
+  }
+
+  const activeItems = planningItems.filter((item) => !item.completed)
+
   return (
     <section className="pageStack">
       <div className="sectionHeader"><div><p>Compras, reposição e cotação</p></div><button className="btnSolid"><Send size={18} /> Enviar cotações</button></div>
@@ -1631,21 +1840,43 @@ function Purchases({ notify }) {
           {purchaseSuggestions.map((item) => (
             <div className="purchaseLine" key={item.item}>
               <div><b>{item.item}</b><span>{item.reason}</span><small>{item.supplier}</small></div>
-              <strong>{item.qty}</strong>
+              <strong>{item.qty} {item.unit}</strong>
               <em>{money(item.value)}</em>
-              <button onClick={() => notify(`Cotação demonstrativa enviada para ${item.supplier}.`)}>Enviar</button>
+              <button onClick={() => setSendModal(item)}>Enviar</button>
             </div>
           ))}
         </div>
         <div className="card automationCard">
           <div className="cardHeader"><div><p>Planejamento</p><h3>Próximas compras</h3></div><CalendarDays /></div>
           <div className="calendarList">
-            <div><b>Hoje</b><span>Enviar cotação de açaí e salgados</span></div>
-            <div><b>Amanhã</b><span>Confirmar entrega da linha de assados</span></div>
-            <div><b>Sexta</b><span>Revisar estoque para fim de semana</span></div>
+            {planningLoading && <p className="loadingText" style={{ fontSize: '.85rem', margin: 0 }}>Carregando...</p>}
+            {!planningLoading && activeItems.length === 0 && (
+              <p className="emptyText" style={{ fontSize: '.85rem', margin: 0 }}>Nenhuma compra agendada.</p>
+            )}
+            {activeItems.map((item) => (
+              <div key={item.id} className="calendarItemRow">
+                <div>
+                  <b>{getDayLabel(item.scheduledDate)}</b>
+                  <span>{item.title}</span>
+                </div>
+                <div className="calendarItemActions">
+                  <button className="calendarItemBtn done" title="Marcar como concluído" onClick={() => completePlanningItem(item.id)}><CheckCircle2 size={14} /></button>
+                  <button className="calendarItemBtn remove" title="Remover" onClick={() => removePlanningItem(item.id)}><X size={14} /></button>
+                </div>
+              </div>
+            ))}
           </div>
         </div>
       </div>
+      {sendModal && (
+        <SendPurchaseModal
+          suggestion={sendModal}
+          suppliers={suppliersData}
+          onClose={() => setSendModal(null)}
+          notify={notify}
+          onConfirmed={handleSendConfirmed}
+        />
+      )}
     </section>
   )
 }
@@ -2074,46 +2305,96 @@ function ReportCard({ icon: Icon, title, value, text }) {
 }
 
 function Settings({ notify }) {
-  const [form, setForm] = useState({
-    empresa: 'Saborsan Distribuidora',
-    cnpj: '12.345.678/0001-99',
-    email: 'contato@saborsan.com.br',
-    telefone: '(49) 3224-0000',
-    cidade: 'Lages - SC',
-    tempMin: '-20',
-    tempMax: '-15',
-    estoqueAlerta: '10',
-    notifEmail: true,
-    notifApp: true,
-    notifEstoque: true,
-    notifEntregas: true,
-    tema: 'claro',
-    idioma: 'pt-BR',
-    versao: '1.0.0',
-    entregadorNome: 'João Carlos',
-    entregadorTelefone: '(49) 99811-3302',
-    entregadorNotifPedido: true,
-    entregadorNotifRota: true,
-    relatorioEmail: 'gerencia@saborsan.com.br',
-    relatorioFreq: 'mensal',
-    relatorioDia: '1',
-    relatorioHora: '08:00',
-    relatorioVendas: true,
-    relatorioEstoque: true,
-    relatorioFinanceiro: true,
-    relatorioEntregas: false,
-    iaLigarModo: 'ia',
-    iaLigarDia: 'segunda',
-    iaLigarHora: '09:00',
-    iaLigarContato: '(49) 99821-4410',
-    iaLigarAtivo: true,
+  const [form, setForm] = useState(() => {
+    try {
+      const stored = localStorage.getItem('saborsan_settings')
+      const saved = stored ? JSON.parse(stored) : {}
+      return {
+        empresa: 'Saborsan Distribuidora',
+        cnpj: '12.345.678/0001-99',
+        email: 'contato@saborsan.com.br',
+        telefone: '(49) 3224-0000',
+        cidade: 'Lages - SC',
+        tempMin: '-20',
+        tempMax: '-15',
+        estoqueAlerta: '10',
+        compraPadraoHora: '09:00',
+        notifEmail: true,
+        notifApp: true,
+        notifEstoque: true,
+        notifEntregas: true,
+        tema: 'claro',
+        idioma: 'pt-BR',
+        versao: '1.0.0',
+        entregadorNome: 'João Carlos',
+        entregadorTelefone: '(49) 99811-3302',
+        entregadorNotifPedido: true,
+        entregadorNotifRota: true,
+        relatorioEmail: 'gerencia@saborsan.com.br',
+        relatorioFreq: 'mensal',
+        relatorioDia: '1',
+        relatorioHora: '08:00',
+        relatorioVendas: true,
+        relatorioEstoque: true,
+        relatorioFinanceiro: true,
+        relatorioEntregas: false,
+        iaLigarModo: 'ia',
+        iaLigarDia: 'segunda',
+        iaLigarHora: '09:00',
+        iaLigarContato: '(49) 99821-4410',
+        iaLigarAtivo: true,
+        ...saved,
+      }
+    } catch {
+      return {
+        empresa: 'Saborsan Distribuidora',
+        cnpj: '12.345.678/0001-99',
+        email: 'contato@saborsan.com.br',
+        telefone: '(49) 3224-0000',
+        cidade: 'Lages - SC',
+        tempMin: '-20',
+        tempMax: '-15',
+        estoqueAlerta: '10',
+        compraPadraoHora: '09:00',
+        notifEmail: true,
+        notifApp: true,
+        notifEstoque: true,
+        notifEntregas: true,
+        tema: 'claro',
+        idioma: 'pt-BR',
+        versao: '1.0.0',
+        entregadorNome: 'João Carlos',
+        entregadorTelefone: '(49) 99811-3302',
+        entregadorNotifPedido: true,
+        entregadorNotifRota: true,
+        relatorioEmail: 'gerencia@saborsan.com.br',
+        relatorioFreq: 'mensal',
+        relatorioDia: '1',
+        relatorioHora: '08:00',
+        relatorioVendas: true,
+        relatorioEstoque: true,
+        relatorioFinanceiro: true,
+        relatorioEntregas: false,
+        iaLigarModo: 'ia',
+        iaLigarDia: 'segunda',
+        iaLigarHora: '09:00',
+        iaLigarContato: '(49) 99821-4410',
+        iaLigarAtivo: true,
+      }
+    }
   })
 
   const set = (key, value) => setForm((f) => ({ ...f, [key]: value }))
 
   return (
     <section className="pageStack">
-      <div className="sectionHeader"><div><p>Preferências e dados do sistema</p></div><button className="btnSolid" onClick={() => notify('Configurações salvas com sucesso.')}><CheckCircle2 size={18} /> Salvar alterações</button></div>
+      <div className="sectionHeader"><div><p>Preferências e dados do sistema</p></div><button className="btnSolid" onClick={() => {
+        try {
+          localStorage.setItem('saborsan_settings', JSON.stringify(form))
+          localStorage.setItem('saborsan_purchase_default_time', form.compraPadraoHora)
+        } catch {}
+        notify('Configurações salvas com sucesso.')
+      }}><CheckCircle2 size={18} /> Salvar alterações</button></div>
 
       <div className="settingsGrid">
         {/* Dados da empresa */}
@@ -2135,6 +2416,7 @@ function Settings({ notify }) {
             <label>Temperatura mínima (°C)<input type="number" value={form.tempMin} onChange={(e) => set('tempMin', e.target.value)} /></label>
             <label>Temperatura máxima (°C)<input type="number" value={form.tempMax} onChange={(e) => set('tempMax', e.target.value)} /></label>
             <label>Alertar estoque quando abaixo de (%)<input type="number" value={form.estoqueAlerta} onChange={(e) => set('estoqueAlerta', e.target.value)} /></label>
+            <label>Horário padrão de compras<input type="time" value={form.compraPadraoHora} onChange={(e) => set('compraPadraoHora', e.target.value)} /></label>
           </div>
         </div>
 
