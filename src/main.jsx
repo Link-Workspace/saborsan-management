@@ -1211,7 +1211,7 @@ function Stock({ onProduct, refreshKey, search = '' }) {
           <div className="stockGrid">
             {!loading && filtered.length === 0 && <p className="emptyText">Nenhum produto encontrado.</p>}
             {filtered.map((product) => {
-              const percent = product.min > 0 ? Math.min(100, Math.round((product.stock / (product.min * 2)) * 100)) : 100
+              const percent = product.stock === 0 ? 0 : product.min > 0 ? Math.min(100, Math.round((product.stock / (product.min * 2)) * 100)) : 100
               return (
                 <article className="stockCard" key={product.id} onClick={() => onProduct(product)}>
                   {viewMode === 'grid' && product.image && <img src={product.image} alt={product.name} />}
@@ -1230,7 +1230,7 @@ function Stock({ onProduct, refreshKey, search = '' }) {
           <div className="stockListView">
             {!loading && filtered.length === 0 && <p className="emptyText">Nenhum produto encontrado.</p>}
             {filtered.map((product) => {
-              const percent = product.min > 0 ? Math.min(100, Math.round((product.stock / (product.min * 2)) * 100)) : 100
+              const percent = product.stock === 0 ? 0 : product.min > 0 ? Math.min(100, Math.round((product.stock / (product.min * 2)) * 100)) : 100
               return (
                 <article className="stockListItem" key={product.id} onClick={() => onProduct(product)}>
                   <div className="stockListInfo">
@@ -1385,6 +1385,41 @@ function SupplierDetailModal({ supplier, onClose, onEdit, onRemove }) {
   const [loadingPurchases, setLoadingPurchases] = useState(true)
   const [extractedPrices, setExtractedPrices] = useState({})
   const [pricesLoading, setPricesLoading] = useState(false)
+  const [confirmRemovePurchase, setConfirmRemovePurchase] = useState(null)
+  const [removingPurchase, setRemovingPurchase] = useState(false)
+
+  const handleRemovePurchase = async (purchase) => {
+    setRemovingPurchase(true)
+    try {
+      await fetch(`${API_URL}/api/supplier-purchases`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: purchase.id }),
+      })
+      // Also try to remove the corresponding planning item by title
+      const planRes = await fetch(`${API_URL}/api/purchase-planning`)
+      if (planRes.ok) {
+        const planData = await planRes.json()
+        const titlePattern = `Compra: ${purchase.purchaseName} com ${supplier.name}`.toLowerCase()
+        const matching = (planData.items || []).find(
+          (item) => item.title?.toLowerCase() === titlePattern && !item.completed
+        )
+        if (matching) {
+          await fetch(`${API_URL}/api/purchase-planning`, {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: matching.id }),
+          })
+        }
+      }
+      setPurchases((prev) => prev.filter((p) => p.id !== purchase.id))
+      setConfirmRemovePurchase(null)
+    } catch {
+      // silent
+    } finally {
+      setRemovingPurchase(false)
+    }
+  }
 
   useEffect(() => {
     setLoadingPurchases(true)
@@ -1484,7 +1519,12 @@ function SupplierDetailModal({ supplier, onClose, onEdit, onRemove }) {
                       ? <span>Valor: <b>{money(ep.unitPrice)} / un.</b></span>
                       : null
                 return (
-                <div className="purchaseHistoryItem" key={p.id}>
+                <div className="purchaseHistoryItem" key={p.id} style={{ position: 'relative' }}>
+                  <button
+                    className="purchaseHistoryRemoveBtn"
+                    title="Remover pedido"
+                    onClick={() => setConfirmRemovePurchase(p)}
+                  ><X size={11} /></button>
                   <div className="purchaseHistoryMain">
                     <b>{p.purchaseName}</b>
                     {p.description && <span>{p.description}</span>}
@@ -1542,6 +1582,20 @@ function SupplierDetailModal({ supplier, onClose, onEdit, onRemove }) {
             </button>
           </div>
         </div>
+        {confirmRemovePurchase && (
+          <div className="cancelSepOverlay" onClick={(e) => { if (e.target.classList.contains('cancelSepOverlay')) setConfirmRemovePurchase(null) }}>
+            <div className="cancelSepModal">
+              <h3>Remover pedido?</h3>
+              <p>O pedido <b>{confirmRemovePurchase.purchaseName}</b> será removido das compras agendadas deste fornecedor e do planejamento de compras.</p>
+              <div className="cancelSepActions">
+                <button className="cancelSepConfirm" style={{ background: 'var(--red)' }} disabled={removingPurchase} onClick={() => handleRemovePurchase(confirmRemovePurchase)}>
+                  {removingPurchase ? 'Removendo...' : 'Sim, remover pedido'}
+                </button>
+                <button className="cancelSepDeny" onClick={() => setConfirmRemovePurchase(null)}>Não, voltar</button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )
@@ -1679,6 +1733,7 @@ function SendPurchaseModal({ suggestion, suppliers, onClose, notify, onConfirmed
   }, [suppliers, suggestion])
 
   const [selectedSupplierId, setSelectedSupplierId] = useState(() => bestSupplier?.id || (suppliers[0]?.id ?? ''))
+  const [customQty, setCustomQty] = useState(suggestion.qty)
   const [scheduleMode, setScheduleMode] = useState('default')
   const [customDate, setCustomDate] = useState(() => new Date().toISOString().split('T')[0])
   const [customTime, setCustomTime] = useState('09:00')
@@ -1688,6 +1743,8 @@ function SendPurchaseModal({ suggestion, suppliers, onClose, notify, onConfirmed
   const selectedSupplier = suppliers.find((s) => s.id === selectedSupplierId)
   const scheduledDate = scheduleMode === 'custom' ? customDate : new Date().toISOString().split('T')[0]
   const scheduledTime = scheduleMode === 'custom' ? customTime : defaultTime
+  const unitPrice = suggestion.qty > 0 && suggestion.value > 0 ? suggestion.value / suggestion.qty : 0
+  const adjustedValue = unitPrice > 0 ? unitPrice * customQty : 0
 
   const submit = async () => {
     if (!selectedSupplierId) { setError('Selecione um fornecedor.'); return }
@@ -1703,11 +1760,11 @@ function SendPurchaseModal({ suggestion, suppliers, onClose, notify, onConfirmed
           supplierId: selectedSupplierId,
           purchaseName: suggestion.item,
           description: suggestion.reason,
-          quantity: suggestion.qty,
-          totalAmount: suggestion.value,
+          quantity: customQty,
+          totalAmount: adjustedValue,
           scheduledPurchaseDate: scheduledDateTime.toISOString(),
           status: 'pending',
-          notes: `${suggestion.qty} ${suggestion.unit}`,
+          notes: `${customQty} ${suggestion.unit}`,
         }),
       })
       const purchaseData = await purchaseRes.json()
@@ -1720,14 +1777,14 @@ function SendPurchaseModal({ suggestion, suppliers, onClose, notify, onConfirmed
         body: JSON.stringify({
           title: planningTitle,
           scheduledDate,
-          notes: `${suggestion.qty} ${suggestion.unit} — ${money(suggestion.value)}`,
+          notes: `${customQty} ${suggestion.unit} — ${adjustedValue > 0 ? money(adjustedValue) : ''}`.trimEnd(),
         }),
       })
       const planningData = await planningRes.json()
       if (!planningRes.ok) throw new Error(planningData.error || 'Erro ao agendar no planejamento.')
 
-      notify(`Compra de ${suggestion.item} registrada para ${selectedSupplier?.name || suggestion.supplier}.`)
-      onConfirmed(planningData.item)
+      notify(`Compra de ${customQty} ${suggestion.unit} de ${suggestion.item} registrada para ${selectedSupplier?.name || suggestion.supplier}.`)
+      onConfirmed(planningData.item, null, suggestion.id)
       onClose()
     } catch (err) {
       setError(err.message || 'Erro ao confirmar compra.')
@@ -1751,8 +1808,21 @@ function SendPurchaseModal({ suggestion, suppliers, onClose, notify, onConfirmed
           <h3>Produto solicitado</h3>
           <div className="supplierDetailGrid">
             <div className="supplierDetailItem"><span>Item</span><b>{suggestion.item}</b></div>
-            <div className="supplierDetailItem"><span>Quantidade</span><b>{suggestion.qty} {suggestion.unit}</b></div>
-            <div className="supplierDetailItem"><span>Valor estimado</span><b>{money(suggestion.value)}</b></div>
+            <div className="supplierDetailItem">
+              <span>Quantidade</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <input
+                  type="number"
+                  min={1}
+                  step={1}
+                  value={customQty}
+                  onChange={(e) => setCustomQty(Math.max(1, Number(e.target.value) || 1))}
+                  style={{ width: 80, fontWeight: 700, fontSize: '.95rem', padding: '4px 8px', borderRadius: 8, border: '1.5px solid var(--border)', textAlign: 'center' }}
+                />
+                <span style={{ fontWeight: 600, color: 'var(--navy)' }}>{suggestion.unit}</span>
+              </div>
+            </div>
+            <div className="supplierDetailItem"><span>Valor estimado</span><b>{adjustedValue > 0 ? money(adjustedValue) : '—'}</b></div>
             <div className="supplierDetailItem supplierDetailFull"><span>Motivo da sugestão</span><b>{suggestion.reason}</b></div>
           </div>
 
@@ -2095,7 +2165,10 @@ function Purchases({ notify }) {
   const [planningItems, setPlanningItems] = useState([])
   const [planningLoading, setPlanningLoading] = useState(true)
   const [suppliersData, setSuppliersData] = useState([])
+  const [stockProducts, setStockProducts] = useState([])
   const [sendModal, setSendModal] = useState(null)
+  const [sentIds, setSentIds] = useState(new Set())
+  const [supplierPurchases, setSupplierPurchases] = useState([])
   const [newPurchaseModal, setNewPurchaseModal] = useState(false)
   const [detailModal, setDetailModal] = useState(null)
   const [editModal, setEditModal] = useState(null)
@@ -2112,13 +2185,45 @@ function Purchases({ notify }) {
       .then((r) => r.json())
       .then((data) => { if (data.suppliers) setSuppliersData(data.suppliers) })
       .catch(() => {})
+
+    fetch(`${API_URL}/api/products`)
+      .then((r) => r.json())
+      .then((data) => { if (data.products) setStockProducts(data.products) })
+      .catch(() => {})
+
+    fetch(`${API_URL}/api/supplier-purchases`)
+      .then((r) => r.json())
+      .then((data) => { if (data.purchases) setSupplierPurchases(data.purchases) })
+      .catch(() => {})
   }, [])
 
-  const purchaseSuggestions = [
-    { item: 'Açaí Premium Balde', category: 'Açaí', supplier: 'Amazônia Mix', qty: 24, unit: 'baldes', reason: 'Estoque abaixo do mínimo e alta saída no fim de semana', value: 3717.6 },
-    { item: 'Mix de Salgados', category: 'Salgados', supplier: 'Salgados San Pietro', qty: 18, unit: 'caixas', reason: 'Reposição preventiva para pedidos recorrentes', value: 1614.6 },
-    { item: 'Croissant Folhado', category: 'Croissant', supplier: 'La Maison Congelados', qty: 12, unit: 'caixas', reason: 'Crescimento de 22% em cafeterias', value: 1344.0 },
-  ]
+  const purchaseSuggestions = useMemo(() => {
+    return stockProducts
+      .filter((p) => {
+        if (p.stock === 0) return true
+        if (p.min > 0) {
+          const pct = p.stock / (p.min * 2)
+          return pct <= 0.1
+        }
+        return false
+      })
+      .map((p) => {
+        const isZero = p.stock === 0
+        const suggestedQty = p.min > 0 ? Math.max(p.min * 2 - p.stock, 1) : 10
+        return {
+          id: p.id,
+          item: p.name,
+          category: p.category,
+          supplier: suppliersData.find((s) => s.category === p.category)?.name || '—',
+          qty: suggestedQty,
+          unit: p.unit || 'unidades',
+          reason: isZero
+            ? 'Estoque zerado — reposição urgente'
+            : `Estoque crítico: ${p.stock} ${p.unit || 'unidades'} restantes (abaixo de 10%)`,
+          value: p.price > 0 ? p.price * suggestedQty : 0,
+        }
+      })
+  }, [stockProducts, suppliersData])
 
   const getDayLabel = (dateStr) => {
     const date = new Date(dateStr + 'T00:00:00')
@@ -2152,7 +2257,10 @@ function Purchases({ notify }) {
     setPlanningItems((prev) => prev.filter((item) => item.id !== id))
   }
 
-  const handleSendConfirmed = (newItem, replacedId = null) => {
+  const handleSendConfirmed = (newItem, replacedId = null, sentSuggestionId = null) => {
+    if (sentSuggestionId != null) {
+      setSentIds((prev) => new Set([...prev, sentSuggestionId]))
+    }
     if (newItem) {
       if (replacedId != null) {
         setPlanningItems((prev) =>
@@ -2169,20 +2277,44 @@ function Purchases({ notify }) {
 
   const activeItems = planningItems.filter((item) => !item.completed)
 
+  const pendingStatusLabel = (status) => {
+    const map = { pending: 'Pendente', 'in-progress': 'Em andamento', confirmed: 'Confirmado', processing: 'Em processamento' }
+    return map[status?.toLowerCase()] || status || 'Pendente'
+  }
+
+  const getExistingPurchaseStatus = (itemName) => {
+    const match = supplierPurchases.find(
+      (p) => p.purchaseName?.toLowerCase() === itemName?.toLowerCase() &&
+             p.status?.toLowerCase() !== 'concluída' &&
+             p.status?.toLowerCase() !== 'concluida' &&
+             !p.completedAt
+    )
+    return match ? match.status : null
+  }
+
   return (
     <section className="pageStack">
       <div className="sectionHeader"><div><p>Compras, reposição e cotação</p></div><button className="btnSolid" onClick={() => setNewPurchaseModal(true)}><Plus size={18} /> Nova compra</button></div>
       <div className="contentGrid twoCols">
         <div className="card wideList">
           <div className="cardHeader"><div><p>Lista sugerida</p><h3>Reposições prioritárias</h3></div><ClipboardList /></div>
-          {purchaseSuggestions.map((item) => (
-            <div className="purchaseLine" key={item.item}>
-              <div><b>{item.item}</b><span>{item.reason}</span><small>{item.supplier}</small></div>
-              <strong>{item.qty} {item.unit}</strong>
-              <em>{money(item.value)}</em>
-              <button onClick={() => setSendModal(item)}>Enviar</button>
-            </div>
-          ))}
+          {purchaseSuggestions.length === 0 && (
+            <p className="emptyText" style={{ fontSize: '.85rem', margin: '8px 0' }}>Nenhuma reposição necessária no momento.</p>
+          )}
+          {purchaseSuggestions.map((item) => {
+            const existingStatus = getExistingPurchaseStatus(item.item)
+            const isSent = sentIds.has(item.id)
+            return (
+              <div className="purchaseLine" key={item.id}>
+                <div><b>{item.item}</b><span>{item.reason}</span><small>{item.supplier}</small></div>
+                <strong>{item.qty} {item.unit}</strong>
+                <em>{item.value > 0 ? money(item.value) : '—'}</em>
+                {isSent || existingStatus
+                  ? <span className="purchaseSentBadge"><CheckCircle2 size={14} /> {isSent ? 'Enviado' : pendingStatusLabel(existingStatus)}</span>
+                  : <button onClick={() => setSendModal(item)}>Enviar</button>}
+              </div>
+            )
+          })}
         </div>
         <div className="card automationCard">
           <div className="cardHeader"><div><p>Planejamento</p><h3>Próximas compras</h3></div><CalendarDays /></div>

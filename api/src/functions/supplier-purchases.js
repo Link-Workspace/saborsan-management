@@ -36,7 +36,7 @@ async function ensureTable() {
 }
 
 app.http('supplier-purchases', {
-  methods: ['GET', 'POST'],
+  methods: ['GET', 'POST', 'DELETE'],
   authLevel: 'anonymous',
   handler: async (request, context) => {
     try {
@@ -141,6 +141,19 @@ app.http('supplier-purchases', {
             },
           },
         };
+      }
+
+      // ── DELETE ────────────────────────────────────────────────────────────
+      if (request.method === 'DELETE') {
+        const body = await request.json();
+        const { id } = body;
+
+        if (!id) {
+          return { status: 400, jsonBody: { error: 'id é obrigatório.' } };
+        }
+
+        await sql.query`DELETE FROM SupplierPurchases WHERE id = ${id}`;
+        return { jsonBody: { ok: true } };
       }
 
       return { status: 405, jsonBody: { error: 'Método não suportado.' } };
