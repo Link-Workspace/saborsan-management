@@ -109,7 +109,7 @@ app.http('supplier-purchases', {
         const qty = parseFloat(quantity);
         const total = totalAmount != null ? parseFloat(totalAmount) : null;
         const schedDate = scheduledPurchaseDate ? new Date(scheduledPurchaseDate) : null;
-        const purchaseStatus = status || 'Pendente';
+        const purchaseStatus = status || 'pending';
 
         const result = await sql.query`
           INSERT INTO SupplierPurchases

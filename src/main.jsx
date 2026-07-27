@@ -1659,7 +1659,7 @@ function SendPurchaseModal({ suggestion, suppliers, onClose, notify, onConfirmed
           quantity: suggestion.qty,
           totalAmount: suggestion.value,
           scheduledPurchaseDate: scheduledDateTime.toISOString(),
-          status: 'Pendente',
+          status: 'pending',
           notes: `${suggestion.qty} ${suggestion.unit}`,
         }),
       })
@@ -1763,11 +1763,168 @@ function SendPurchaseModal({ suggestion, suppliers, onClose, notify, onConfirmed
   )
 }
 
+function NewPurchaseModal({ suppliers, onClose, notify, onConfirmed }) {
+  const defaultTime = '08:00'
+  const [form, setForm] = useState({
+    purchaseName: '',
+    supplierId: '',
+    quantity: '',
+    unit: '',
+    totalAmount: '',
+    notes: '',
+  })
+  const [scheduleMode, setScheduleMode] = useState('default')
+  const [customDate, setCustomDate] = useState(new Date().toISOString().split('T')[0])
+  const [customTime, setCustomTime] = useState(defaultTime)
+  const [error, setError] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+
+  const set = (key, value) => setForm((prev) => ({ ...prev, [key]: value }))
+
+  const scheduledDate = scheduleMode === 'custom' ? customDate : new Date().toISOString().split('T')[0]
+  const scheduledTime = scheduleMode === 'custom' ? customTime : defaultTime
+
+  const canSubmit = form.purchaseName.trim() !== '' && form.supplierId !== '' && form.quantity !== ''
+
+  const submit = async () => {
+    if (!canSubmit) { setError('Preencha os campos obrigatórios.'); return }
+    setError('')
+    setSubmitting(true)
+    try {
+      const selectedSupplier = suppliers.find((s) => s.id === Number(form.supplierId))
+      const scheduledDateTime = new Date(`${scheduledDate}T${scheduledTime}:00`)
+      const totalVal = form.totalAmount !== '' ? parseFloat(form.totalAmount) : null
+
+      const purchaseRes = await fetch(`${API_URL}/api/supplier-purchases`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          supplierId: Number(form.supplierId),
+          purchaseName: form.purchaseName.trim(),
+          description: form.notes.trim() || null,
+          quantity: parseFloat(form.quantity),
+          totalAmount: totalVal,
+          scheduledPurchaseDate: scheduledDateTime.toISOString(),
+          status: 'pending',
+          notes: form.unit.trim() || null,
+        }),
+      })
+      const purchaseData = await purchaseRes.json()
+      if (!purchaseRes.ok) throw new Error(purchaseData.error || 'Erro ao registrar compra.')
+
+      const planningTitle = `Compra: ${form.purchaseName.trim()} com ${selectedSupplier?.name || 'Fornecedor'}`
+      const planningRes = await fetch(`${API_URL}/api/purchase-planning`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: planningTitle,
+          scheduledDate,
+          notes: `${form.quantity} ${form.unit}${totalVal ? ` — ${money(totalVal)}` : ''}`.trim(),
+        }),
+      })
+      const planningData = await planningRes.json()
+      if (!planningRes.ok) throw new Error(planningData.error || 'Erro ao agendar no planejamento.')
+
+      notify(`Compra de ${form.purchaseName.trim()} registrada para ${selectedSupplier?.name || 'fornecedor'}.`)
+      onConfirmed(planningData.item)
+      onClose()
+    } catch (err) {
+      setError(err.message || 'Erro ao confirmar compra.')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <div className="modalBackdrop">
+      <div className="detailModal newOrderModal">
+        <button className="closeBtn" onClick={onClose}><X /></button>
+        <div className="modalHeader">
+          <div>
+            <span>Compras</span>
+            <h2>Nova compra</h2>
+            <p>Registre uma nova compra com fornecedor e agendamento</p>
+          </div>
+        </div>
+        <div className="newOrderScrollArea">
+          <h3>Dados da compra</h3>
+          <div className="settingsForm">
+            <label>Item / Produto *
+              <input placeholder="Ex: Açaí Premium Balde" value={form.purchaseName} onChange={(e) => set('purchaseName', e.target.value)} />
+            </label>
+            <label>Quantidade *
+              <input type="number" min="0.01" step="0.01" placeholder="Ex: 24" value={form.quantity} onChange={(e) => set('quantity', e.target.value)} />
+            </label>
+            <label>Unidade
+              <input placeholder="Ex: baldes, caixas, kg" value={form.unit} onChange={(e) => set('unit', e.target.value)} />
+            </label>
+            <label>Valor total estimado (R$)
+              <input type="number" min="0" step="0.01" placeholder="Ex: 1500.00" value={form.totalAmount} onChange={(e) => set('totalAmount', e.target.value)} />
+            </label>
+          </div>
+
+          <h3 className="newOrderSectionTitle">Fornecedor *</h3>
+          <div className="settingsForm">
+            <label>Selecionar fornecedor
+              <select value={form.supplierId} onChange={(e) => set('supplierId', e.target.value)}>
+                <option value="">Selecione...</option>
+                {suppliers.map((s) => (
+                  <option key={s.id} value={s.id}>{s.name}</option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          <h3 className="newOrderSectionTitle">Agendamento</h3>
+          <div className="iaModeSelector">
+            <button type="button" className={`iaModeBtn${scheduleMode === 'default' ? ' active' : ''}`} onClick={() => setScheduleMode('default')}>
+              <Clock3 size={18} />
+              <div><b>Horário padrão</b><small>Hoje, às {defaultTime} — conforme configurações</small></div>
+            </button>
+            <button type="button" className={`iaModeBtn${scheduleMode === 'custom' ? ' active' : ''}`} onClick={() => setScheduleMode('custom')}>
+              <CalendarDays size={18} />
+              <div><b>Data e hora personalizadas</b><small>Escolha quando realizar esta compra</small></div>
+            </button>
+          </div>
+          {scheduleMode === 'custom' && (
+            <div className="settingsForm settingsTwoCols" style={{ marginTop: 12 }}>
+              <label>Data<input type="date" value={customDate} min={new Date().toISOString().split('T')[0]} onChange={(e) => setCustomDate(e.target.value)} /></label>
+              <label>Horário<input type="time" value={customTime} onChange={(e) => setCustomTime(e.target.value)} /></label>
+            </div>
+          )}
+
+          <h3 className="newOrderSectionTitle">Observações</h3>
+          <div className="noteBox">
+            <textarea rows={3} placeholder="Detalhes adicionais, motivo da compra..." value={form.notes} onChange={(e) => set('notes', e.target.value)} />
+          </div>
+
+          {error && <small className="errorText" style={{ marginTop: 12, display: 'block' }}>{error}</small>}
+        </div>
+        <div className="newOrderFooter">
+          {form.totalAmount && !isNaN(parseFloat(form.totalAmount)) && (
+            <div className="newOrderTotalInline">
+              <span>Valor estimado</span>
+              <strong>{money(parseFloat(form.totalAmount))}</strong>
+            </div>
+          )}
+          <div className="newOrderFooterActions" style={{ marginLeft: 'auto' }}>
+            <button type="button" onClick={onClose}>Cancelar</button>
+            <button type="button" className="btnPrimary" disabled={!canSubmit || submitting} onClick={submit}>
+              <CheckCircle2 size={17} /> {submitting ? 'Registrando...' : 'Registrar compra'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function Purchases({ notify }) {
   const [planningItems, setPlanningItems] = useState([])
   const [planningLoading, setPlanningLoading] = useState(true)
   const [suppliersData, setSuppliersData] = useState([])
   const [sendModal, setSendModal] = useState(null)
+  const [newPurchaseModal, setNewPurchaseModal] = useState(false)
 
   useEffect(() => {
     setPlanningLoading(true)
@@ -1833,7 +1990,7 @@ function Purchases({ notify }) {
 
   return (
     <section className="pageStack">
-      <div className="sectionHeader"><div><p>Compras, reposição e cotação</p></div><button className="btnSolid"><Send size={18} /> Enviar cotações</button></div>
+      <div className="sectionHeader"><div><p>Compras, reposição e cotação</p></div><button className="btnSolid" onClick={() => setNewPurchaseModal(true)}><Plus size={18} /> Nova compra</button></div>
       <div className="contentGrid twoCols">
         <div className="card wideList">
           <div className="cardHeader"><div><p>Lista sugerida</p><h3>Reposições prioritárias</h3></div><ClipboardList /></div>
@@ -1873,6 +2030,14 @@ function Purchases({ notify }) {
           suggestion={sendModal}
           suppliers={suppliersData}
           onClose={() => setSendModal(null)}
+          notify={notify}
+          onConfirmed={handleSendConfirmed}
+        />
+      )}
+      {newPurchaseModal && (
+        <NewPurchaseModal
+          suppliers={suppliersData}
+          onClose={() => setNewPurchaseModal(false)}
           notify={notify}
           onConfirmed={handleSendConfirmed}
         />
