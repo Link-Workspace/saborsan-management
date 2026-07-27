@@ -1383,6 +1383,8 @@ function Suppliers({ onMessage, search = '' }) {
 function SupplierDetailModal({ supplier, onClose, onEdit, onRemove }) {
   const [purchases, setPurchases] = useState([])
   const [loadingPurchases, setLoadingPurchases] = useState(true)
+  const [extractedPrices, setExtractedPrices] = useState({})
+  const [pricesLoading, setPricesLoading] = useState(false)
 
   useEffect(() => {
     setLoadingPurchases(true)
@@ -1392,6 +1394,41 @@ function SupplierDetailModal({ supplier, onClose, onEdit, onRemove }) {
       .catch(() => {})
       .finally(() => setLoadingPurchases(false))
   }, [supplier.id])
+
+  useEffect(() => {
+    const scheduled = purchases.filter((p) => p.status !== 'Concluída' && !p.completedAt)
+    if (scheduled.length === 0) return
+    const transcript = supplierTranscripts[supplier.id]
+    if (!transcript?.messages?.length) return
+
+    let cancelled = false
+    setPricesLoading(true)
+    Promise.all(
+      scheduled.map((p) =>
+        fetch(`${API_URL}/api/extract-purchase-price`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            messages: transcript.messages,
+            productName: p.purchaseName,
+            productType: supplier.foodTypes || '',
+            quantity: String(p.quantity || ''),
+            unit: p.notes || '',
+          }),
+        })
+          .then((r) => r.json())
+          .then((data) => ({ id: p.id, data }))
+          .catch(() => ({ id: p.id, data: null }))
+      )
+    ).then((results) => {
+      if (cancelled) return
+      const map = {}
+      results.forEach(({ id, data }) => { if (data) map[id] = data })
+      setExtractedPrices(map)
+    }).finally(() => { if (!cancelled) setPricesLoading(false) })
+
+    return () => { cancelled = true }
+  }, [purchases, supplier.id])
 
   const fmtDate = (iso) => {
     if (!iso) return '—'
@@ -1437,7 +1474,16 @@ function SupplierDetailModal({ supplier, onClose, onEdit, onRemove }) {
           )}
           {!loadingPurchases && scheduled.length > 0 && (
             <div className="purchaseHistoryList">
-              {scheduled.map((p) => (
+              {scheduled.map((p) => {
+                const ep = extractedPrices[p.id]
+                const priceNode = pricesLoading && !ep
+                  ? <span>Valor: <b style={{ color: 'var(--muted)', fontWeight: 400 }}>Analisando conversa IA...</b></span>
+                  : ep?.totalPrice
+                    ? <span>Valor: <b>{money(ep.totalPrice)}{ep.unitPrice ? ` (unit. ${money(ep.unitPrice)})` : ''}</b></span>
+                    : ep?.unitPrice
+                      ? <span>Valor: <b>{money(ep.unitPrice)} / un.</b></span>
+                      : null
+                return (
                 <div className="purchaseHistoryItem" key={p.id}>
                   <div className="purchaseHistoryMain">
                     <b>{p.purchaseName}</b>
@@ -1445,13 +1491,14 @@ function SupplierDetailModal({ supplier, onClose, onEdit, onRemove }) {
                   </div>
                   <div className="purchaseHistoryMeta">
                     <span>Qtd: <b>{p.quantity}</b></span>
-                    {p.totalAmount != null && <span>Valor: <b>{money(p.totalAmount)}</b></span>}
+                    {priceNode}
                     {p.scheduledPurchaseDate && <span>Data: <b>{fmtDate(p.scheduledPurchaseDate)}</b></span>}
                     <span className="purchaseStatusBadge pending">{p.status}</span>
                   </div>
                   {p.notes && <p className="purchaseHistoryNotes">{p.notes}</p>}
                 </div>
-              ))}
+                )
+              })}
             </div>
           )}
 
@@ -1900,9 +1947,6 @@ function NewPurchaseModal({ suppliers, onClose, notify, onConfirmed, editItem = 
             <label>Unidade
               <input placeholder="Ex: baldes, caixas, kg" value={form.unit} onChange={(e) => set('unit', e.target.value)} />
             </label>
-            <label>Valor total estimado (R$)
-              <input type="number" min="0" step="0.01" placeholder="Ex: 1500.00" value={form.totalAmount} onChange={(e) => set('totalAmount', e.target.value)} />
-            </label>
           </div>
 
           <h3 className="newOrderSectionTitle">Fornecedor *</h3>
@@ -1943,12 +1987,6 @@ function NewPurchaseModal({ suppliers, onClose, notify, onConfirmed, editItem = 
           {error && <small className="errorText" style={{ marginTop: 12, display: 'block' }}>{error}</small>}
         </div>
         <div className="newOrderFooter">
-          {form.totalAmount && !isNaN(parseFloat(form.totalAmount)) && (
-            <div className="newOrderTotalInline">
-              <span>Valor estimado</span>
-              <strong>{money(parseFloat(form.totalAmount))}</strong>
-            </div>
-          )}
           <div className="newOrderFooterActions" style={{ marginLeft: 'auto' }}>
             <button type="button" onClick={onClose}>Cancelar</button>
             <button type="button" className="btnPrimary" disabled={!canSubmit || submitting} onClick={submit}>
@@ -1961,24 +1999,52 @@ function NewPurchaseModal({ suppliers, onClose, notify, onConfirmed, editItem = 
   )
 }
 
-function PurchaseDetailModal({ item, getDayLabel, onClose, onRemove, onEdit }) {
+function PurchaseDetailModal({ item, getDayLabel, onClose, onRemove, onEdit, suppliers = [] }) {
   let itemName = item.title || ''
   let supplierName = ''
   const titleMatch = item.title?.match(/^Compra:\s*(.+?)\s+com\s+(.+)$/)
   if (titleMatch) { itemName = titleMatch[1]; supplierName = titleMatch[2] }
 
   let qtyUnit = ''
-  let valueStr = ''
   if (item.notes) {
     const parts = item.notes.split(' — ')
     qtyUnit = parts[0].trim()
-    if (parts[1]) valueStr = parts[1].trim()
   }
 
   const dateLabel = getDayLabel(item.scheduledDate)
   const fullDate = new Date(item.scheduledDate + 'T00:00:00').toLocaleDateString('pt-BR', {
     weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric',
   })
+
+  const [lastPrice, setLastPrice] = useState(null)
+  const [priceLoading, setPriceLoading] = useState(false)
+
+  useEffect(() => {
+    const supplier = suppliers.find((s) => s.name === supplierName)
+    if (!supplier) return
+    const transcript = supplierTranscripts[supplier.id]
+    if (!transcript || !transcript.messages?.length) return
+
+    let cancelled = false
+    setPriceLoading(true)
+    fetch(`${API_URL}/api/extract-purchase-price`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        messages: transcript.messages,
+        productName: itemName,
+        productType: supplier.foodTypes || '',
+        quantity: qtyUnit.replace(/[^\d.,]/g, '') || '',
+        unit: qtyUnit.replace(/^[\d.,\s]+/, '').trim(),
+      }),
+    })
+      .then((r) => r.json())
+      .then((data) => { if (!cancelled) setLastPrice(data) })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setPriceLoading(false) })
+
+    return () => { cancelled = true }
+  }, [item.id])
 
   return (
     <div className="modalBackdrop">
@@ -1996,7 +2062,17 @@ function PurchaseDetailModal({ item, getDayLabel, onClose, onRemove, onEdit }) {
             <div className="supplierDetailItem"><span>Item / Produto</span><b>{itemName}</b></div>
             {supplierName && <div className="supplierDetailItem"><span>Fornecedor</span><b>{supplierName}</b></div>}
             {qtyUnit && <div className="supplierDetailItem"><span>Quantidade</span><b>{qtyUnit}</b></div>}
-            {valueStr && <div className="supplierDetailItem"><span>Valor estimado</span><b>{valueStr}</b></div>}
+            <div className="supplierDetailItem">
+              <span>Último valor cobrado</span>
+              {priceLoading
+                ? <b style={{ color: 'var(--muted)', fontWeight: 400 }}>Analisando conversa IA...</b>
+                : lastPrice?.totalPrice
+                  ? <b>{money(lastPrice.totalPrice)}{lastPrice.unitPrice ? ` (unit. ${money(lastPrice.unitPrice)})` : ''}</b>
+                  : lastPrice?.unitPrice
+                    ? <b>{money(lastPrice.unitPrice)} / unidade</b>
+                    : <b style={{ color: 'var(--muted)', fontWeight: 400 }}>Não informado na conversa</b>
+              }
+            </div>
             <div className="supplierDetailItem supplierDetailFull"><span>Data agendada</span><b>{dateLabel} — {fullDate}</b></div>
           </div>
         </div>
@@ -2153,6 +2229,7 @@ function Purchases({ notify }) {
           onClose={() => setDetailModal(null)}
           onRemove={(id) => { removePlanningItem(id); setDetailModal(null) }}
           onEdit={(item) => { setDetailModal(null); setEditModal(item) }}
+          suppliers={suppliersData}
         />
       )}
       {editModal && (
