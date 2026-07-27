@@ -3070,23 +3070,25 @@ function ProductModal({ product, onClose, onRemove, onEdit }) {
     <div className="modalBackdrop">
       <div className="productModal">
         <button className="closeBtn" onClick={onClose}><X /></button>
-        {product.image && <img src={product.image} alt={product.name} />}
-        <div>
-          <span className="badge">{product.category}</span>
-          <h2>{product.name}</h2>
-          <p>{product.description || 'Produto controlado no estoque da Saborsan com gestão de validade, temperatura, fornecedor, custo e disponibilidade para pedidos do app.'}</p>
-          <div className="detailGrid">
-            <div><b>Estoque</b><span>{product.stock}{product.unit ? ` ${product.unit}` : ''}</span></div>
-            {product.temperature && <div><b>Conservação</b><span>{product.temperature}</span></div>}
-            {product.packaging && <div><b>Embalagem</b><span>{product.packaging}</span></div>}
-            <div><b>Preço base</b><span>{money(product.price)}</span></div>
-            {product.idealFor && <div><b>Indicado para</b><span>{product.idealFor}</span></div>}
-            {product.preparation && <div><b>Preparo</b><span>{product.preparation}</span></div>}
+        <div className="productModalBody">
+          {product.image && <img src={product.image} alt={product.name} />}
+          <div className="productModalContent">
+            <span className="badge">{product.category}</span>
+            <h2>{product.name}</h2>
+            <p>{product.description || 'Produto controlado no estoque da Saborsan com gestão de validade, temperatura, fornecedor, custo e disponibilidade para pedidos do app.'}</p>
+            <div className="detailGrid">
+              <div><b>Estoque</b><span>{product.stock}{product.unit ? ` ${product.unit}` : ''}</span></div>
+              {product.temperature && <div><b>Conservação</b><span>{product.temperature}</span></div>}
+              {product.packaging && <div><b>Embalagem</b><span>{product.packaging}</span></div>}
+              <div><b>Preço base</b><span>{money(product.price)}</span></div>
+              {product.idealFor && <div><b>Indicado para</b><span>{product.idealFor}</span></div>}
+              {product.preparation && <div><b>Preparo</b><span>{product.preparation}</span></div>}
+            </div>
           </div>
-          <div className="orderModalFooter" style={{ marginTop: '16px' }}>
-            <button className="orderModalBtn orderModalBtnDanger" onClick={onRemove}>Remover</button>
-            <button className="orderModalBtn orderModalBtnPrimary" onClick={onEdit}>Editar</button>
-          </div>
+        </div>
+        <div className="orderModalFooter">
+          <button className="orderModalBtn orderModalBtnDanger" onClick={onRemove}>Remover</button>
+          <button className="orderModalBtn orderModalBtnPrimary" onClick={onEdit}>Editar</button>
         </div>
       </div>
     </div>
