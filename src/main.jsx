@@ -1763,28 +1763,59 @@ function SendPurchaseModal({ suggestion, suppliers, onClose, notify, onConfirmed
   )
 }
 
-function NewPurchaseModal({ suppliers, onClose, notify, onConfirmed }) {
+function NewPurchaseModal({ suppliers, onClose, notify, onConfirmed, editItem = null }) {
   const defaultTime = '08:00'
-  const [form, setForm] = useState({
-    purchaseName: '',
-    supplierId: '',
-    quantity: '',
-    unit: '',
-    totalAmount: '',
-    notes: '',
+  const [form, setForm] = useState(() => {
+    if (!editItem) return { purchaseName: '', supplierId: '', quantity: '', unit: '', totalAmount: '', notes: '' }
+    let purchaseName = editItem.title || ''
+    let supplierName = ''
+    const titleMatch = editItem.title?.match(/^Compra:\s*(.+?)\s+com\s+(.+)$/)
+    if (titleMatch) { purchaseName = titleMatch[1]; supplierName = titleMatch[2] }
+    let quantity = ''
+    let unit = ''
+    let totalAmount = ''
+    if (editItem.notes) {
+      const parts = editItem.notes.split(' — ')
+      const m = parts[0].trim().match(/^(\d+(?:[.,]\d+)?)\s*(.*)$/)
+      if (m) { quantity = m[1]; unit = m[2].trim() }
+      if (parts[1]) {
+        const v = parseFloat(parts[1].replace(/R\$\s*/g, '').replace(/\./g, '').replace(',', '.'))
+        if (!isNaN(v)) totalAmount = String(v)
+      }
+    }
+    const sup = suppliers.find((s) => s.name === supplierName)
+    return { purchaseName, supplierId: sup ? String(sup.id) : '', quantity, unit, totalAmount, notes: '' }
   })
-  const [scheduleMode, setScheduleMode] = useState('default')
-  const [customDate, setCustomDate] = useState(new Date().toISOString().split('T')[0])
+  const [scheduleMode, setScheduleMode] = useState(editItem ? 'custom' : 'default')
+  const [customDate, setCustomDate] = useState(editItem?.scheduledDate || new Date().toISOString().split('T')[0])
   const [customTime, setCustomTime] = useState(defaultTime)
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
+
+  const initialFormRef = useRef(null)
+  const initialScheduleModeRef = useRef(editItem ? 'custom' : 'default')
+  const initialCustomDateRef = useRef(editItem?.scheduledDate || new Date().toISOString().split('T')[0])
+  const initialCustomTimeRef = useRef(defaultTime)
+  if (initialFormRef.current === null) initialFormRef.current = { ...form }
 
   const set = (key, value) => setForm((prev) => ({ ...prev, [key]: value }))
 
   const scheduledDate = scheduleMode === 'custom' ? customDate : new Date().toISOString().split('T')[0]
   const scheduledTime = scheduleMode === 'custom' ? customTime : defaultTime
 
-  const canSubmit = form.purchaseName.trim() !== '' && form.supplierId !== '' && form.quantity !== ''
+  const isEdited = !editItem || (
+    form.purchaseName !== initialFormRef.current.purchaseName ||
+    form.supplierId !== initialFormRef.current.supplierId ||
+    form.quantity !== initialFormRef.current.quantity ||
+    form.unit !== initialFormRef.current.unit ||
+    form.totalAmount !== initialFormRef.current.totalAmount ||
+    form.notes !== initialFormRef.current.notes ||
+    scheduleMode !== initialScheduleModeRef.current ||
+    customDate !== initialCustomDateRef.current ||
+    customTime !== initialCustomTimeRef.current
+  )
+
+  const canSubmit = form.purchaseName.trim() !== '' && form.supplierId !== '' && form.quantity !== '' && isEdited
 
   const submit = async () => {
     if (!canSubmit) { setError('Preencha os campos obrigatórios.'); return }
@@ -1794,6 +1825,22 @@ function NewPurchaseModal({ suppliers, onClose, notify, onConfirmed }) {
       const selectedSupplier = suppliers.find((s) => s.id === Number(form.supplierId))
       const scheduledDateTime = new Date(`${scheduledDate}T${scheduledTime}:00`)
       const totalVal = form.totalAmount !== '' ? parseFloat(form.totalAmount) : null
+      const planningTitle = `Compra: ${form.purchaseName.trim()} com ${selectedSupplier?.name || 'Fornecedor'}`
+      const planningNotes = `${form.quantity} ${form.unit}${totalVal ? ` — ${money(totalVal)}` : ''}`.trim()
+
+      if (editItem) {
+        const planningRes = await fetch(`${API_URL}/api/purchase-planning`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: editItem.id, title: planningTitle, scheduledDate, notes: planningNotes }),
+        })
+        const planningData = await planningRes.json()
+        if (!planningRes.ok) throw new Error(planningData.error || 'Erro ao atualizar compra.')
+        notify(`Compra de ${form.purchaseName.trim()} atualizada.`)
+        onConfirmed(planningData.item, editItem.id)
+        onClose()
+        return
+      }
 
       const purchaseRes = await fetch(`${API_URL}/api/supplier-purchases`, {
         method: 'POST',
@@ -1812,21 +1859,16 @@ function NewPurchaseModal({ suppliers, onClose, notify, onConfirmed }) {
       const purchaseData = await purchaseRes.json()
       if (!purchaseRes.ok) throw new Error(purchaseData.error || 'Erro ao registrar compra.')
 
-      const planningTitle = `Compra: ${form.purchaseName.trim()} com ${selectedSupplier?.name || 'Fornecedor'}`
       const planningRes = await fetch(`${API_URL}/api/purchase-planning`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          title: planningTitle,
-          scheduledDate,
-          notes: `${form.quantity} ${form.unit}${totalVal ? ` — ${money(totalVal)}` : ''}`.trim(),
-        }),
+        body: JSON.stringify({ title: planningTitle, scheduledDate, notes: planningNotes }),
       })
       const planningData = await planningRes.json()
       if (!planningRes.ok) throw new Error(planningData.error || 'Erro ao agendar no planejamento.')
 
       notify(`Compra de ${form.purchaseName.trim()} registrada para ${selectedSupplier?.name || 'fornecedor'}.`)
-      onConfirmed(planningData.item)
+      onConfirmed(planningData.item, null)
       onClose()
     } catch (err) {
       setError(err.message || 'Erro ao confirmar compra.')
@@ -1842,8 +1884,8 @@ function NewPurchaseModal({ suppliers, onClose, notify, onConfirmed }) {
         <div className="modalHeader">
           <div>
             <span>Compras</span>
-            <h2>Nova compra</h2>
-            <p>Registre uma nova compra com fornecedor e agendamento</p>
+            <h2>{editItem ? 'Editar compra' : 'Nova compra'}</h2>
+            <p>{editItem ? 'Atualize os dados da compra agendada' : 'Registre uma nova compra com fornecedor e agendamento'}</p>
           </div>
         </div>
         <div className="newOrderScrollArea">
@@ -1910,7 +1952,61 @@ function NewPurchaseModal({ suppliers, onClose, notify, onConfirmed }) {
           <div className="newOrderFooterActions" style={{ marginLeft: 'auto' }}>
             <button type="button" onClick={onClose}>Cancelar</button>
             <button type="button" className="btnPrimary" disabled={!canSubmit || submitting} onClick={submit}>
-              <CheckCircle2 size={17} /> {submitting ? 'Registrando...' : 'Registrar compra'}
+              <CheckCircle2 size={17} /> {submitting ? (editItem ? 'Atualizando...' : 'Registrando...') : (editItem ? 'Salvar alterações' : 'Registrar compra')}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function PurchaseDetailModal({ item, getDayLabel, onClose, onRemove, onEdit }) {
+  let itemName = item.title || ''
+  let supplierName = ''
+  const titleMatch = item.title?.match(/^Compra:\s*(.+?)\s+com\s+(.+)$/)
+  if (titleMatch) { itemName = titleMatch[1]; supplierName = titleMatch[2] }
+
+  let qtyUnit = ''
+  let valueStr = ''
+  if (item.notes) {
+    const parts = item.notes.split(' — ')
+    qtyUnit = parts[0].trim()
+    if (parts[1]) valueStr = parts[1].trim()
+  }
+
+  const dateLabel = getDayLabel(item.scheduledDate)
+  const fullDate = new Date(item.scheduledDate + 'T00:00:00').toLocaleDateString('pt-BR', {
+    weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric',
+  })
+
+  return (
+    <div className="modalBackdrop">
+      <div className="detailModal newOrderModal">
+        <button className="closeBtn" onClick={onClose}><X /></button>
+        <div className="modalHeader">
+          <div>
+            <span>Compras</span>
+            <h2>Detalhes da compra</h2>
+            <p>Informações sobre a compra agendada</p>
+          </div>
+        </div>
+        <div className="newOrderScrollArea">
+          <div className="supplierDetailGrid">
+            <div className="supplierDetailItem"><span>Item / Produto</span><b>{itemName}</b></div>
+            {supplierName && <div className="supplierDetailItem"><span>Fornecedor</span><b>{supplierName}</b></div>}
+            {qtyUnit && <div className="supplierDetailItem"><span>Quantidade</span><b>{qtyUnit}</b></div>}
+            {valueStr && <div className="supplierDetailItem"><span>Valor estimado</span><b>{valueStr}</b></div>}
+            <div className="supplierDetailItem supplierDetailFull"><span>Data agendada</span><b>{dateLabel} — {fullDate}</b></div>
+          </div>
+        </div>
+        <div className="newOrderFooter">
+          <div className="newOrderFooterActions" style={{ marginLeft: 'auto' }}>
+            <button type="button" className="orderModalBtnDanger" onClick={() => onRemove(item.id)}>
+              <X size={17} /> Remover
+            </button>
+            <button type="button" className="btnPrimary" onClick={() => onEdit(item)}>
+              <ClipboardEdit size={17} /> Editar
             </button>
           </div>
         </div>
@@ -1925,6 +2021,8 @@ function Purchases({ notify }) {
   const [suppliersData, setSuppliersData] = useState([])
   const [sendModal, setSendModal] = useState(null)
   const [newPurchaseModal, setNewPurchaseModal] = useState(false)
+  const [detailModal, setDetailModal] = useState(null)
+  const [editModal, setEditModal] = useState(null)
 
   useEffect(() => {
     setPlanningLoading(true)
@@ -1978,11 +2076,18 @@ function Purchases({ notify }) {
     setPlanningItems((prev) => prev.filter((item) => item.id !== id))
   }
 
-  const handleSendConfirmed = (newItem) => {
+  const handleSendConfirmed = (newItem, replacedId = null) => {
     if (newItem) {
-      setPlanningItems((prev) =>
-        [...prev, newItem].sort((a, b) => new Date(a.scheduledDate) - new Date(b.scheduledDate))
-      )
+      if (replacedId != null) {
+        setPlanningItems((prev) =>
+          prev.map((item) => item.id === replacedId ? newItem : item)
+            .sort((a, b) => new Date(a.scheduledDate) - new Date(b.scheduledDate))
+        )
+      } else {
+        setPlanningItems((prev) =>
+          [...prev, newItem].sort((a, b) => new Date(a.scheduledDate) - new Date(b.scheduledDate))
+        )
+      }
     }
   }
 
@@ -2017,8 +2122,7 @@ function Purchases({ notify }) {
                   <span>{item.title}</span>
                 </div>
                 <div className="calendarItemActions">
-                  <button className="calendarItemBtn done" title="Marcar como concluído" onClick={() => completePlanningItem(item.id)}><CheckCircle2 size={14} /></button>
-                  <button className="calendarItemBtn remove" title="Remover" onClick={() => removePlanningItem(item.id)}><X size={14} /></button>
+                  <button className="calendarDetailBtn" onClick={() => setDetailModal(item)}>Detalhes</button>
                 </div>
               </div>
             ))}
@@ -2040,6 +2144,24 @@ function Purchases({ notify }) {
           onClose={() => setNewPurchaseModal(false)}
           notify={notify}
           onConfirmed={handleSendConfirmed}
+        />
+      )}
+      {detailModal && (
+        <PurchaseDetailModal
+          item={detailModal}
+          getDayLabel={getDayLabel}
+          onClose={() => setDetailModal(null)}
+          onRemove={(id) => { removePlanningItem(id); setDetailModal(null) }}
+          onEdit={(item) => { setDetailModal(null); setEditModal(item) }}
+        />
+      )}
+      {editModal && (
+        <NewPurchaseModal
+          suppliers={suppliersData}
+          onClose={() => setEditModal(null)}
+          notify={notify}
+          onConfirmed={handleSendConfirmed}
+          editItem={editModal}
         />
       )}
     </section>

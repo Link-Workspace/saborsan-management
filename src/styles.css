@@ -203,7 +203,9 @@ p{margin:0}.appShell{min-height:100vh;display:grid;grid-template-columns:300px 1
 .calendarItemRow>div:first-child{display:flex;flex-direction:column;gap:4px;min-width:0;flex:1;background:transparent;border:none;padding:0;border-radius:0}
 .calendarItemRow b{color:var(--orange-strong);font-size:.82rem;text-transform:uppercase;letter-spacing:.05em}
 .calendarItemRow span{color:var(--text);font-weight:700;font-size:.9rem}
-.calendarItemActions{display:flex;gap:6px;flex-shrink:0;background:transparent!important;border:none!important;border-radius:0!important;padding:0!important}
+.calendarItemActions{display:flex;gap:6px;flex-shrink:0;align-items:center;background:transparent!important;border:none!important;border-radius:0!important;padding:0!important}
+.calendarDetailBtn{border:0;background:var(--orange);color:#fff;border-radius:999px;padding:8px 12px;font-weight:900;cursor:pointer;transition:.15s;white-space:nowrap;line-height:1}
+.calendarDetailBtn:hover{filter:brightness(1.08)}
 .calendarItemBtn{border:0;width:30px;height:30px;border-radius:10px;display:grid;place-items:center;cursor:pointer;transition:.15s}
 .calendarItemBtn.done{background:#f0fdf4;color:var(--green)}
 .calendarItemBtn.done:hover{background:var(--green);color:#fff}

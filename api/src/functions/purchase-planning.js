@@ -99,21 +99,44 @@ app.http('purchase-planning', {
       // ── PATCH ─────────────────────────────────────────────────────────────
       if (request.method === 'PATCH') {
         const body = await request.json();
-        const { id, completed } = body;
+        const { id, completed, title, scheduledDate, notes } = body;
 
         if (!id) {
           return { status: 400, jsonBody: { error: 'id é obrigatório.' } };
         }
 
-        const completedAt = completed ? new Date() : null;
-        await sql.query`
+        if (completed !== undefined) {
+          const completedAt = completed ? new Date() : null;
+          await sql.query`
+            UPDATE PurchasePlanningItems
+            SET completed    = ${completed ? 1 : 0},
+                completedAt  = ${completedAt},
+                updatedAt    = GETUTCDATE()
+            WHERE id = ${id}
+          `;
+          return { jsonBody: { ok: true } };
+        }
+
+        if (!title || !scheduledDate) {
+          return { status: 400, jsonBody: { error: 'title e scheduledDate são obrigatórios para atualização.' } };
+        }
+        const dateVal = new Date(scheduledDate);
+        if (isNaN(dateVal.getTime())) {
+          return { status: 400, jsonBody: { error: 'scheduledDate inválida.' } };
+        }
+        const result = await sql.query`
           UPDATE PurchasePlanningItems
-          SET completed    = ${completed ? 1 : 0},
-              completedAt  = ${completedAt},
-              updatedAt    = GETUTCDATE()
+          SET title         = ${title.trim()},
+              scheduledDate = ${dateVal},
+              notes         = ${notes || null},
+              updatedAt     = GETUTCDATE()
+          OUTPUT INSERTED.*
           WHERE id = ${id}
         `;
-        return { jsonBody: { ok: true } };
+        if (!result.recordset.length) {
+          return { status: 404, jsonBody: { error: 'Item não encontrado.' } };
+        }
+        return { jsonBody: { item: mapItem(result.recordset[0]) } };
       }
 
       // ── DELETE ────────────────────────────────────────────────────────────
