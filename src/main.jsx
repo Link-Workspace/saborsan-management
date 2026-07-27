@@ -2627,8 +2627,8 @@ function DeliveryDetailModal({ delivery, onClose, orders, onCancel, onEdit }) {
             {!isCancelled && (
               <div className="deliverySteps">
                 {statusSteps.map((step, idx) => (
-                  <div key={step} className={`deliveryStep ${idx <= currentStep ? 'done' : ''} ${idx === currentStep ? 'active' : ''}`}>
-                    <div className="deliveryStepDot">{idx < currentStep ? <CheckCircle2 size={14}/> : <span style={{color:'#fff'}}>{idx + 1}</span>}</div>
+                  <div key={step} className={`deliveryStep ${idx < currentStep ? 'done' : ''} ${idx === currentStep ? 'active' : ''}`}>
+                    <div className="deliveryStepDot">{idx < currentStep ? <CheckCircle2 size={14}/> : <span>{idx + 1}</span>}</div>
                     <span>{step}</span>
                   </div>
                 ))}

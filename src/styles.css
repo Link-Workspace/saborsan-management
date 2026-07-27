@@ -236,9 +236,10 @@ p{margin:0}.appShell{min-height:100vh;display:grid;grid-template-columns:300px 1
 .deliveryStep.done:not(:last-child)::after{background:var(--orange)}
 .deliveryStepDot{width:28px;height:28px;border-radius:50%;border:2px solid var(--line);background:#fff;display:grid;place-items:center;font-size:.78rem;font-weight:900;color:var(--muted);position:relative;z-index:1;transition:.2s}
 .deliveryStep.done .deliveryStepDot{background:var(--orange);border-color:var(--orange);color:#fff}
-.deliveryStep.active .deliveryStepDot{border-color:var(--orange);color:#fff;box-shadow:0 0 0 3px rgba(255,122,0,.18)}
+.deliveryStep.active .deliveryStepDot{background:var(--orange);border-color:var(--orange);color:#fff;box-shadow:0 0 0 3px rgba(255,122,0,.18)}
 .deliveryStep span{font-size:.72rem;font-weight:800;color:var(--muted);text-align:center}
 .deliveryStep.done span,.deliveryStep.active span{color:var(--navy-dark)}
+.deliveryStep.done .deliveryStepDot span,.deliveryStep.active .deliveryStepDot span{color:#fff}
 .deliveryTempCard{display:flex;align-items:center;gap:20px;background:#f8f9fb;border:1px solid var(--line);border-radius:20px;padding:18px 22px}
 .deliveryTempValue{font-size:2.2rem;font-weight:900;font-family:'Montserrat',sans-serif;letter-spacing:-.04em;min-width:100px}
 .deliveryTempMeta{flex:1;display:flex;flex-direction:column;gap:4px}
