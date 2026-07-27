@@ -325,6 +325,10 @@ function App() {
   const [editProduct, setEditProduct] = useState(null)
   const [stockRefreshKey, setStockRefreshKey] = useState(0)
   const [topbarSearch, setTopbarSearch] = useState('')
+  const [deliveriesState, setDeliveriesState] = useState(deliveries)
+  const [newDeliveryOpen, setNewDeliveryOpen] = useState(false)
+  const [selectedDelivery, setSelectedDelivery] = useState(null)
+  const [editDelivery, setEditDelivery] = useState(null)
 
   const fetchOrders = () => {
     setOrdersLoading(true)
@@ -479,7 +483,7 @@ function App() {
         {active === 'estoque' && <Stock onProduct={setSelectedProduct} refreshKey={stockRefreshKey} search={topbarSearch} />}
         {active === 'fornecedores' && <Suppliers onMessage={setSupplierModal} search={topbarSearch} />}
         {active === 'compras' && <Purchases notify={notify} />}
-        {active === 'entregas' && <Deliveries />}
+        {active === 'entregas' && <Deliveries deliveries={deliveriesState} onNewDelivery={() => setNewDeliveryOpen(true)} onSelect={setSelectedDelivery} />}
         {active === 'clientes' && <Clients search={topbarSearch} />}
         {active === 'financeiro' && <Finance />}
         {active === 'relatorios' && <Reports />}
@@ -493,6 +497,9 @@ function App() {
       {notaFiscalOrder && <NotaFiscalModal order={notaFiscalOrder} onClose={() => setNotaFiscalOrder(null)} updateOrderStatus={updateOrderStatus} notify={notify} />}
       {verNotaOrder && <VerNotaModal order={verNotaOrder} onClose={() => setVerNotaOrder(null)} onSendToClient={sendNfeToClient} />}
       {notifOpen && <NotifPanel onClose={() => setNotifOpen(false)} />}
+      {newDeliveryOpen && <NewDeliveryModal onClose={() => setNewDeliveryOpen(false)} orders={orders} onCreate={(d) => { setDeliveriesState((prev) => [d, ...prev]); d.orderIds?.forEach((id) => updateOrderStatus(id, 'Rota')); notify(`Entrega ${d.id} criada com sucesso!`) }} />}
+      {editDelivery && <NewDeliveryModal onClose={() => setEditDelivery(null)} orders={orders} editDelivery={editDelivery} onUpdate={(d) => { setDeliveriesState((prev) => prev.map((x) => x.id === d.id ? d : x)); setEditDelivery(null); notify(`Entrega ${d.id} atualizada com sucesso!`) }} onCreate={(d) => { setDeliveriesState((prev) => [d, ...prev]); d.orderIds?.forEach((id) => updateOrderStatus(id, 'Rota')); notify(`Entrega ${d.id} criada com sucesso!`) }} />}
+      {selectedDelivery && <DeliveryDetailModal delivery={selectedDelivery} onClose={() => setSelectedDelivery(null)} orders={orders} onCancel={(id) => { setDeliveriesState((prev) => prev.map((d) => d.id === id ? { ...d, status: 'Cancelada' } : d)); setSelectedDelivery(null); notify(`Entrega ${id} cancelada.`) }} onEdit={(d) => { setEditDelivery(d); setSelectedDelivery(null) }} />}
       {(newOrderOpen || editOrder) && <NewOrderModal onClose={() => { setNewOrderOpen(false); setEditOrder(null) }} onCreateOrder={createOrder} onUpdateOrder={updateOrder} editOrder={editOrder} />}
       {editProduct && <NewProductModal editProduct={editProduct} onClose={() => setEditProduct(null)} onCreated={() => {}} onUpdated={() => { setStockRefreshKey((k) => k + 1); notify('Produto atualizado com sucesso!') }} />}
       {removeConfirmOrder && (
@@ -2377,13 +2384,13 @@ function Purchases({ notify }) {
   )
 }
 
-function Deliveries() {
+function Deliveries({ onNewDelivery, onSelect, deliveries: list }) {
   return (
     <section className="pageStack">
-      <div className="sectionHeader"><div><p>Rotas, motoristas e temperatura</p></div><button className="btnSolid"><Route size={18} /> Otimizar rotas</button></div>
+      <div className="sectionHeader"><div><p>Rotas, motoristas e temperatura</p></div><div style={{display:'flex',gap:'8px'}}><button className="btnSolid" onClick={onNewDelivery}><Plus size={18} /> Nova entrega</button><button className="btnSolid"><UserRound size={18} /> Entregadores</button></div></div>
       <div className="deliveryGrid">
-        {deliveries.map((delivery) => (
-          <article className="deliveryCard" key={delivery.id}>
+        {list.map((delivery) => (
+          <article className="deliveryCard" key={delivery.id} onClick={() => onSelect(delivery)} style={{cursor:'pointer'}}>
             <div className="deliveryMap"><MapPin size={38} /><span>{delivery.route}</span></div>
             <div className="deliveryBody">
               <div className="supplierTop"><h3>{delivery.id} • {delivery.driver}</h3><Status status={delivery.status} /></div>
@@ -2395,6 +2402,321 @@ function Deliveries() {
         ))}
       </div>
     </section>
+  )
+}
+
+function NewDeliveryModal({ onClose, onCreate, onUpdate, editDelivery, orders }) {
+  const prefillSeller = editDelivery ? sellers.find((s) => s.name === editDelivery.driver) : null
+  const [form, setForm] = useState(() => editDelivery ? {
+    route: editDelivery.route || '',
+    sellerId: prefillSeller ? String(prefillSeller.id) : '',
+    vehicle: editDelivery.vehicle || '',
+    coldChamber: '',
+    stops: String(editDelivery.stops || ''),
+    temperature: editDelivery.temperature ? editDelivery.temperature.replace('°C', '') : '',
+    departureDate: editDelivery.departureDate || '',
+    arrivalDate: editDelivery.arrivalDate || '',
+    notes: editDelivery.notes || '',
+    status: editDelivery.status || 'Planejada',
+  } : {
+    route: '',
+    sellerId: '',
+    vehicle: '',
+    coldChamber: '',
+    stops: '',
+    temperature: '',
+    departureDate: '',
+    arrivalDate: '',
+    notes: '',
+    status: 'Planejada',
+  })
+  const [selectedOrderIds, setSelectedOrderIds] = useState(editDelivery?.orderIds || [])
+  const set = (k, v) => setForm((f) => ({ ...f, [k]: v }))
+  const toggleOrder = (id) => setSelectedOrderIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id])
+  const separacaoOrders = orders.filter((o) => o.status === 'Separação')
+  const canSubmit = form.route.trim() !== '' && form.sellerId !== ''
+
+  const submit = (e) => {
+    e.preventDefault()
+    if (!canSubmit) return
+    const seller = sellers.find((s) => s.id === Number(form.sellerId))
+    if (editDelivery) {
+      onUpdate({
+        ...editDelivery,
+        route: form.route,
+        driver: seller ? seller.name : editDelivery.driver,
+        driverPhone: seller ? seller.phone : editDelivery.driverPhone,
+        vehicle: form.vehicle || editDelivery.vehicle,
+        stops: selectedOrderIds.length || Number(form.stops) || 0,
+        temperature: form.temperature ? form.temperature + '°C' : editDelivery.temperature,
+        status: form.status,
+        departureDate: form.departureDate,
+        arrivalDate: form.arrivalDate,
+        notes: form.notes,
+        orderIds: selectedOrderIds,
+      })
+    } else {
+      const newId = 'R-' + (80 + Math.floor(Math.random() * 900))
+      onCreate({
+        id: newId,
+        route: form.route,
+        driver: seller ? seller.name : '',
+        driverPhone: seller ? seller.phone : '',
+        vehicle: form.vehicle || 'Câmara fria ' + (form.coldChamber || '01'),
+        stops: selectedOrderIds.length || Number(form.stops) || 0,
+        temperature: form.temperature ? form.temperature + '°C' : '-18.0°C',
+        status: form.status,
+        progress: 0,
+        departureDate: form.departureDate,
+        arrivalDate: form.arrivalDate,
+        notes: form.notes,
+        orderIds: selectedOrderIds,
+      })
+    }
+    onClose()
+  }
+
+  return (
+    <div className="modalBackdrop">
+      <div className="detailModal newOrderModal">
+        <button className="closeBtn" onClick={onClose}><X /></button>
+        <div className="modalHeader">
+          <div>
+            <span>Rota de entrega</span>
+            <h2>{editDelivery ? 'Editar entrega' : 'Nova entrega'}</h2>
+            <p>{editDelivery ? 'Altere as informações da rota e salve as modificações' : 'Preencha as informações da rota e do entregador'}</p>
+          </div>
+        </div>
+        <form onSubmit={submit}>
+          <div className="newOrderScrollArea">
+            <h3>Rota e entregador</h3>
+            <div className="settingsForm">
+              <label>Rota *
+                <input placeholder="Ex: Centro → Coral → Conta Dinheiro" value={form.route} onChange={(e) => set('route', e.target.value)} required />
+              </label>
+              <label>Entregador *
+                <select value={form.sellerId} onChange={(e) => set('sellerId', e.target.value)} required>
+                  <option value="">Selecione o entregador</option>
+                  {sellers.map((s) => <option key={s.id} value={s.id}>{s.name} • {s.phone}</option>)}
+                </select>
+              </label>
+              <label>Veículo / Câmara fria
+                <input placeholder="Ex: Câmara fria 01" value={form.vehicle} onChange={(e) => set('vehicle', e.target.value)} />
+              </label>
+              <label>Número da câmara fria
+                <input type="number" min="1" placeholder="1" value={form.coldChamber} onChange={(e) => set('coldChamber', e.target.value)} />
+              </label>
+            </div>
+
+            <h3 className="newOrderSectionTitle">Pedidos em separação</h3>
+            {separacaoOrders.length === 0
+              ? <p style={{color:'var(--muted)',fontWeight:700,fontSize:'.88rem',margin:'0 0 12px'}}>Nenhum pedido em separação no momento.</p>
+              : (
+                <div className="deliveryOrderChecklist">
+                  {separacaoOrders.map((o) => (
+                    <label key={o.id} className={`deliveryOrderCheckItem${selectedOrderIds.includes(o.id) ? ' selected' : ''}`}>
+                      <input type="checkbox" checked={selectedOrderIds.includes(o.id)} onChange={() => toggleOrder(o.id)} />
+                      <div className="deliveryOrderCheckBody">
+                        <b>{o.id}</b>
+                        <span>{o.customer}</span>
+                        <small>{o.city} • {money(o.value)}</small>
+                      </div>
+                      {selectedOrderIds.includes(o.id) && <CheckCircle2 size={18} color="var(--orange)" />}
+                    </label>
+                  ))}
+                </div>
+              )
+            }
+
+            <h3 className="newOrderSectionTitle">Detalhes da rota</h3>
+            <div className="settingsForm">
+              <label>Status
+                <select value={form.status} onChange={(e) => set('status', e.target.value)}>
+                  <option>Planejada</option>
+                  <option>Carregando</option>
+                  <option>Em rota</option>
+                  <option>Concluída</option>
+                  <option>Cancelada</option>
+                </select>
+              </label>
+              <label>Quantidade de paradas
+                <input type="number" min="0" placeholder="0" value={form.stops} onChange={(e) => set('stops', e.target.value)} />
+              </label>
+              <label>Temperatura da câmara (°C)
+                <input placeholder="Ex: -18.0" value={form.temperature} onChange={(e) => set('temperature', e.target.value)} />
+              </label>
+            </div>
+
+            <h3 className="newOrderSectionTitle">Datas</h3>
+            <div className="settingsForm">
+              <label>Data de saída
+                <input type="datetime-local" value={form.departureDate} onChange={(e) => set('departureDate', e.target.value)} />
+              </label>
+              <label>Data de chegada prevista
+                <input type="datetime-local" value={form.arrivalDate} onChange={(e) => set('arrivalDate', e.target.value)} />
+              </label>
+            </div>
+
+            <div className="noteBox" style={{marginTop:'16px'}}>
+              <b>Observações</b>
+              <textarea rows={3} placeholder="Instruções especiais, cuidados com a carga..." value={form.notes} onChange={(e) => set('notes', e.target.value)} />
+            </div>
+          </div>
+
+          <div className="newOrderFooter">
+            {selectedOrderIds.length > 0 && (
+              <div className="newOrderTotalInline">
+                <span>Pedidos selecionados</span>
+                <strong>{selectedOrderIds.length} pedido{selectedOrderIds.length > 1 ? 's' : ''}</strong>
+              </div>
+            )}
+            <div className="newOrderFooterActions">
+              <button type="submit" className="btnPrimary" disabled={!canSubmit}><CheckCircle2 size={17} /> {editDelivery ? 'Salvar alterações' : 'Criar entrega'}</button>
+            </div>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
+function DeliveryDetailModal({ delivery, onClose, orders, onCancel, onEdit }) {
+  const [liveTemp, setLiveTemp] = useState(() => parseFloat(delivery.temperature) || -18.0)
+  const [liveProgress, setLiveProgress] = useState(delivery.progress)
+  const [elapsed, setElapsed] = useState(0)
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setLiveTemp((t) => parseFloat((t + (Math.random() * 0.06 - 0.03)).toFixed(1)))
+      setElapsed((e) => e + 1)
+    }, 3000)
+    return () => clearInterval(interval)
+  }, [])
+
+  const statusSteps = ['Planejada', 'Carregando', 'Em rota', 'Concluída']
+  const currentStep = statusSteps.indexOf(delivery.status)
+  const isCancelled = delivery.status === 'Cancelada'
+
+  const fmtDate = (val) => {
+    if (!val) return '—'
+    try { return new Date(val).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) } catch { return val }
+  }
+
+  const tempColor = liveTemp > -15 ? 'var(--red)' : liveTemp > -17 ? 'var(--orange)' : 'var(--green)'
+
+  return (
+    <div className="modalBackdrop" onClick={(e) => { if (e.target.classList.contains('modalBackdrop')) onClose() }}>
+      <div className="detailModal deliveryDetailModal">
+        <button className="closeBtn" onClick={onClose}><X /></button>
+        <div className="modalHeader">
+          <div>
+            <span>{delivery.id}</span>
+            <h2>{delivery.driver}</h2>
+            <p>{delivery.route}</p>
+          </div>
+          <Status status={delivery.status} />
+        </div>
+
+        <div className="newOrderScrollArea" style={{padding:'0 28px 24px'}}>
+
+          {/* Progresso da rota */}
+          <div className="deliveryDetailSection">
+            <h4>Progresso da rota</h4>
+
+            {/* Steps */}
+            {!isCancelled && (
+              <div className="deliverySteps">
+                {statusSteps.map((step, idx) => (
+                  <div key={step} className={`deliveryStep ${idx <= currentStep ? 'done' : ''} ${idx === currentStep ? 'active' : ''}`}>
+                    <div className="deliveryStepDot">{idx < currentStep ? <CheckCircle2 size={14}/> : <span style={{color:'#fff'}}>{idx + 1}</span>}</div>
+                    <span>{step}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            {isCancelled && <p style={{color:'var(--red)',fontWeight:700,marginTop:'10px'}}>Esta entrega foi cancelada.</p>}
+          </div>
+
+          {/* Localização em tempo real */}
+          <div className="deliveryDetailSection">
+            <h4>Localização em tempo real</h4>
+            <div className="deliveryTempCard">
+              <div className="deliveryTempMeta">
+                <span style={{fontWeight:700}}>{delivery.route}</span>
+                <small style={{color:'var(--green)'}}>GPS ativo</small>
+              </div>
+              <span className="deliveryTempLive"><span className="liveDot"></span>Ao vivo</span>
+            </div>
+          </div>
+
+          {/* Informações */}
+          <div className="deliveryDetailSection">
+            <h4>Informações da entrega</h4>
+            <div className="deliveryInfoGrid">
+              <div className="deliveryInfoItem"><small>Entregador</small><b>{delivery.driver}</b></div>
+              <div className="deliveryInfoItem"><small>Veículo</small><b>{delivery.vehicle}</b></div>
+              <div className="deliveryInfoItem"><small>Paradas</small><b>{delivery.stops}</b></div>
+              <div className="deliveryInfoItem"><small>Status</small><b>{delivery.status}</b></div>
+              <div className="deliveryInfoItem"><small>Data de saída</small><b>{fmtDate(delivery.departureDate)}</b></div>
+              <div className="deliveryInfoItem"><small>Chegada prevista</small><b>{fmtDate(delivery.arrivalDate)}</b></div>
+            </div>
+          </div>
+
+          {/* Pedidos em rota */}
+          {delivery.orderIds?.length > 0 && (
+            <div className="deliveryDetailSection">
+              <h4><ShoppingCart size={15} /> Pedidos nesta entrega</h4>
+              <div className="deliveryOrdersList">
+                {delivery.orderIds.map((oid) => {
+                  const o = orders.find((x) => x.id === oid)
+                  if (!o) return <div key={oid} className="deliveryOrdersItem"><b>{oid}</b></div>
+                  return (
+                    <div key={oid} className="deliveryOrdersItem">
+                      <div className="deliveryOrdersItemBody">
+                        <b>{o.id}</b>
+                        <span>{o.customer}</span>
+                        <small>{o.city} • {money(o.value)}</small>
+                      </div>
+                      <Status status={o.status} />
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Observações */}
+          {delivery.notes && (
+            <div className="deliveryDetailSection">
+              <h4><ClipboardList size={15} /> Observações</h4>
+              <p style={{color:'var(--muted)',fontWeight:600,lineHeight:1.5}}>{delivery.notes}</p>
+            </div>
+          )}
+
+          {/* Live log */}
+          <div className="deliveryDetailSection">
+            <h4>Acompanhamento ao vivo</h4>
+            <div className="deliveryLiveLog">
+              <div className="deliveryLogItem"><span className="liveDot"></span><span>Temperatura: <b style={{color:tempColor}}>{liveTemp.toFixed(1)}°C</b></span><small>agora</small></div>
+              {elapsed > 0 && <div className="deliveryLogItem"><CheckCircle2 size={13} color="var(--green)"/><span>Sinal GPS ativo</span><small>{elapsed * 3}s atrás</small></div>}
+              <div className="deliveryLogItem"><CheckCircle2 size={13} color="var(--green)"/><span>Câmara lacrada e operacional</span><small>início</small></div>
+              <div className="deliveryLogItem"><CheckCircle2 size={13} color="var(--green)"/><span>Checklist de saída concluído</span><small>início</small></div>
+            </div>
+          </div>
+
+        </div>
+
+        {(delivery.status === 'Planejada' || delivery.status === 'Carregando') && (
+          <div className="newOrderFooter" style={{borderTop:'1px solid var(--line)',padding:'16px 28px',gap:'10px',justifyContent:'flex-end'}}>
+            <div className="newOrderFooterActions" style={{marginLeft:'auto'}}>
+              <button type="button" style={{color:'var(--red)',fontWeight:700}} onClick={() => onCancel(delivery.id)}><Ban size={16} /> Cancelar entrega</button>
+              <button type="button" className="btnPrimary" onClick={() => onEdit(delivery)}><ClipboardEdit size={16} /> Editar entrega</button>
+            </div>
+          </div>
+        )}
+
+      </div>
+    </div>
   )
 }
 
