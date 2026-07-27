@@ -1264,6 +1264,7 @@ function Suppliers({ onMessage, search = '' }) {
   const [loading, setLoading] = useState(false)
   const [newSupplierOpen, setNewSupplierOpen] = useState(false)
   const [editSupplier, setEditSupplier] = useState(null)
+  const [detailSupplier, setDetailSupplier] = useState(null)
   const [transcript, setTranscript] = useState(null)
   const [removeConfirmSupplier, setRemoveConfirmSupplier] = useState(null)
 
@@ -1293,6 +1294,7 @@ function Suppliers({ onMessage, search = '' }) {
     setRemoveConfirmSupplier(null)
     setNewSupplierOpen(false)
     setEditSupplier(null)
+    setDetailSupplier(null)
   }
 
   const filtered = !search ? suppliersData : suppliersData.filter((s) => s.name.toLowerCase().includes(search.toLowerCase()))
@@ -1322,20 +1324,28 @@ function Suppliers({ onMessage, search = '' }) {
               <div className="supplierInfo"><span><MapPin size={12} /> {supplier.address}</span></div>
             )}
             <div className="orderActions">
-              <button onClick={() => onMessage(supplier)}>Comunicar</button>
               <button onClick={() => setTranscript(supplier)}>Ver conversa IA</button>
-              <button onClick={() => { setEditSupplier(supplier); setNewSupplierOpen(true) }}>Editar</button>
+              <button onClick={() => setDetailSupplier(supplier)}>Detalhes</button>
+              <button onClick={() => onMessage(supplier)}>Comunicar</button>
             </div>
           </article>
         ))}
       </div>
       {newSupplierOpen && (
         <NewSupplierModal
-          onClose={() => setNewSupplierOpen(false)}
+          onClose={() => { setNewSupplierOpen(false); setEditSupplier(null) }}
           onCreated={addSupplier}
           editSupplier={editSupplier}
-          onUpdated={updateSupplier}
+          onUpdated={(s) => { updateSupplier(s); setDetailSupplier(s) }}
           onRemove={(supplier) => { setNewSupplierOpen(false); setRemoveConfirmSupplier(supplier) }}
+        />
+      )}
+      {detailSupplier && (
+        <SupplierDetailModal
+          supplier={detailSupplier}
+          onClose={() => setDetailSupplier(null)}
+          onEdit={(s) => { setDetailSupplier(null); setEditSupplier(s); setNewSupplierOpen(true) }}
+          onRemove={(s) => { setDetailSupplier(null); setRemoveConfirmSupplier(s) }}
         />
       )}
       {transcript && <SupplierTranscriptModal supplier={transcript} onClose={() => setTranscript(null)} />}
@@ -1352,6 +1362,128 @@ function Suppliers({ onMessage, search = '' }) {
         </div>
       )}
     </section>
+  )
+}
+
+function SupplierDetailModal({ supplier, onClose, onEdit, onRemove }) {
+  const [purchases, setPurchases] = useState([])
+  const [loadingPurchases, setLoadingPurchases] = useState(true)
+
+  useEffect(() => {
+    setLoadingPurchases(true)
+    fetch(`${API_URL}/api/supplier-purchases?supplierId=${supplier.id}`)
+      .then((r) => r.json())
+      .then((data) => { if (data.purchases) setPurchases(data.purchases) })
+      .catch(() => {})
+      .finally(() => setLoadingPurchases(false))
+  }, [supplier.id])
+
+  const fmtDate = (iso) => {
+    if (!iso) return '—'
+    const d = new Date(iso)
+    return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' })
+  }
+
+  const completed = purchases.filter((p) => p.status === 'Concluída' || p.completedAt)
+  const scheduled = purchases.filter((p) => p.status !== 'Concluída' && !p.completedAt)
+
+  const totalSpent = completed.reduce((sum, p) => sum + (p.totalAmount || 0), 0)
+
+  return (
+    <div className="modalBackdrop">
+      <div className="detailModal newOrderModal supplierDetailModal">
+        <button className="closeBtn" onClick={onClose}><X /></button>
+        <div className="modalHeader">
+          <div>
+            <span>Fornecedor</span>
+            <h2>{supplier.name}</h2>
+            <p>Informações completas, histórico de compras e compras agendadas</p>
+          </div>
+        </div>
+        <div className="newOrderScrollArea">
+          <h3>Dados do fornecedor</h3>
+          <div className="supplierDetailGrid">
+            {supplier.foodTypes && <div className="supplierDetailItem"><span>Tipos de alimentos</span><b>{supplier.foodTypes}</b></div>}
+            <div className="supplierDetailItem"><span>Contato</span><b>{supplier.contactName || '—'}</b></div>
+            <div className="supplierDetailItem"><span>WhatsApp</span><b>{supplier.contactPhone || '—'}</b></div>
+            <div className="supplierDetailItem"><span>Prazo médio</span><b>{supplier.leadTimeDays != null ? `${supplier.leadTimeDays} dia${supplier.leadTimeDays !== 1 ? 's' : ''}` : '—'}</b></div>
+            {supplier.address && <div className="supplierDetailItem supplierDetailFull"><span><MapPin size={12} /> Endereço</span><b>{supplier.address}</b></div>}
+          </div>
+
+          <div className="supplierDetailDivider" />
+
+          <div className="supplierDetailSectionHeader">
+            <h3>Compras agendadas</h3>
+            {scheduled.length > 0 && <span className="badge">{scheduled.length}</span>}
+          </div>
+          {loadingPurchases && <p className="loadingText" style={{ marginTop: 8 }}>Carregando...</p>}
+          {!loadingPurchases && scheduled.length === 0 && (
+            <p className="emptyText" style={{ marginTop: 8 }}>Nenhuma compra agendada.</p>
+          )}
+          {!loadingPurchases && scheduled.length > 0 && (
+            <div className="purchaseHistoryList">
+              {scheduled.map((p) => (
+                <div className="purchaseHistoryItem" key={p.id}>
+                  <div className="purchaseHistoryMain">
+                    <b>{p.purchaseName}</b>
+                    {p.description && <span>{p.description}</span>}
+                  </div>
+                  <div className="purchaseHistoryMeta">
+                    <span>Qtd: <b>{p.quantity}</b></span>
+                    {p.totalAmount != null && <span>Valor: <b>{money(p.totalAmount)}</b></span>}
+                    {p.scheduledPurchaseDate && <span>Data: <b>{fmtDate(p.scheduledPurchaseDate)}</b></span>}
+                    <span className="purchaseStatusBadge pending">{p.status}</span>
+                  </div>
+                  {p.notes && <p className="purchaseHistoryNotes">{p.notes}</p>}
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="supplierDetailDivider" />
+
+          <div className="supplierDetailSectionHeader">
+            <h3>Histórico de compras</h3>
+            {completed.length > 0 && (
+              <span className="supplierDetailTotal">Total gasto: <b>{money(totalSpent)}</b></span>
+            )}
+          </div>
+          {loadingPurchases && <p className="loadingText" style={{ marginTop: 8 }}>Carregando...</p>}
+          {!loadingPurchases && completed.length === 0 && (
+            <p className="emptyText" style={{ marginTop: 8 }}>Nenhuma compra realizada.</p>
+          )}
+          {!loadingPurchases && completed.length > 0 && (
+            <div className="purchaseHistoryList">
+              {completed.map((p) => (
+                <div className="purchaseHistoryItem" key={p.id}>
+                  <div className="purchaseHistoryMain">
+                    <b>{p.purchaseName}</b>
+                    {p.description && <span>{p.description}</span>}
+                  </div>
+                  <div className="purchaseHistoryMeta">
+                    <span>Qtd: <b>{p.quantity}</b></span>
+                    {p.totalAmount != null && <span>Valor: <b>{money(p.totalAmount)}</b></span>}
+                    {p.completedAt && <span>Concluída em: <b>{fmtDate(p.completedAt)}</b></span>}
+                    <span className="purchaseStatusBadge done">Concluída</span>
+                  </div>
+                  {p.notes && <p className="purchaseHistoryNotes">{p.notes}</p>}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+        <div className="newOrderFooter">
+          <div className="newOrderFooterActions">
+            <button type="button" className="orderModalBtn orderModalBtnDanger" onClick={() => onRemove(supplier)}>Remover</button>
+          </div>
+          <div className="newOrderFooterActions">
+            <button type="button" className="btnPrimary" onClick={() => onEdit(supplier)}>
+              <ClipboardEdit size={16} /> Editar
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
   )
 }
 
