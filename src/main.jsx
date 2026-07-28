@@ -2679,12 +2679,12 @@ function VehiclesModal({ onClose, vehicles, onCreate, onUpdate, onRemove }) {
 }
 
 function NewDeliveryModal({ onClose, onCreate, onUpdate, editDelivery, orders, vehicles = [] }) {
-  const prefillSeller = editDelivery ? sellers.find((s) => s.name === editDelivery.driver) : null
+  const [sellersData, setSellersData] = useState([])
+  const [sellersLoading, setSellersLoading] = useState(true)
   const defaultVehicle = vehicles.length > 0 ? vehicles[0].name : ''
   const [form, setForm] = useState(() => editDelivery ? {
-    sellerId: prefillSeller ? String(prefillSeller.id) : '',
+    sellerId: '',
     vehicle: editDelivery.vehicle || defaultVehicle,
-    stops: String(editDelivery.stops || ''),
     temperature: editDelivery.temperature ? editDelivery.temperature.replace('°C', '') : '',
     departureDate: editDelivery.departureDate || '',
     arrivalDate: editDelivery.arrivalDate || '',
@@ -2693,13 +2693,28 @@ function NewDeliveryModal({ onClose, onCreate, onUpdate, editDelivery, orders, v
   } : {
     sellerId: '',
     vehicle: defaultVehicle,
-    stops: '',
     temperature: '',
     departureDate: '',
     arrivalDate: '',
     notes: '',
     status: 'Carregando',
   })
+
+  useEffect(() => {
+    fetch(`${API_URL}/api/sellers`)
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.sellers) {
+          setSellersData(data.sellers)
+          if (editDelivery?.driver) {
+            const match = data.sellers.find((s) => s.name === editDelivery.driver)
+            if (match) setForm((f) => ({ ...f, sellerId: String(match.id) }))
+          }
+        }
+      })
+      .catch(() => {})
+      .finally(() => setSellersLoading(false))
+  }, [])
 
   const [selectedCities, setSelectedCities] = useState(() => {
     if (!editDelivery?.route) return []
@@ -2736,7 +2751,7 @@ function NewDeliveryModal({ onClose, onCreate, onUpdate, editDelivery, orders, v
     e.preventDefault()
     if (!canSubmit) return
     const route = selectedCities.join(' → ')
-    const seller = sellers.find((s) => s.id === Number(form.sellerId))
+    const seller = sellersData.find((s) => s.id === Number(form.sellerId))
     if (editDelivery) {
       onUpdate({
         ...editDelivery,
@@ -2744,7 +2759,7 @@ function NewDeliveryModal({ onClose, onCreate, onUpdate, editDelivery, orders, v
         driver: seller ? seller.name : editDelivery.driver,
         driverPhone: seller ? seller.phone : editDelivery.driverPhone,
         vehicle: form.vehicle,
-        stops: selectedOrderIds.length || Number(form.stops) || 0,
+        stops: selectedCities.length,
         temperature: form.temperature ? form.temperature + '°C' : editDelivery.temperature,
         status: form.status,
         departureDate: form.departureDate,
@@ -2760,7 +2775,7 @@ function NewDeliveryModal({ onClose, onCreate, onUpdate, editDelivery, orders, v
         driver: seller ? seller.name : '',
         driverPhone: seller ? seller.phone : '',
         vehicle: form.vehicle,
-        stops: selectedOrderIds.length || Number(form.stops) || 0,
+        stops: selectedCities.length,
         temperature: form.temperature ? form.temperature + '°C' : '-18.0°C',
         status: form.status,
         progress: 0,
@@ -2822,8 +2837,8 @@ function NewDeliveryModal({ onClose, onCreate, onUpdate, editDelivery, orders, v
               </label>
               <label>Entregador *
                 <select value={form.sellerId} onChange={(e) => set('sellerId', e.target.value)} required>
-                  <option value="">Selecione o entregador</option>
-                  {sellers.map((s) => <option key={s.id} value={s.id}>{s.name} • {s.phone}</option>)}
+                  <option value="">{sellersLoading ? 'Carregando entregadores...' : 'Selecione o entregador'}</option>
+                  {sellersData.map((s) => <option key={s.id} value={s.id}>{s.name} • {s.phone}</option>)}
                 </select>
               </label>
               <label>Veículo / Câmara fria
@@ -2863,9 +2878,6 @@ function NewDeliveryModal({ onClose, onCreate, onUpdate, editDelivery, orders, v
                   <option>Carregando</option>
                   <option>Em rota</option>
                 </select>
-              </label>
-              <label>Quantidade de paradas
-                <input type="number" min="0" placeholder="0" value={form.stops} onChange={(e) => set('stops', e.target.value)} />
               </label>
               <label>Temperatura da câmara (°C)
                 <input placeholder="Ex: -18.0" value={form.temperature} onChange={(e) => set('temperature', e.target.value)} />
