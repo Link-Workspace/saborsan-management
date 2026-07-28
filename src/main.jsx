@@ -564,8 +564,8 @@ function App() {
       {notaFiscalOrder && <NotaFiscalModal order={notaFiscalOrder} onClose={() => setNotaFiscalOrder(null)} updateOrderStatus={updateOrderStatus} notify={notify} />}
       {verNotaOrder && <VerNotaModal order={verNotaOrder} onClose={() => setVerNotaOrder(null)} onSendToClient={sendNfeToClient} />}
       {notifOpen && <NotifPanel onClose={() => setNotifOpen(false)} />}
-      {newDeliveryOpen && <NewDeliveryModal onClose={() => setNewDeliveryOpen(false)} orders={orders} vehicles={vehiclesState} onCreate={(d) => { setDeliveriesState((prev) => [d, ...prev]); d.orderIds?.forEach((id) => updateOrderStatus(id, 'Rota')); notify(`Entrega ${d.id} criada com sucesso!`) }} />}
-      {editDelivery && <NewDeliveryModal onClose={() => setEditDelivery(null)} orders={orders} vehicles={vehiclesState} editDelivery={editDelivery} onUpdate={(d) => { setDeliveriesState((prev) => prev.map((x) => x.id === d.id ? d : x)); setEditDelivery(null); notify(`Entrega ${d.id} atualizada com sucesso!`) }} onCreate={(d) => { setDeliveriesState((prev) => [d, ...prev]); d.orderIds?.forEach((id) => updateOrderStatus(id, 'Rota')); notify(`Entrega ${d.id} criada com sucesso!`) }} />}
+      {newDeliveryOpen && <NewDeliveryModal onClose={() => setNewDeliveryOpen(false)} orders={orders} vehicles={vehiclesState} onCreate={(d) => { setDeliveriesState((prev) => [d, ...prev]); notify(`Entrega ${d.id} criada com sucesso! O entregador será notificado sobre os pedidos em separação.`) }} />}
+      {editDelivery && <NewDeliveryModal onClose={() => setEditDelivery(null)} orders={orders} vehicles={vehiclesState} editDelivery={editDelivery} onUpdate={(d) => { setDeliveriesState((prev) => prev.map((x) => x.id === d.id ? d : x)); setEditDelivery(null); notify(`Entrega ${d.id} atualizada com sucesso!`) }} onCreate={(d) => { setDeliveriesState((prev) => [d, ...prev]); notify(`Entrega ${d.id} criada com sucesso! O entregador será notificado sobre os pedidos em separação.`) }} />}
       {selectedDelivery && <DeliveryDetailModal delivery={selectedDelivery} onClose={() => setSelectedDelivery(null)} orders={orders} onCancel={cancelDelivery} onRemove={removeDelivery} onReactivate={reactivateDelivery} onEdit={(d) => { setEditDelivery(d); setSelectedDelivery(null) }} />}
       {vehiclesOpen && <VehiclesModal
         onClose={() => setVehiclesOpen(false)}
@@ -2777,8 +2777,12 @@ function NewDeliveryModal({ onClose, onCreate, onUpdate, editDelivery, orders, v
   const [saveError, setSaveError] = useState('')
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }))
   const toggleOrder = (id) => setSelectedOrderIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id])
-  const separacaoOrders = orders.filter((o) => o.status === 'Separação')
-  const canSubmit = selectedCities.length > 0 && form.sellerId !== ''
+  const eligibleOrders = orders.filter((o) => o.status === 'Separação' || o.status === 'Pronto')
+  const hasUnreadyOrders = selectedOrderIds.some((id) => {
+    const o = orders.find((x) => x.id === id)
+    return o && o.status === 'Separação'
+  })
+  const canSubmit = selectedCities.length > 0 && form.sellerId !== '' && !(form.status === 'Em rota' && hasUnreadyOrders)
 
   const submit = async (e) => {
     e.preventDefault()
@@ -2929,12 +2933,12 @@ function NewDeliveryModal({ onClose, onCreate, onUpdate, editDelivery, orders, v
               </label>
             </div>
 
-            <h3 className="newOrderSectionTitle">Pedidos em separação</h3>
-            {separacaoOrders.length === 0
-              ? <p style={{color:'var(--muted)',fontWeight:700,fontSize:'.88rem',margin:'0 0 12px'}}>Nenhum pedido em separação no momento.</p>
+            <h3 className="newOrderSectionTitle">Pedidos para esta entrega</h3>
+            {eligibleOrders.length === 0
+              ? <p style={{color:'var(--muted)',fontWeight:700,fontSize:'.88rem',margin:'0 0 12px'}}>Nenhum pedido em separação ou pronto no momento.</p>
               : (
                 <div className="deliveryOrderChecklist">
-                  {separacaoOrders.map((o) => (
+                  {eligibleOrders.map((o) => (
                     <label key={o.id} className={`deliveryOrderCheckItem${selectedOrderIds.includes(o.id) ? ' selected' : ''}`}>
                       <input type="checkbox" checked={selectedOrderIds.includes(o.id)} onChange={() => toggleOrder(o.id)} />
                       <div className="deliveryOrderCheckBody">
@@ -2942,7 +2946,10 @@ function NewDeliveryModal({ onClose, onCreate, onUpdate, editDelivery, orders, v
                         <span>{o.customer}</span>
                         <small>{o.city} • {money(o.value)}</small>
                       </div>
-                      {selectedOrderIds.includes(o.id) && <CheckCircle2 size={18} color="var(--orange)" />}
+                      <div style={{display:'flex',flexDirection:'column',alignItems:'flex-end',gap:'4px'}}>
+                        {selectedOrderIds.includes(o.id) && <CheckCircle2 size={18} color="var(--orange)" />}
+                        <Status status={o.status} />
+                      </div>
                     </label>
                   ))}
                 </div>
@@ -2954,9 +2961,12 @@ function NewDeliveryModal({ onClose, onCreate, onUpdate, editDelivery, orders, v
               <label>Status
                 <select value={form.status} onChange={(e) => set('status', e.target.value)}>
                   <option>Carregando</option>
-                  <option>Em rota</option>
+                  <option value="Em rota" disabled={hasUnreadyOrders}>Em rota{hasUnreadyOrders ? ' (aguardando confirmação dos pedidos)' : ''}</option>
                 </select>
               </label>
+              {hasUnreadyOrders && form.status === 'Em rota' && (
+                <p style={{color:'var(--orange)',fontWeight:700,fontSize:'.82rem',margin:'-8px 0 0'}}>O entregador precisa confirmar todos os pedidos em separação antes de avançar para Em rota.</p>
+              )}
               <label>Temperatura da câmara (°C)
                 <input placeholder="Ex: -18.0" value={form.temperature} onChange={(e) => set('temperature', e.target.value)} />
               </label>

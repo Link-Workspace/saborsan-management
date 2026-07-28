@@ -1,5 +1,17 @@
 const { app } = require('@azure/functions');
 const sql = require('mssql');
+const { initializeApp: initFirebase, cert, getApps } = require('firebase-admin/app');
+const { getMessaging } = require('firebase-admin/messaging');
+
+if (!getApps().length) {
+  initFirebase({
+    credential: cert({
+      projectId: process.env.FIREBASE_PROJECT_ID,
+      clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+      privateKey: (process.env.FIREBASE_PRIVATE_KEY || '').replace(/\\n/g, '\n'),
+    }),
+  });
+}
 
 const sqlConfig = {
   server: process.env.SQL_SERVER,
@@ -8,6 +20,53 @@ const sqlConfig = {
   password: process.env.SQL_PASSWORD,
   options: { encrypt: true, trustServerCertificate: false },
 };
+
+// Envia notificação push ao entregador sobre pedidos em Separação vinculados à entrega
+async function notifyDriverAboutOrders(sellerId, orderIds, deliveryCode) {
+  if (!sellerId || !orderIds.length) return;
+  try {
+    // Buscar userId do vendedor/entregador
+    const sellerRow = await sql.query`SELECT userId FROM Sellers WHERE id = ${sellerId}`;
+    if (!sellerRow.recordset.length) return;
+    const { userId } = sellerRow.recordset[0];
+
+    // Buscar apenas os pedidos que estão em Separação
+    const separacaoOrders = [];
+    for (const orderId of orderIds) {
+      const check = await sql.query`SELECT id, clientName FROM GestaoOrders WHERE id = ${orderId} AND status = N'Separação'`;
+      if (check.recordset.length) separacaoOrders.push(check.recordset[0]);
+    }
+    if (!separacaoOrders.length) return;
+
+    // Buscar tokens FCM do entregador
+    const tokensResult = await sql.query`SELECT token FROM PushTokens WHERE userId = ${userId}`;
+    const tokens = tokensResult.recordset.map((r) => r.token).filter(Boolean);
+    if (!tokens.length) return;
+
+    const messaging = getMessaging();
+    for (const order of separacaoOrders) {
+      const msgTitle = `Pedido ${order.id} em separação`;
+      const msgBody = `Confirme quando o pedido de ${order.clientName} (entrega ${deliveryCode}) estiver pronto para entrar em rota.`;
+      for (const token of tokens) {
+        try {
+          await messaging.send({
+            token,
+            notification: { title: msgTitle, body: msgBody },
+            data: { type: 'order_ready_check', orderId: String(order.id), deliveryCode: String(deliveryCode) },
+            android: { priority: 'high' },
+            apns: { payload: { aps: { sound: 'default' } } },
+          });
+        } catch (err) {
+          if (err.code === 'messaging/invalid-registration-token' || err.code === 'messaging/registration-token-not-registered') {
+            await sql.query`DELETE FROM PushTokens WHERE token = ${token}`;
+          }
+        }
+      }
+    }
+  } catch {
+    // Silenciar erros de notificação para não quebrar o fluxo principal
+  }
+}
 
 app.http('deliveries', {
   methods: ['GET', 'POST', 'PATCH', 'DELETE'],
@@ -101,6 +160,9 @@ app.http('deliveries', {
           }
         }
 
+        // Notificar entregador sobre pedidos em Separação vinculados a esta entrega
+        await notifyDriverAboutOrders(sellerId, orderIds || [], code);
+
         return { status: 201, jsonBody: { success: true, code, id: newId } };
       }
 
@@ -146,6 +208,9 @@ app.http('deliveries', {
               }
             }
           }
+
+          // Notificar entregador sobre pedidos em Separação vinculados a esta entrega
+          await notifyDriverAboutOrders(sellerId, orderIds || [], deliveryId);
         } else if (status !== undefined) {
           await sql.query`
             UPDATE Deliveries
