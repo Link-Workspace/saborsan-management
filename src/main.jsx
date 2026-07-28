@@ -370,6 +370,17 @@ function App() {
     }).catch(() => {})
   }
 
+  const cancelDelivery = (id) => {
+    setDeliveriesState((prev) => prev.map((d) => d.id === id ? { ...d, status: 'Cancelada', progress: 0 } : d))
+    setSelectedDelivery(null)
+    notify(`Entrega ${id} cancelada.`)
+    fetch(`${API_URL}/api/deliveries`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ deliveryId: id, status: 'Cancelada', progress: 0 }),
+    }).catch(() => {})
+  }
+
   const createInvoice = (order) => {
     updateOrderStatus(order.id, 'Nota gerada')
     notify(`Nota fiscal demonstrativa gerada para ${order.customer}.`)
@@ -499,7 +510,7 @@ function App() {
       {notifOpen && <NotifPanel onClose={() => setNotifOpen(false)} />}
       {newDeliveryOpen && <NewDeliveryModal onClose={() => setNewDeliveryOpen(false)} orders={orders} onCreate={(d) => { setDeliveriesState((prev) => [d, ...prev]); d.orderIds?.forEach((id) => updateOrderStatus(id, 'Rota')); notify(`Entrega ${d.id} criada com sucesso!`) }} />}
       {editDelivery && <NewDeliveryModal onClose={() => setEditDelivery(null)} orders={orders} editDelivery={editDelivery} onUpdate={(d) => { setDeliveriesState((prev) => prev.map((x) => x.id === d.id ? d : x)); setEditDelivery(null); notify(`Entrega ${d.id} atualizada com sucesso!`) }} onCreate={(d) => { setDeliveriesState((prev) => [d, ...prev]); d.orderIds?.forEach((id) => updateOrderStatus(id, 'Rota')); notify(`Entrega ${d.id} criada com sucesso!`) }} />}
-      {selectedDelivery && <DeliveryDetailModal delivery={selectedDelivery} onClose={() => setSelectedDelivery(null)} orders={orders} onCancel={(id) => { setDeliveriesState((prev) => prev.map((d) => d.id === id ? { ...d, status: 'Cancelada' } : d)); setSelectedDelivery(null); notify(`Entrega ${id} cancelada.`) }} onEdit={(d) => { setEditDelivery(d); setSelectedDelivery(null) }} />}
+      {selectedDelivery && <DeliveryDetailModal delivery={selectedDelivery} onClose={() => setSelectedDelivery(null)} orders={orders} onCancel={cancelDelivery} onEdit={(d) => { setEditDelivery(d); setSelectedDelivery(null) }} />}
       {(newOrderOpen || editOrder) && <NewOrderModal onClose={() => { setNewOrderOpen(false); setEditOrder(null) }} onCreateOrder={createOrder} onUpdateOrder={updateOrder} editOrder={editOrder} />}
       {editProduct && <NewProductModal editProduct={editProduct} onClose={() => setEditProduct(null)} onCreated={() => {}} onUpdated={() => { setStockRefreshKey((k) => k + 1); notify('Produto atualizado com sucesso!') }} />}
       {removeConfirmOrder && (
@@ -2584,6 +2595,7 @@ function DeliveryDetailModal({ delivery, onClose, orders, onCancel, onEdit }) {
   const [liveTemp, setLiveTemp] = useState(() => parseFloat(delivery.temperature) || -18.0)
   const [liveProgress, setLiveProgress] = useState(delivery.progress)
   const [elapsed, setElapsed] = useState(0)
+  const [confirmCancel, setConfirmCancel] = useState(false)
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -2709,13 +2721,26 @@ function DeliveryDetailModal({ delivery, onClose, orders, onCancel, onEdit }) {
         {(delivery.status === 'Planejada' || delivery.status === 'Carregando') && (
           <div className="newOrderFooter" style={{borderTop:'1px solid var(--line)',padding:'16px 28px',gap:'10px',justifyContent:'flex-end'}}>
             <div className="newOrderFooterActions" style={{marginLeft:'auto'}}>
-              <button type="button" style={{color:'var(--red)',fontWeight:700}} onClick={() => onCancel(delivery.id)}><Ban size={16} /> Cancelar entrega</button>
+              <button type="button" className="orderModalBtnDanger" onClick={() => setConfirmCancel(true)}>Cancelar entrega</button>
               <button type="button" className="btnPrimary" onClick={() => onEdit(delivery)}><ClipboardEdit size={16} /> Editar entrega</button>
             </div>
           </div>
         )}
 
       </div>
+
+      {confirmCancel && (
+        <div className="cancelSepOverlay" onClick={(e) => { if (e.target.classList.contains('cancelSepOverlay')) setConfirmCancel(false) }}>
+          <div className="cancelSepModal">
+            <h3>Cancelar entrega?</h3>
+            <p>A entrega <b>{delivery.id}</b> de <b>{delivery.driver}</b> será cancelada e o progresso zerado.</p>
+            <div className="cancelSepActions">
+              <button className="cancelSepConfirm" style={{background:'var(--red)'}} onClick={() => { setConfirmCancel(false); onCancel(delivery.id) }}>Sim, cancelar entrega</button>
+              <button className="cancelSepDeny" onClick={() => setConfirmCancel(false)}>Não, voltar</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
