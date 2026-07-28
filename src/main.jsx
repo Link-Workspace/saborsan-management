@@ -329,6 +329,8 @@ function App() {
   const [newDeliveryOpen, setNewDeliveryOpen] = useState(false)
   const [selectedDelivery, setSelectedDelivery] = useState(null)
   const [editDelivery, setEditDelivery] = useState(null)
+  const [vehiclesState, setVehiclesState] = useState([])
+  const [vehiclesOpen, setVehiclesOpen] = useState(false)
 
   const fetchOrders = () => {
     setOrdersLoading(true)
@@ -346,8 +348,16 @@ function App() {
       .catch(() => {})
   }
 
+  const fetchVehicles = () => {
+    fetch(`${API_URL}/api/vehicles`)
+      .then((r) => r.json())
+      .then((data) => { if (data.vehicles) setVehiclesState(data.vehicles) })
+      .catch(() => {})
+  }
+
   useEffect(() => { fetchOrders() }, [])
   useEffect(() => { fetchDeliveries() }, [])
+  useEffect(() => { fetchVehicles() }, [])
   useEffect(() => { setTopbarSearch('') }, [active])
 
   const totals = useMemo(() => {
@@ -524,7 +534,7 @@ function App() {
         {active === 'estoque' && <Stock onProduct={setSelectedProduct} refreshKey={stockRefreshKey} search={topbarSearch} />}
         {active === 'fornecedores' && <Suppliers onMessage={setSupplierModal} search={topbarSearch} />}
         {active === 'compras' && <Purchases notify={notify} />}
-        {active === 'entregas' && <Deliveries deliveries={deliveriesState} onNewDelivery={() => setNewDeliveryOpen(true)} onSelect={setSelectedDelivery} />}
+        {active === 'entregas' && <Deliveries deliveries={deliveriesState} onNewDelivery={() => setNewDeliveryOpen(true)} onSelect={setSelectedDelivery} onOpenVehicles={() => setVehiclesOpen(true)} />}
         {active === 'clientes' && <Clients search={topbarSearch} />}
         {active === 'financeiro' && <Finance />}
         {active === 'relatorios' && <Reports />}
@@ -538,9 +548,39 @@ function App() {
       {notaFiscalOrder && <NotaFiscalModal order={notaFiscalOrder} onClose={() => setNotaFiscalOrder(null)} updateOrderStatus={updateOrderStatus} notify={notify} />}
       {verNotaOrder && <VerNotaModal order={verNotaOrder} onClose={() => setVerNotaOrder(null)} onSendToClient={sendNfeToClient} />}
       {notifOpen && <NotifPanel onClose={() => setNotifOpen(false)} />}
-      {newDeliveryOpen && <NewDeliveryModal onClose={() => setNewDeliveryOpen(false)} orders={orders} onCreate={(d) => { setDeliveriesState((prev) => [d, ...prev]); d.orderIds?.forEach((id) => updateOrderStatus(id, 'Rota')); notify(`Entrega ${d.id} criada com sucesso!`) }} />}
-      {editDelivery && <NewDeliveryModal onClose={() => setEditDelivery(null)} orders={orders} editDelivery={editDelivery} onUpdate={(d) => { setDeliveriesState((prev) => prev.map((x) => x.id === d.id ? d : x)); setEditDelivery(null); notify(`Entrega ${d.id} atualizada com sucesso!`) }} onCreate={(d) => { setDeliveriesState((prev) => [d, ...prev]); d.orderIds?.forEach((id) => updateOrderStatus(id, 'Rota')); notify(`Entrega ${d.id} criada com sucesso!`) }} />}
+      {newDeliveryOpen && <NewDeliveryModal onClose={() => setNewDeliveryOpen(false)} orders={orders} vehicles={vehiclesState} onCreate={(d) => { setDeliveriesState((prev) => [d, ...prev]); d.orderIds?.forEach((id) => updateOrderStatus(id, 'Rota')); notify(`Entrega ${d.id} criada com sucesso!`) }} />}
+      {editDelivery && <NewDeliveryModal onClose={() => setEditDelivery(null)} orders={orders} vehicles={vehiclesState} editDelivery={editDelivery} onUpdate={(d) => { setDeliveriesState((prev) => prev.map((x) => x.id === d.id ? d : x)); setEditDelivery(null); notify(`Entrega ${d.id} atualizada com sucesso!`) }} onCreate={(d) => { setDeliveriesState((prev) => [d, ...prev]); d.orderIds?.forEach((id) => updateOrderStatus(id, 'Rota')); notify(`Entrega ${d.id} criada com sucesso!`) }} />}
       {selectedDelivery && <DeliveryDetailModal delivery={selectedDelivery} onClose={() => setSelectedDelivery(null)} orders={orders} onCancel={cancelDelivery} onRemove={removeDelivery} onReactivate={reactivateDelivery} onEdit={(d) => { setEditDelivery(d); setSelectedDelivery(null) }} />}
+      {vehiclesOpen && <VehiclesModal
+        onClose={() => setVehiclesOpen(false)}
+        vehicles={vehiclesState}
+        onCreate={(v) => {
+          fetch(`${API_URL}/api/vehicles`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(v),
+          })
+            .then((r) => r.json())
+            .then((data) => { if (data.vehicle) setVehiclesState((prev) => [...prev, data.vehicle]) })
+            .catch(() => {})
+        }}
+        onUpdate={(v) => {
+          setVehiclesState((prev) => prev.map((x) => x.id === v.id ? v : x))
+          fetch(`${API_URL}/api/vehicles`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(v),
+          }).catch(() => {})
+        }}
+        onRemove={(id) => {
+          setVehiclesState((prev) => prev.filter((x) => x.id !== id))
+          fetch(`${API_URL}/api/vehicles`, {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id }),
+          }).catch(() => {})
+        }}
+      />}
       {(newOrderOpen || editOrder) && <NewOrderModal onClose={() => { setNewOrderOpen(false); setEditOrder(null) }} onCreateOrder={createOrder} onUpdateOrder={updateOrder} editOrder={editOrder} />}
       {editProduct && <NewProductModal editProduct={editProduct} onClose={() => setEditProduct(null)} onCreated={() => {}} onUpdated={() => { setStockRefreshKey((k) => k + 1); notify('Produto atualizado com sucesso!') }} />}
       {removeConfirmOrder && (
@@ -2425,10 +2465,10 @@ function Purchases({ notify }) {
   )
 }
 
-function Deliveries({ onNewDelivery, onSelect, deliveries: list }) {
+function Deliveries({ onNewDelivery, onSelect, deliveries: list, onOpenVehicles }) {
   return (
     <section className="pageStack">
-      <div className="sectionHeader"><div><p>Rotas, motoristas e temperatura</p></div><div style={{display:'flex',gap:'8px'}}><button className="btnSolid" onClick={onNewDelivery}><Plus size={18} /> Nova entrega</button><button className="btnSolid"><UserRound size={18} /> Entregadores</button></div></div>
+      <div className="sectionHeader"><div><p>Rotas, motoristas e temperatura</p></div><div style={{display:'flex',gap:'8px'}}><button className="btnSolid" onClick={onNewDelivery}><Plus size={18} /> Nova entrega</button><button className="btnSolid"><UserRound size={18} /> Entregadores</button><button className="btnSolid" onClick={onOpenVehicles}><Truck size={18} /> Veículos</button></div></div>
       <div className="deliveryGrid">
         {list.map((delivery) => (
           <article className="deliveryCard" key={delivery.id} onClick={() => onSelect(delivery)} style={{cursor:'pointer'}}>
@@ -2493,11 +2533,151 @@ const VEHICLES = [
   'Baú refrigerado 02',
 ]
 
-function NewDeliveryModal({ onClose, onCreate, onUpdate, editDelivery, orders }) {
+function VehicleFormModal({ editVehicle, onClose, onSave }) {
+  const [form, setForm] = useState({
+    name: editVehicle?.name || '',
+    brand: editVehicle?.brand || '',
+    year: editVehicle?.year || '',
+    plate: editVehicle?.plate || '',
+  })
+  const set = (k, v) => setForm((f) => ({ ...f, [k]: v }))
+  const canSubmit = form.name.trim() !== ''
+
+  const submit = (e) => {
+    e.preventDefault()
+    if (!canSubmit) return
+    onSave(editVehicle ? { ...editVehicle, ...form } : { id: Date.now(), ...form })
+  }
+
+  return (
+    <div className="modalBackdrop">
+      <div className="detailModal newOrderModal">
+        <button className="closeBtn" onClick={onClose}><X /></button>
+        <div className="modalHeader">
+          <div>
+            <span>Frota</span>
+            <h2>{editVehicle ? 'Editar veículo' : 'Novo veículo'}</h2>
+            <p>{editVehicle ? 'Altere as informações do veículo' : 'Preencha as informações do novo veículo'}</p>
+          </div>
+        </div>
+        <form onSubmit={submit}>
+          <div className="newOrderScrollArea">
+            <div className="settingsForm">
+              <label>Nome do veículo *
+                <input placeholder="Ex: Câmara fria 01" value={form.name} onChange={(e) => set('name', e.target.value)} required />
+              </label>
+              <label>Marca
+                <input placeholder="Ex: Mercedes-Benz" value={form.brand} onChange={(e) => set('brand', e.target.value)} />
+              </label>
+              <label>Ano
+                <input type="number" min="1990" max="2030" placeholder="Ex: 2022" value={form.year} onChange={(e) => set('year', e.target.value)} />
+              </label>
+              <label>Placa
+                <input placeholder="Ex: ABC-1234" value={form.plate} onChange={(e) => set('plate', e.target.value.toUpperCase())} />
+              </label>
+            </div>
+          </div>
+          <div className="newOrderFooter">
+            <div className="newOrderFooterActions">
+              <button type="submit" className="btnPrimary" disabled={!canSubmit}><CheckCircle2 size={17} /> {editVehicle ? 'Salvar alterações' : 'Cadastrar veículo'}</button>
+            </div>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
+function VehiclesModal({ onClose, vehicles, onCreate, onUpdate, onRemove }) {
+  const [formOpen, setFormOpen] = useState(false)
+  const [editVehicle, setEditVehicle] = useState(null)
+  const [selectedId, setSelectedId] = useState(null)
+  const [confirmRemove, setConfirmRemove] = useState(null)
+
+  return (
+    <div className="modalBackdrop" onClick={(e) => { if (e.target.classList.contains('modalBackdrop')) onClose() }}>
+      <div className="detailModal newOrderModal">
+        <button className="closeBtn" onClick={onClose}><X /></button>
+        <div className="modalHeader">
+          <div>
+            <span>Frota</span>
+            <h2>Veículos</h2>
+            <p>Gerencie os veículos disponíveis para entregas</p>
+          </div>
+        </div>
+        <div style={{display:'flex',flexDirection:'column',flex:1,overflow:'hidden',minHeight:0}}>
+          <div className="newOrderScrollArea">
+            <h3>Veículos cadastrados</h3>
+            {vehicles.length === 0
+              ? <p style={{color:'var(--muted)',fontWeight:700,fontSize:'.88rem',margin:'16px 0'}}>Nenhum veículo cadastrado. Clique em "Novo veículo" para adicionar.</p>
+              : (
+                <div className="vehiclesList">
+                  {vehicles.map((v) => (
+                    <div
+                      key={v.id}
+                      className={`vehicleCard${selectedId === v.id ? ' selected' : ''}`}
+                      onClick={() => setSelectedId(selectedId === v.id ? null : v.id)}
+                    >
+                      <div className="vehicleCardIcon"><Truck size={22} /></div>
+                      <div className="vehicleCardBody">
+                        <b>{v.name}</b>
+                        <span>{[v.brand, v.year ? String(v.year) : ''].filter(Boolean).join(' • ')}{v.plate ? ` • ${v.plate}` : ''}</span>
+                      </div>
+                      {selectedId === v.id && (
+                        <div className="vehicleCardActions" onClick={(e) => e.stopPropagation()}>
+                          <button className="btnSolid" onClick={() => { setEditVehicle(v); setFormOpen(true); setSelectedId(null) }}>Editar</button>
+                          <button className="btnOutlineDanger" onClick={() => setConfirmRemove(v)}>Remover</button>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )
+            }
+          </div>
+          <div className="newOrderFooter">
+            <div className="newOrderFooterActions">
+              <button type="button" className="btnPrimary" onClick={() => { setEditVehicle(null); setFormOpen(true) }}><Plus size={17} /> Novo veículo</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {(formOpen || editVehicle) && (
+        <VehicleFormModal
+          editVehicle={editVehicle}
+          onClose={() => { setFormOpen(false); setEditVehicle(null) }}
+          onSave={(v) => {
+            if (editVehicle) onUpdate(v)
+            else onCreate(v)
+            setFormOpen(false)
+            setEditVehicle(null)
+          }}
+        />
+      )}
+
+      {confirmRemove && (
+        <div className="cancelSepOverlay" onClick={(e) => { if (e.target.classList.contains('cancelSepOverlay')) setConfirmRemove(null) }}>
+          <div className="cancelSepModal">
+            <h3>Remover veículo?</h3>
+            <p>O veículo <b>{confirmRemove.name}</b> será removido permanentemente da frota.</p>
+            <div className="cancelSepActions">
+              <button className="cancelSepConfirm" style={{background:'var(--red)'}} onClick={() => { onRemove(confirmRemove.id); setConfirmRemove(null) }}>Sim, remover</button>
+              <button className="cancelSepDeny" onClick={() => setConfirmRemove(null)}>Não, voltar</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function NewDeliveryModal({ onClose, onCreate, onUpdate, editDelivery, orders, vehicles = [] }) {
   const prefillSeller = editDelivery ? sellers.find((s) => s.name === editDelivery.driver) : null
+  const defaultVehicle = vehicles.length > 0 ? vehicles[0].name : ''
   const [form, setForm] = useState(() => editDelivery ? {
     sellerId: prefillSeller ? String(prefillSeller.id) : '',
-    vehicle: editDelivery.vehicle || VEHICLES[0],
+    vehicle: editDelivery.vehicle || defaultVehicle,
     stops: String(editDelivery.stops || ''),
     temperature: editDelivery.temperature ? editDelivery.temperature.replace('°C', '') : '',
     departureDate: editDelivery.departureDate || '',
@@ -2506,7 +2686,7 @@ function NewDeliveryModal({ onClose, onCreate, onUpdate, editDelivery, orders })
     status: editDelivery.status === 'Em rota' ? 'Em rota' : 'Carregando',
   } : {
     sellerId: '',
-    vehicle: VEHICLES[0],
+    vehicle: defaultVehicle,
     stops: '',
     temperature: '',
     departureDate: '',
@@ -2642,7 +2822,10 @@ function NewDeliveryModal({ onClose, onCreate, onUpdate, editDelivery, orders })
               </label>
               <label>Veículo / Câmara fria
                 <select value={form.vehicle} onChange={(e) => set('vehicle', e.target.value)}>
-                  {VEHICLES.map((v) => <option key={v} value={v}>{v}</option>)}
+                  {vehicles.length === 0
+                    ? <option value="">Nenhum veículo cadastrado</option>
+                    : vehicles.map((v) => <option key={v.id} value={v.name}>{v.name}{v.plate ? ` • ${v.plate}` : ''}</option>)
+                  }
                 </select>
               </label>
             </div>
