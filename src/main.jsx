@@ -331,6 +331,11 @@ function App() {
   const [editDelivery, setEditDelivery] = useState(null)
   const [vehiclesState, setVehiclesState] = useState([])
   const [vehiclesOpen, setVehiclesOpen] = useState(false)
+  const [clientsState, setClientsState] = useState([])
+  const [clientsLoading, setClientsLoading] = useState(false)
+  const [newClientOpen, setNewClientOpen] = useState(false)
+  const [selectedClient, setSelectedClient] = useState(null)
+  const [removeConfirmClient, setRemoveConfirmClient] = useState(null)
 
   const fetchOrders = () => {
     setOrdersLoading(true)
@@ -355,9 +360,19 @@ function App() {
       .catch(() => {})
   }
 
+  const fetchClients = () => {
+    setClientsLoading(true)
+    fetch(`${API_URL}/api/clients`)
+      .then((r) => r.json())
+      .then((data) => { if (data.clients) setClientsState(data.clients) })
+      .catch(() => {})
+      .finally(() => setClientsLoading(false))
+  }
+
   useEffect(() => { fetchOrders() }, [])
   useEffect(() => { fetchDeliveries() }, [])
   useEffect(() => { fetchVehicles() }, [])
+  useEffect(() => { fetchClients() }, [])
   useEffect(() => { setTopbarSearch('') }, [active])
 
   const totals = useMemo(() => {
@@ -535,7 +550,7 @@ function App() {
         {active === 'fornecedores' && <Suppliers onMessage={setSupplierModal} search={topbarSearch} />}
         {active === 'compras' && <Purchases notify={notify} />}
         {active === 'entregas' && <Deliveries deliveries={deliveriesState} onNewDelivery={() => setNewDeliveryOpen(true)} onSelect={setSelectedDelivery} onOpenVehicles={() => setVehiclesOpen(true)} />}
-        {active === 'clientes' && <Clients search={topbarSearch} />}
+        {active === 'clientes' && <Clients clientsData={clientsState} clientsLoading={clientsLoading} onNewClient={() => setNewClientOpen(true)} onSelectClient={setSelectedClient} search={topbarSearch} />}
         {active === 'financeiro' && <Finance />}
         {active === 'relatorios' && <Reports />}
         {active === 'automacao' && <Automation aiEnabled={aiEnabled} setAiEnabled={setAiEnabled} notify={notify} />}
@@ -603,6 +618,36 @@ function App() {
             <div className="cancelSepActions">
               <button className="cancelSepConfirm" style={{background:'var(--red)'}} onClick={() => removeProduct(removeConfirmProduct.id)}>Sim, remover produto</button>
               <button className="cancelSepDeny" onClick={() => setRemoveConfirmProduct(null)}>Não, voltar</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {newClientOpen && (
+        <NewClientModal
+          onClose={() => setNewClientOpen(false)}
+          onCreated={(c) => { setClientsState((prev) => [c, ...prev]); notify(`Cliente ${c.establishmentName} cadastrado com sucesso!`) }}
+        />
+      )}
+      {removeConfirmClient && (
+        <div className="cancelSepOverlay" onClick={(e) => { if (e.target.classList.contains('cancelSepOverlay')) setRemoveConfirmClient(null) }}>
+          <div className="cancelSepModal">
+            <h3>Remover cliente?</h3>
+            <p>O cliente <b>{removeConfirmClient.establishmentName}</b> será removido permanentemente do sistema.</p>
+            <div className="cancelSepActions">
+              <button className="cancelSepConfirm" style={{ background: 'var(--red)' }} onClick={async () => {
+                try {
+                  await fetch(`${API_URL}/api/clients`, {
+                    method: 'DELETE',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ id: removeConfirmClient.id, userId: removeConfirmClient.userId }),
+                  })
+                } catch {}
+                setClientsState((prev) => prev.filter((c) => c.id !== removeConfirmClient.id))
+                if (selectedClient?.id === removeConfirmClient.id) setSelectedClient(null)
+                setRemoveConfirmClient(null)
+                notify(`Cliente ${removeConfirmClient.establishmentName} removido.`)
+              }}>Sim, remover cliente</button>
+              <button className="cancelSepDeny" onClick={() => setRemoveConfirmClient(null)}>Não, voltar</button>
             </div>
           </div>
         </div>
@@ -3144,23 +3189,212 @@ function DeliveryDetailModal({ delivery, onClose, orders, onCancel, onRemove, on
   )
 }
 
-function Clients({ search = '' }) {
-  const filtered = !search ? clients : clients.filter((c) => c.name.toLowerCase().includes(search.toLowerCase()))
+function Clients({ clientsData = [], clientsLoading = false, onNewClient, onSelectClient, search = '' }) {
+  const filtered = !search
+    ? clientsData
+    : clientsData.filter((c) =>
+        (c.establishmentName || '').toLowerCase().includes(search.toLowerCase()) ||
+        (c.clientName || '').toLowerCase().includes(search.toLowerCase()) ||
+        (c.city || '').toLowerCase().includes(search.toLowerCase())
+      )
+
+  const getPriorityStatus = (priority) => {
+    const p = (priority || '').toLowerCase()
+    if (p === 'alta') return 'VIP'
+    if (p === 'baixa') return 'Reativar'
+    return 'Ativo'
+  }
+
   return (
     <section className="pageStack">
-      <div className="sectionHeader"><div><p>Carteira comercial</p></div><button className="btnSolid"><Users size={18} /> Novo cliente</button></div>
+      <div className="sectionHeader">
+        <div><p>Carteira comercial</p></div>
+        <button className="btnSolid" onClick={onNewClient}><Plus size={18} /> Novo cliente</button>
+      </div>
+      {clientsLoading && <p className="loadingText">Carregando clientes...</p>}
+      {!clientsLoading && filtered.length === 0 && <p className="emptyText">Nenhum cliente cadastrado.</p>}
       <div className="clientGrid">
         {filtered.map((client) => (
-          <article className="clientCard" key={client.name}>
-            <div className="avatar">{client.name[0]}</div>
-            <div><h3>{client.name}</h3><p>{client.segment}</p></div>
-            <Status status={client.status} />
-            <div className="clientStats"><span>Última compra <b>{client.lastBuy}</b></span><span>Mensal <b>{money(client.monthly)}</b></span></div>
-            <div className="orderActions"><button>Histórico</button><button>Fazer contato</button></div>
+          <article className="clientCard" key={client.id}>
+            <div className="avatar">{(client.establishmentName || client.clientName || 'C')[0].toUpperCase()}</div>
+            <div><h3>{client.establishmentName}</h3><p>{client.segment || '—'}</p></div>
+            <Status status={getPriorityStatus(client.priority)} />
+            <div className="clientStats">
+              <span>Responsável <b>{client.clientName || '—'}</b></span>
+              <span>Cidade <b>{client.city || '—'}</b></span>
+              {client.lastPurchase && <span>Última compra <b>{client.lastPurchase}</b></span>}
+              {client.avgTicket != null && client.avgTicket > 0 && <span>Ticket médio <b>{money(client.avgTicket)}</b></span>}
+            </div>
+            <div className="orderActions">
+              <button onClick={() => onSelectClient && onSelectClient(client)}>Ver detalhes</button>
+              {client.contactNumber && (
+                <a
+                  href={`https://wa.me/${client.contactNumber.replace(/\D/g, '')}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="btn"
+                  style={{ all: 'unset', cursor: 'pointer' }}
+                >
+                  <button>Fazer contato</button>
+                </a>
+              )}
+              {!client.contactNumber && <button disabled>Fazer contato</button>}
+            </div>
           </article>
         ))}
       </div>
     </section>
+  )
+}
+
+function NewClientModal({ onClose, onCreated }) {
+  const [form, setForm] = useState({
+    establishmentName: '',
+    clientName: '',
+    email: '',
+    password: '',
+    cnpj: '',
+    contactNumber: '',
+    address: '',
+    city: '',
+    segment: '',
+    priority: 'Media',
+    priorityReason: '',
+    tag: '',
+    invoicePreference: '',
+    bestDay: '',
+  })
+  const [submitError, setSubmitError] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+
+  const set = (k, v) => setForm((f) => ({ ...f, [k]: v }))
+  const canSubmit = form.establishmentName.trim() !== '' && form.clientName.trim() !== ''
+
+  const submit = async (e) => {
+    e.preventDefault()
+    if (!canSubmit || submitting) return
+    setSubmitError('')
+    setSubmitting(true)
+    try {
+      const payload = {
+        establishmentName: form.establishmentName.trim(),
+        clientName: form.clientName.trim(),
+        email: form.email.trim() || null,
+        password: form.password || null,
+        cnpj: form.cnpj.trim() || null,
+        contactNumber: form.contactNumber.trim() || null,
+        address: form.address.trim() || null,
+        city: form.city.trim() || null,
+        segment: form.segment.trim() || null,
+        priority: form.priority || 'Media',
+        priorityReason: form.priorityReason.trim() || null,
+        tag: form.tag.trim() || null,
+        invoicePreference: form.invoicePreference.trim() || null,
+        bestDay: form.bestDay.trim() || null,
+      }
+      const res = await fetch(`${API_URL}/api/clients`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Erro ao cadastrar cliente')
+      onCreated(data.client)
+      onClose()
+    } catch (err) {
+      setSubmitError(err.message || 'Erro ao cadastrar cliente. Tente novamente.')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const sectionTitle = { gridColumn: '1 / -1', fontWeight: 600, fontSize: '.82rem', textTransform: 'uppercase', letterSpacing: '.06em', color: 'var(--muted)', marginTop: 8, marginBottom: 0 }
+
+  return (
+    <div className="modalBackdrop">
+      <div className="detailModal newProductModal">
+        <button className="closeBtn" onClick={onClose}><X /></button>
+        <div className="modalHeader">
+          <div>
+            <span>Clientes</span>
+            <h2>Novo cliente</h2>
+            <p>Preencha os dados para cadastrar o cliente na carteira comercial</p>
+          </div>
+        </div>
+        <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden', minHeight: 0 }}>
+          <div className="newProductScrollArea">
+            <div className="newProductForm">
+
+              <p style={sectionTitle}>Identificação</p>
+              <label className="full">Nome do estabelecimento *
+                <input placeholder="Ex: Padaria Bela Vista" value={form.establishmentName} onChange={(e) => set('establishmentName', e.target.value)} required />
+              </label>
+              <label>Nome do responsável *
+                <input placeholder="Ex: João da Silva" value={form.clientName} onChange={(e) => set('clientName', e.target.value)} required />
+              </label>
+              <label>Segmento
+                <input placeholder="Ex: Padaria, Restaurante" value={form.segment} onChange={(e) => set('segment', e.target.value)} />
+              </label>
+
+              <p style={sectionTitle}>Contato</p>
+              <label>WhatsApp / Contato
+                <input placeholder="(49) 99910-1111" value={form.contactNumber} onChange={(e) => set('contactNumber', e.target.value)} />
+              </label>
+              <label>Cidade
+                <input placeholder="Ex: Lages - SC" value={form.city} onChange={(e) => set('city', e.target.value)} />
+              </label>
+              <label className="full">Endereço
+                <input placeholder="Ex: Rua das Flores, 123 – Lages, SC" value={form.address} onChange={(e) => set('address', e.target.value)} />
+              </label>
+
+              <p style={sectionTitle}>Dados fiscais</p>
+              <label>CNPJ
+                <input placeholder="00.000.000/0001-00" value={form.cnpj} onChange={(e) => set('cnpj', e.target.value)} />
+              </label>
+              <label>Preferência de nota fiscal
+                <input placeholder="Ex: CNPJ, CPF, Sem nota" value={form.invoicePreference} onChange={(e) => set('invoicePreference', e.target.value)} />
+              </label>
+
+              <p style={sectionTitle}>Acesso ao app Saborsan</p>
+              <label>E-mail de acesso
+                <input type="email" placeholder="cliente@email.com" value={form.email} onChange={(e) => set('email', e.target.value)} />
+              </label>
+              <label>Senha inicial
+                <input type="password" placeholder="Mín. 6 caracteres" value={form.password} onChange={(e) => set('password', e.target.value)} />
+              </label>
+              <p style={{ ...sectionTitle, textTransform: 'none', letterSpacing: 0, fontWeight: 400, fontSize: '.8rem', marginTop: 0 }}>
+                Preencha e-mail e senha para liberar o acesso do cliente ao app Saborsan.
+              </p>
+
+              <p style={sectionTitle}>Classificação comercial</p>
+              <label>Prioridade
+                <select value={form.priority} onChange={(e) => set('priority', e.target.value)}>
+                  <option value="Alta">Alta</option>
+                  <option value="Media">Média</option>
+                  <option value="Baixa">Baixa</option>
+                </select>
+              </label>
+              <label>Melhor dia para visita
+                <input placeholder="Ex: Terça-feira" value={form.bestDay} onChange={(e) => set('bestDay', e.target.value)} />
+              </label>
+              <label>Motivo da prioridade
+                <input placeholder="Ex: Alto volume de compras" value={form.priorityReason} onChange={(e) => set('priorityReason', e.target.value)} />
+              </label>
+              <label>Tag
+                <input placeholder="Ex: VIP, Novo, Atacado" value={form.tag} onChange={(e) => set('tag', e.target.value)} />
+              </label>
+
+            </div>
+            {submitError && <small className="errorText" style={{ marginTop: 12, display: 'block' }}>{submitError}</small>}
+          </div>
+          <div className="newProductFooter">
+            <button type="submit" className="btnPrimary" disabled={!canSubmit || submitting}>
+              <CheckCircle2 size={17} /> {submitting ? 'Cadastrando...' : 'Cadastrar cliente'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
   )
 }
 
