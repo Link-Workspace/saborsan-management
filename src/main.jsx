@@ -2468,7 +2468,7 @@ function Purchases({ notify }) {
 function Deliveries({ onNewDelivery, onSelect, deliveries: list, onOpenVehicles }) {
   return (
     <section className="pageStack">
-      <div className="sectionHeader"><div><p>Rotas, motoristas e temperatura</p></div><div style={{display:'flex',gap:'8px'}}><button className="btnSolid" onClick={onNewDelivery}><Plus size={18} /> Nova entrega</button><button className="btnSolid"><UserRound size={18} /> Entregadores</button><button className="btnSolid" onClick={onOpenVehicles}><Truck size={18} /> Veículos</button></div></div>
+      <div className="sectionHeader"><div><p>Rotas, motoristas e temperatura</p></div><div style={{display:'flex',gap:'8px'}}><button className="btnSolid" onClick={onNewDelivery}><Plus size={18} /> Nova entrega</button><button className="btnSolid" onClick={onOpenVehicles}><Truck size={18} /> Veículos</button></div></div>
       <div className="deliveryGrid">
         {list.map((delivery) => (
           <article className="deliveryCard" key={delivery.id} onClick={() => onSelect(delivery)} style={{cursor:'pointer'}}>
@@ -2742,50 +2742,97 @@ function NewDeliveryModal({ onClose, onCreate, onUpdate, editDelivery, orders, v
   const removeCity = (city) => setSelectedCities((prev) => prev.filter((c) => c !== city))
 
   const [selectedOrderIds, setSelectedOrderIds] = useState(editDelivery?.orderIds || [])
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState('')
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }))
   const toggleOrder = (id) => setSelectedOrderIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id])
   const separacaoOrders = orders.filter((o) => o.status === 'Separação')
   const canSubmit = selectedCities.length > 0 && form.sellerId !== ''
 
-  const submit = (e) => {
+  const submit = async (e) => {
     e.preventDefault()
-    if (!canSubmit) return
+    if (!canSubmit || saving) return
     const route = selectedCities.join(' → ')
     const seller = sellersData.find((s) => s.id === Number(form.sellerId))
-    if (editDelivery) {
-      onUpdate({
-        ...editDelivery,
-        route,
-        driver: seller ? seller.name : editDelivery.driver,
-        driverPhone: seller ? seller.phone : editDelivery.driverPhone,
-        vehicle: form.vehicle,
-        stops: selectedCities.length,
-        temperature: form.temperature ? form.temperature + '°C' : editDelivery.temperature,
-        status: form.status,
-        departureDate: form.departureDate,
-        arrivalDate: form.arrivalDate,
-        notes: form.notes,
-        orderIds: selectedOrderIds,
-      })
-    } else {
-      const newId = 'R-' + (80 + Math.floor(Math.random() * 900))
-      onCreate({
-        id: newId,
-        route,
-        driver: seller ? seller.name : '',
-        driverPhone: seller ? seller.phone : '',
-        vehicle: form.vehicle,
-        stops: selectedCities.length,
-        temperature: form.temperature ? form.temperature + '°C' : '-18.0°C',
-        status: form.status,
-        progress: 0,
-        departureDate: form.departureDate,
-        arrivalDate: form.arrivalDate,
-        notes: form.notes,
-        orderIds: selectedOrderIds,
-      })
+    setSaving(true)
+    setSaveError('')
+    try {
+      if (editDelivery) {
+        const res = await fetch(`${API_URL}/api/deliveries`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            deliveryId: editDelivery.id,
+            fullUpdate: true,
+            route,
+            sellerId: Number(form.sellerId),
+            vehicle: form.vehicle,
+            stops: selectedCities.length,
+            temperature: form.temperature ? parseFloat(form.temperature) : null,
+            status: form.status,
+            departureDate: form.departureDate || null,
+            arrivalDate: form.arrivalDate || null,
+            notes: form.notes,
+            orderIds: selectedOrderIds,
+          }),
+        })
+        const data = await res.json()
+        if (!res.ok) { setSaveError(data.error || 'Erro ao salvar.'); return }
+        onUpdate({
+          ...editDelivery,
+          route,
+          driver: seller ? seller.name : editDelivery.driver,
+          driverPhone: seller ? seller.phone : editDelivery.driverPhone,
+          vehicle: form.vehicle,
+          stops: selectedCities.length,
+          temperature: form.temperature ? form.temperature + '°C' : editDelivery.temperature,
+          status: form.status,
+          departureDate: form.departureDate,
+          arrivalDate: form.arrivalDate,
+          notes: form.notes,
+          orderIds: selectedOrderIds,
+        })
+      } else {
+        const res = await fetch(`${API_URL}/api/deliveries`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            sellerId: Number(form.sellerId),
+            route,
+            vehicle: form.vehicle,
+            stops: selectedCities.length,
+            temperature: form.temperature ? parseFloat(form.temperature) : -18.0,
+            status: form.status,
+            departureDate: form.departureDate || null,
+            arrivalDate: form.arrivalDate || null,
+            notes: form.notes,
+            orderIds: selectedOrderIds,
+          }),
+        })
+        const data = await res.json()
+        if (!res.ok) { setSaveError(data.error || 'Erro ao criar entrega.'); return }
+        onCreate({
+          id: data.code,
+          route,
+          driver: seller ? seller.name : '',
+          driverPhone: seller ? seller.phone : '',
+          vehicle: form.vehicle,
+          stops: selectedCities.length,
+          temperature: form.temperature ? form.temperature + '°C' : '-18.0°C',
+          status: form.status,
+          progress: 0,
+          departureDate: form.departureDate,
+          arrivalDate: form.arrivalDate,
+          notes: form.notes,
+          orderIds: selectedOrderIds,
+        })
+      }
+      onClose()
+    } catch {
+      setSaveError('Não foi possível conectar ao servidor.')
+    } finally {
+      setSaving(false)
     }
-    onClose()
   }
 
   return (
@@ -2908,7 +2955,8 @@ function NewDeliveryModal({ onClose, onCreate, onUpdate, editDelivery, orders, v
               </div>
             )}
             <div className="newOrderFooterActions">
-              <button type="submit" className="btnPrimary" disabled={!canSubmit}><CheckCircle2 size={17} /> {editDelivery ? 'Salvar alterações' : 'Criar entrega'}</button>
+              {saveError && <small className="errorText">{saveError}</small>}
+              <button type="submit" className="btnPrimary" disabled={!canSubmit || saving}><CheckCircle2 size={17} /> {saving ? 'Salvando...' : editDelivery ? 'Salvar alterações' : 'Criar entrega'}</button>
             </div>
           </div>
         </form>
@@ -3033,6 +3081,7 @@ function DeliveryDetailModal({ delivery, onClose, orders, onCancel, onRemove, on
           )}
 
           {/* Live log */}
+          {delivery.status === 'Em rota' && (
           <div className="deliveryDetailSection">
             <h4>Acompanhamento ao vivo</h4>
             <div className="deliveryLiveLog">
@@ -3042,6 +3091,7 @@ function DeliveryDetailModal({ delivery, onClose, orders, onCancel, onRemove, on
               <div className="deliveryLogItem"><CheckCircle2 size={13} color="var(--green)"/><span>Checklist de saída concluído</span><small>início</small></div>
             </div>
           </div>
+          )}
 
         </div>
 

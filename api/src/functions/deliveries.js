@@ -10,7 +10,7 @@ const sqlConfig = {
 };
 
 app.http('deliveries', {
-  methods: ['GET', 'PATCH', 'DELETE'],
+  methods: ['GET', 'POST', 'PATCH', 'DELETE'],
   authLevel: 'anonymous',
   handler: async (request, context) => {
     try {
@@ -61,15 +61,92 @@ app.http('deliveries', {
         return { jsonBody: { deliveries } };
       }
 
+      if (request.method === 'POST') {
+        const body = await request.json();
+        const { sellerId, route, vehicle, temperature, status, departureDate, arrivalDate, notes, stops, orderIds } = body;
+
+        if (!sellerId || !route) {
+          return { status: 400, jsonBody: { error: 'sellerId e route são obrigatórios' } };
+        }
+
+        const codeResult = await sql.query`
+          SELECT MAX(TRY_CAST(SUBSTRING(code, 3, LEN(code)) AS INT)) AS maxNum
+          FROM Deliveries WHERE code LIKE 'R-%'
+        `;
+        const maxNum = codeResult.recordset[0].maxNum || 0;
+        const code = 'R-' + (maxNum + 1);
+
+        const chamberMatch = vehicle ? vehicle.match(/\d+/) : null;
+        const chamberNum = chamberMatch ? parseInt(chamberMatch[0]) : 1;
+        const tempVal = temperature !== undefined && temperature !== '' && temperature !== null
+          ? parseFloat(String(temperature).replace('°C', ''))
+          : -18.0;
+        const statusVal = status || 'Carregando';
+        const stopsCount = stops || 0;
+        const notesVal = notes || '';
+        const departureDateVal = departureDate ? new Date(departureDate) : null;
+        const arrivalDateVal = arrivalDate ? new Date(arrivalDate) : null;
+
+        const insertResult = await sql.query`
+          INSERT INTO Deliveries (code, route, seller_id, status, cold_chamber_number, stops_count, temperature, departure_date, arrival_date, notes, updated_at)
+          OUTPUT INSERTED.id
+          VALUES (${code}, ${route}, ${sellerId}, ${statusVal}, ${chamberNum}, ${stopsCount}, ${tempVal}, ${departureDateVal}, ${arrivalDateVal}, ${notesVal}, GETUTCDATE())
+        `;
+
+        const newId = insertResult.recordset[0].id;
+
+        if (Array.isArray(orderIds) && orderIds.length > 0) {
+          for (const orderId of orderIds) {
+            await sql.query`INSERT INTO DeliveryOrders (delivery_id, order_code) VALUES (${newId}, ${orderId})`;
+          }
+        }
+
+        return { status: 201, jsonBody: { success: true, code, id: newId } };
+      }
+
       if (request.method === 'PATCH') {
         const body = await request.json();
-        const { deliveryId, status } = body;
+        const { deliveryId, status, route, sellerId, vehicle, temperature, departureDate, arrivalDate, notes, stops, orderIds, fullUpdate } = body;
 
         if (!deliveryId) {
           return { status: 400, jsonBody: { error: 'deliveryId é obrigatório' } };
         }
 
-        if (status !== undefined) {
+        if (fullUpdate) {
+          const chamberMatch = vehicle ? vehicle.match(/\d+/) : null;
+          const chamberNum = chamberMatch ? parseInt(chamberMatch[0]) : 1;
+          const tempVal = temperature !== undefined && temperature !== '' && temperature !== null
+            ? parseFloat(String(temperature).replace('°C', ''))
+            : null;
+          const departureDateVal = departureDate ? new Date(departureDate) : null;
+          const arrivalDateVal = arrivalDate ? new Date(arrivalDate) : null;
+
+          await sql.query`
+            UPDATE Deliveries
+            SET route = ${route},
+                seller_id = ${sellerId},
+                status = ${status},
+                cold_chamber_number = ${chamberNum},
+                stops_count = ${stops || 0},
+                temperature = ${tempVal},
+                departure_date = ${departureDateVal},
+                arrival_date = ${arrivalDateVal},
+                notes = ${notes || ''},
+                updated_at = GETUTCDATE()
+            WHERE code = ${deliveryId}
+          `;
+
+          const idResult = await sql.query`SELECT id FROM Deliveries WHERE code = ${deliveryId}`;
+          if (idResult.recordset.length > 0) {
+            const dbId = idResult.recordset[0].id;
+            await sql.query`DELETE FROM DeliveryOrders WHERE delivery_id = ${dbId}`;
+            if (Array.isArray(orderIds) && orderIds.length > 0) {
+              for (const orderId of orderIds) {
+                await sql.query`INSERT INTO DeliveryOrders (delivery_id, order_code) VALUES (${dbId}, ${orderId})`;
+              }
+            }
+          }
+        } else if (status !== undefined) {
           await sql.query`
             UPDATE Deliveries
             SET status = ${status},
