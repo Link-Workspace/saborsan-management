@@ -335,6 +335,7 @@ function App() {
   const [clientsLoading, setClientsLoading] = useState(false)
   const [newClientOpen, setNewClientOpen] = useState(false)
   const [selectedClient, setSelectedClient] = useState(null)
+  const [editClient, setEditClient] = useState(null)
   const [removeConfirmClient, setRemoveConfirmClient] = useState(null)
 
   const fetchOrders = () => {
@@ -624,8 +625,18 @@ function App() {
       )}
       {newClientOpen && (
         <NewClientModal
-          onClose={() => setNewClientOpen(false)}
+          onClose={() => { setNewClientOpen(false); setEditClient(null) }}
           onCreated={(c) => { setClientsState((prev) => [c, ...prev]); notify(`Cliente ${c.establishmentName} cadastrado com sucesso!`) }}
+          editClient={editClient}
+          onUpdated={(c) => { setClientsState((prev) => prev.map((x) => x.id === c.id ? c : x)); setSelectedClient(c); notify(`Cliente ${c.establishmentName} atualizado com sucesso!`) }}
+        />
+      )}
+      {selectedClient && (
+        <ClientDetailModal
+          client={selectedClient}
+          onClose={() => setSelectedClient(null)}
+          onEdit={(c) => { setSelectedClient(null); setEditClient(c); setNewClientOpen(true) }}
+          onRemove={(c) => { setSelectedClient(null); setRemoveConfirmClient(c) }}
         />
       )}
       {removeConfirmClient && (
@@ -3247,8 +3258,88 @@ function Clients({ clientsData = [], clientsLoading = false, onNewClient, onSele
   )
 }
 
-function NewClientModal({ onClose, onCreated }) {
-  const [form, setForm] = useState({
+function ClientDetailModal({ client, onClose, onEdit, onRemove }) {
+  return (
+    <div className="modalBackdrop">
+      <div className="detailModal newOrderModal supplierDetailModal">
+        <button className="closeBtn" onClick={onClose}><X /></button>
+        <div className="modalHeader">
+          <div>
+            <span>Cliente</span>
+            <h2>{client.establishmentName}</h2>
+            <p>Informações completas do cliente</p>
+          </div>
+        </div>
+        <div className="newOrderScrollArea">
+          <h3>Dados do cliente</h3>
+          <div className="supplierDetailGrid">
+            <div className="supplierDetailItem"><span>Responsável</span><b>{client.clientName || '—'}</b></div>
+            <div className="supplierDetailItem"><span>Segmento</span><b>{client.segment || '—'}</b></div>
+            <div className="supplierDetailItem"><span>WhatsApp / Contato</span><b>{client.contactNumber || '—'}</b></div>
+            <div className="supplierDetailItem"><span>Cidade</span><b>{client.city || '—'}</b></div>
+            {client.address && <div className="supplierDetailItem supplierDetailFull"><span><MapPin size={12} /> Endereço</span><b>{client.address}</b></div>}
+          </div>
+
+          <div className="supplierDetailDivider" />
+
+          <h3>Dados fiscais</h3>
+          <div className="supplierDetailGrid">
+            <div className="supplierDetailItem"><span>CNPJ</span><b>{client.cnpj || '—'}</b></div>
+            <div className="supplierDetailItem"><span>Preferência de nota fiscal</span><b>{client.invoicePreference || '—'}</b></div>
+          </div>
+
+          <div className="supplierDetailDivider" />
+
+          <h3>Classificação comercial</h3>
+          <div className="supplierDetailGrid">
+            <div className="supplierDetailItem"><span>Prioridade</span><b>{client.priority || '—'}</b></div>
+            <div className="supplierDetailItem"><span>Melhor dia para visita</span><b>{client.bestDay || '—'}</b></div>
+            {client.priorityReason && <div className="supplierDetailItem supplierDetailFull"><span>Motivo da prioridade</span><b>{client.priorityReason}</b></div>}
+            {client.tag && <div className="supplierDetailItem"><span>Tag</span><b>{client.tag}</b></div>}
+            {client.avgTicket != null && client.avgTicket > 0 && <div className="supplierDetailItem"><span>Ticket médio</span><b>{money(client.avgTicket)}</b></div>}
+            {client.lastPurchase && <div className="supplierDetailItem"><span>Última compra</span><b>{client.lastPurchase}</b></div>}
+          </div>
+
+          {client.email && (
+            <>
+              <div className="supplierDetailDivider" />
+              <h3>Acesso ao app</h3>
+              <div className="supplierDetailGrid">
+                <div className="supplierDetailItem"><span>E-mail de acesso</span><b>{client.email}</b></div>
+              </div>
+            </>
+          )}
+        </div>
+        <div className="newOrderFooter">
+          <div className="newOrderFooterActions" style={{ marginLeft: 'auto' }}>
+            <button type="button" className="orderModalBtn orderModalBtnDanger" onClick={() => onRemove(client)}>Remover</button>
+            <button type="button" className="btnPrimary" onClick={() => onEdit(client)}>
+              <ClipboardEdit size={16} /> Editar
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function NewClientModal({ onClose, onCreated, editClient, onUpdated }) {
+  const [form, setForm] = useState(() => editClient ? {
+    establishmentName: editClient.establishmentName || '',
+    clientName: editClient.clientName || '',
+    email: editClient.email || '',
+    password: '',
+    cnpj: editClient.cnpj || '',
+    contactNumber: editClient.contactNumber || '',
+    address: editClient.address || '',
+    city: editClient.city || '',
+    segment: editClient.segment || '',
+    priority: editClient.priority || 'Media',
+    priorityReason: editClient.priorityReason || '',
+    tag: editClient.tag || '',
+    invoicePreference: editClient.invoicePreference || '',
+    bestDay: editClient.bestDay || '',
+  } : {
     establishmentName: '',
     clientName: '',
     email: '',
@@ -3268,7 +3359,25 @@ function NewClientModal({ onClose, onCreated }) {
   const [submitting, setSubmitting] = useState(false)
 
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }))
-  const canSubmit = form.establishmentName.trim() !== '' && form.clientName.trim() !== ''
+
+  const isDirty = editClient ? (
+    form.establishmentName !== (editClient.establishmentName || '') ||
+    form.clientName !== (editClient.clientName || '') ||
+    form.email !== (editClient.email || '') ||
+    form.password !== '' ||
+    form.cnpj !== (editClient.cnpj || '') ||
+    form.contactNumber !== (editClient.contactNumber || '') ||
+    form.address !== (editClient.address || '') ||
+    form.city !== (editClient.city || '') ||
+    form.segment !== (editClient.segment || '') ||
+    form.priority !== (editClient.priority || 'Media') ||
+    form.priorityReason !== (editClient.priorityReason || '') ||
+    form.tag !== (editClient.tag || '') ||
+    form.invoicePreference !== (editClient.invoicePreference || '') ||
+    form.bestDay !== (editClient.bestDay || '')
+  ) : true
+
+  const canSubmit = form.establishmentName.trim() !== '' && form.clientName.trim() !== '' && isDirty
 
   const submit = async (e) => {
     e.preventDefault()
@@ -3292,17 +3401,29 @@ function NewClientModal({ onClose, onCreated }) {
         invoicePreference: form.invoicePreference.trim() || null,
         bestDay: form.bestDay.trim() || null,
       }
-      const res = await fetch(`${API_URL}/api/clients`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error || 'Erro ao cadastrar cliente')
-      onCreated(data.client)
-      onClose()
+      if (editClient) {
+        const res = await fetch(`${API_URL}/api/clients`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: editClient.id, userId: editClient.userId, ...payload }),
+        })
+        const data = await res.json()
+        if (!res.ok) throw new Error(data.error || 'Erro ao atualizar cliente')
+        onUpdated({ ...editClient, ...payload })
+        onClose()
+      } else {
+        const res = await fetch(`${API_URL}/api/clients`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        })
+        const data = await res.json()
+        if (!res.ok) throw new Error(data.error || 'Erro ao cadastrar cliente')
+        onCreated(data.client)
+        onClose()
+      }
     } catch (err) {
-      setSubmitError(err.message || 'Erro ao cadastrar cliente. Tente novamente.')
+      setSubmitError(err.message || 'Erro ao salvar cliente. Tente novamente.')
     } finally {
       setSubmitting(false)
     }
@@ -3316,9 +3437,9 @@ function NewClientModal({ onClose, onCreated }) {
         <button className="closeBtn" onClick={onClose}><X /></button>
         <div className="modalHeader">
           <div>
-            <span>Clientes</span>
-            <h2>Novo cliente</h2>
-            <p>Preencha os dados para cadastrar o cliente na carteira comercial</p>
+            <span>{editClient ? 'Edição' : 'Clientes'}</span>
+            <h2>{editClient ? 'Editar cliente' : 'Novo cliente'}</h2>
+            <p>{editClient ? 'Altere os dados do cliente e salve as modificações' : 'Preencha os dados para cadastrar o cliente na carteira comercial'}</p>
           </div>
         </div>
         <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden', minHeight: 0 }}>
@@ -3359,7 +3480,7 @@ function NewClientModal({ onClose, onCreated }) {
               <label>E-mail de acesso
                 <input type="email" placeholder="cliente@email.com" value={form.email} onChange={(e) => set('email', e.target.value)} />
               </label>
-              <label>Senha inicial
+              <label>{editClient ? 'Nova senha (deixe em branco para manter)' : 'Senha inicial'}
                 <input type="password" placeholder="Mín. 6 caracteres" value={form.password} onChange={(e) => set('password', e.target.value)} />
               </label>
               <p style={{ ...sectionTitle, textTransform: 'none', letterSpacing: 0, fontWeight: 400, fontSize: '.8rem', marginTop: 0 }}>
@@ -3389,7 +3510,7 @@ function NewClientModal({ onClose, onCreated }) {
           </div>
           <div className="newProductFooter">
             <button type="submit" className="btnPrimary" disabled={!canSubmit || submitting}>
-              <CheckCircle2 size={17} /> {submitting ? 'Cadastrando...' : 'Cadastrar cliente'}
+              <CheckCircle2 size={17} /> {submitting ? (editClient ? 'Salvando...' : 'Cadastrando...') : (editClient ? 'Salvar alterações' : 'Cadastrar cliente')}
             </button>
           </div>
         </form>
@@ -3397,7 +3518,6 @@ function NewClientModal({ onClose, onCreated }) {
     </div>
   )
 }
-
 function Finance() {
   const rows = [
     ['Recebimentos previstos', money(18420), '+12%'],
