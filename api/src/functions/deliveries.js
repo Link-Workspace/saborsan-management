@@ -89,7 +89,7 @@ app.http('deliveries', {
 
         let deliveryOrderRows = [];
         try {
-          const doResult = await sql.query`SELECT delivery_id, order_code FROM DeliveryOrders`;
+          const doResult = await sql.query`SELECT delivery_id, order_id FROM DeliveryOrders`;
           deliveryOrderRows = doResult.recordset;
         } catch (e) { context.warn('DeliveryOrders query:', e.message); }
 
@@ -98,7 +98,7 @@ app.http('deliveries', {
         const deliveries = deliveriesResult.recordset.map((d) => {
           const orderIds = deliveryOrderRows
             .filter((o) => o.delivery_id === d.id)
-            .map((o) => o.order_code);
+            .map((o) => o.order_id);
           const chamberNum = String(d.cold_chamber_number || 1).padStart(2, '0');
           return {
             id: d.code,
@@ -156,7 +156,7 @@ app.http('deliveries', {
 
         if (Array.isArray(orderIds) && orderIds.length > 0) {
           for (const orderId of orderIds) {
-            await sql.query`INSERT INTO DeliveryOrders (delivery_id, order_code) VALUES (${newId}, ${orderId})`;
+            await sql.query`INSERT INTO DeliveryOrders (delivery_id, order_id) VALUES (${newId}, ${orderId})`;
           }
         }
 
@@ -204,7 +204,7 @@ app.http('deliveries', {
             await sql.query`DELETE FROM DeliveryOrders WHERE delivery_id = ${dbId}`;
             if (Array.isArray(orderIds) && orderIds.length > 0) {
               for (const orderId of orderIds) {
-                await sql.query`INSERT INTO DeliveryOrders (delivery_id, order_code) VALUES (${dbId}, ${orderId})`;
+                await sql.query`INSERT INTO DeliveryOrders (delivery_id, order_id) VALUES (${dbId}, ${orderId})`;
               }
             }
           }
