@@ -2541,7 +2541,13 @@ function VehicleFormModal({ editVehicle, onClose, onSave }) {
     plate: editVehicle?.plate || '',
   })
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }))
-  const canSubmit = form.name.trim() !== ''
+  const hasChanges = !editVehicle || (
+    form.name !== (editVehicle.name || '') ||
+    form.brand !== (editVehicle.brand || '') ||
+    String(form.year) !== String(editVehicle.year || '') ||
+    form.plate !== (editVehicle.plate || '')
+  )
+  const canSubmit = form.name.trim() !== '' && hasChanges
 
   const submit = (e) => {
     e.preventDefault()
@@ -2578,7 +2584,7 @@ function VehicleFormModal({ editVehicle, onClose, onSave }) {
             </div>
           </div>
           <div className="newOrderFooter">
-            <div className="newOrderFooterActions">
+            <div className="newOrderFooterActions" style={{marginLeft:'auto'}}>
               <button type="submit" className="btnPrimary" disabled={!canSubmit}><CheckCircle2 size={17} /> {editVehicle ? 'Salvar alterações' : 'Cadastrar veículo'}</button>
             </div>
           </div>
@@ -2636,7 +2642,7 @@ function VehiclesModal({ onClose, vehicles, onCreate, onUpdate, onRemove }) {
             }
           </div>
           <div className="newOrderFooter">
-            <div className="newOrderFooterActions">
+            <div className="newOrderFooterActions" style={{marginLeft:'auto'}}>
               <button type="button" className="btnPrimary" onClick={() => { setEditVehicle(null); setFormOpen(true) }}><Plus size={17} /> Novo veículo</button>
             </div>
           </div>
