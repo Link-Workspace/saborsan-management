@@ -597,7 +597,7 @@ function App() {
           }).catch(() => {})
         }}
       />}
-      {(newOrderOpen || editOrder) && <NewOrderModal onClose={() => { setNewOrderOpen(false); setEditOrder(null) }} onCreateOrder={createOrder} onUpdateOrder={updateOrder} editOrder={editOrder} />}
+      {(newOrderOpen || editOrder) && <NewOrderModal onClose={() => { setNewOrderOpen(false); setEditOrder(null) }} onCreateOrder={createOrder} onUpdateOrder={updateOrder} editOrder={editOrder} clients={clientsState} />}
       {editProduct && <NewProductModal editProduct={editProduct} onClose={() => setEditProduct(null)} onCreated={() => {}} onUpdated={() => { setStockRefreshKey((k) => k + 1); notify('Produto atualizado com sucesso!') }} />}
       {removeConfirmOrder && (
         <div className="cancelSepOverlay" onClick={(e) => { if (e.target.classList.contains('cancelSepOverlay')) setRemoveConfirmOrder(null) }}>
@@ -3201,6 +3201,10 @@ function DeliveryDetailModal({ delivery, onClose, orders, onCancel, onRemove, on
 }
 
 function Clients({ clientsData = [], clientsLoading = false, onNewClient, onSelectClient, search = '' }) {
+  const [viewMode, setViewMode] = useState('grid')
+  const [viewMenuOpen, setViewMenuOpen] = useState(false)
+  const viewMenuRef = useRef(null)
+
   const filtered = !search
     ? clientsData
     : clientsData.filter((c) =>
@@ -3209,51 +3213,111 @@ function Clients({ clientsData = [], clientsLoading = false, onNewClient, onSele
         (c.city || '').toLowerCase().includes(search.toLowerCase())
       )
 
+  useEffect(() => {
+    if (!viewMenuOpen) return
+    const handleClick = (e) => {
+      if (viewMenuRef.current && !viewMenuRef.current.contains(e.target)) setViewMenuOpen(false)
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [viewMenuOpen])
+
   const getPriorityStatus = (priority) => {
     const p = (priority || '').toLowerCase()
-    if (p === 'alta') return 'VIP'
     if (p === 'baixa') return 'Reativar'
     return 'Ativo'
   }
 
+  const viewOptions = [
+    { key: 'grid', icon: LayoutGrid, label: 'Cards' },
+    { key: 'list', icon: List, label: 'Lista' },
+  ]
+
   return (
     <section className="pageStack">
-      <div className="sectionHeader">
+      <div className="sectionHeader stockSectionHeader">
         <div><p>Carteira comercial</p></div>
+        <div className="viewFilterWrap" ref={viewMenuRef}>
+          <button className="viewFilterBtn" onClick={() => setViewMenuOpen(!viewMenuOpen)}>
+            <LayoutGrid size={16} /> Visualização <ChevronDown size={14} style={{ transform: viewMenuOpen ? 'rotate(180deg)' : 'none', transition: 'transform .2s' }} />
+          </button>
+          {viewMenuOpen && (
+            <div className="viewFilterDropdown">
+              {viewOptions.map(({ key, icon: Icon, label }) => (
+                <button key={key} className={viewMode === key ? 'active' : ''} onClick={() => { setViewMode(key); setViewMenuOpen(false) }}>
+                  <Icon size={16} /> {label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
         <button className="btnSolid" onClick={onNewClient}><Plus size={18} /> Novo cliente</button>
       </div>
       {clientsLoading && <p className="loadingText">Carregando clientes...</p>}
       {!clientsLoading && filtered.length === 0 && <p className="emptyText">Nenhum cliente cadastrado.</p>}
-      <div className="clientGrid">
-        {filtered.map((client) => (
-          <article className="clientCard" key={client.id}>
-            <div className="avatar">{(client.establishmentName || client.clientName || 'C')[0].toUpperCase()}</div>
-            <div><h3>{client.establishmentName}</h3><p>{client.segment || '—'}</p></div>
-            <Status status={getPriorityStatus(client.priority)} />
-            <div className="clientStats">
-              <span>Responsável <b>{client.clientName || '—'}</b></span>
-              <span>Cidade <b>{client.city || '—'}</b></span>
-              {client.lastPurchase && <span>Última compra <b>{client.lastPurchase}</b></span>}
-              {client.avgTicket != null && client.avgTicket > 0 && <span>Ticket médio <b>{money(client.avgTicket)}</b></span>}
-            </div>
-            <div className="orderActions">
-              <button onClick={() => onSelectClient && onSelectClient(client)}>Ver detalhes</button>
-              {client.contactNumber && (
-                <a
-                  href={`https://wa.me/${client.contactNumber.replace(/\D/g, '')}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="btn"
-                  style={{ all: 'unset', cursor: 'pointer' }}
-                >
-                  <button>Fazer contato</button>
-                </a>
-              )}
-              {!client.contactNumber && <button disabled>Fazer contato</button>}
-            </div>
-          </article>
-        ))}
-      </div>
+      {viewMode === 'grid' ? (
+        <div className="clientGrid">
+          {filtered.map((client) => (
+            <article className="clientCard" key={client.id}>
+              <div className="avatar">{(client.establishmentName || client.clientName || 'C')[0].toUpperCase()}</div>
+              <div><h3>{client.establishmentName}</h3><p>{client.segment || '—'}</p></div>
+              <Status status={getPriorityStatus(client.priority)} />
+              <div className="clientStats">
+                <span>Responsável <b>{client.clientName || '—'}</b></span>
+                <span>Cidade <b>{client.city || '—'}</b></span>
+                {client.lastPurchase && <span>Última compra <b>{client.lastPurchase}</b></span>}
+                {client.avgTicket != null && client.avgTicket > 0 && <span>Ticket médio <b>{money(client.avgTicket)}</b></span>}
+              </div>
+              <div className="orderActions">
+                <button onClick={() => onSelectClient && onSelectClient(client)}>Ver detalhes</button>
+                {client.contactNumber && (
+                  <a
+                    href={`https://wa.me/${client.contactNumber.replace(/\D/g, '')}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="btn"
+                    style={{ all: 'unset', cursor: 'pointer' }}
+                  >
+                    <button>Fazer contato</button>
+                  </a>
+                )}
+                {!client.contactNumber && <button disabled>Fazer contato</button>}
+              </div>
+            </article>
+          ))}
+        </div>
+      ) : (
+        <div className="clientListView">
+          {filtered.map((client) => (
+            <article className="clientListItem" key={client.id}>
+              <div className="clientListAvatar">{(client.establishmentName || client.clientName || 'C')[0].toUpperCase()}</div>
+              <div className="clientListInfo">
+                <h3>{client.establishmentName}</h3>
+                <p>{[client.segment, client.city].filter(Boolean).join(' • ') || '—'}</p>
+              </div>
+              <div className="clientListMeta">
+                {client.avgTicket != null && client.avgTicket > 0 && <span>Ticket médio <b>{money(client.avgTicket)}</b></span>}
+              </div>
+              <Status status={getPriorityStatus(client.priority)} />
+              <div className="clientListActions">
+                <button onClick={() => onSelectClient && onSelectClient(client)}>Ver detalhes</button>
+                {client.contactNumber ? (
+                  <a
+                    href={`https://wa.me/${client.contactNumber.replace(/\D/g, '')}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{ all: 'unset', cursor: 'pointer' }}
+                  >
+                    <button>Contato</button>
+                  </a>
+                ) : (
+                  <button disabled>Contato</button>
+                )}
+              </div>
+            </article>
+          ))}
+        </div>
+      )}
     </section>
   )
 }
@@ -3586,7 +3650,14 @@ function Automation({ aiEnabled, setAiEnabled, notify }) {
   )
 }
 
-function NewOrderModal({ onClose, onCreateOrder, onUpdateOrder, editOrder }) {
+function NewOrderModal({ onClose, onCreateOrder, onUpdateOrder, editOrder, clients = [] }) {
+  const [selectedClientId, setSelectedClientId] = useState(() => {
+    if (editOrder) {
+      const match = clients.find((c) => c.establishmentName === editOrder.customer)
+      return match ? String(match.id) : ''
+    }
+    return ''
+  })
   const [form, setForm] = useState(() => editOrder ? {
     customer: editOrder.customer || '',
     cnpj: editOrder.cnpj || '',
@@ -3624,6 +3695,22 @@ function NewOrderModal({ onClose, onCreateOrder, onUpdateOrder, editOrder }) {
   const updateItem = (idx, field, value) =>
     setItems((i) => i.map((item, j) => (j === idx ? { ...item, [field]: value } : item)))
 
+  const handleClientSelect = (id) => {
+    setSelectedClientId(id)
+    const client = clients.find((c) => String(c.id) === String(id))
+    if (client) {
+      setForm((f) => ({
+        ...f,
+        customer: client.establishmentName || '',
+        cnpj: client.cnpj || '',
+        city: client.city || '',
+        whatsapp: client.contactNumber || '',
+      }))
+    } else {
+      setForm((f) => ({ ...f, customer: '', cnpj: '', city: '', whatsapp: '' }))
+    }
+  }
+
   const orderProducts = items
     .filter((item) => item.productId && item.qty > 0)
     .map((item) => {
@@ -3633,7 +3720,7 @@ function NewOrderModal({ onClose, onCreateOrder, onUpdateOrder, editOrder }) {
 
   const total = orderProducts.reduce((sum, p) => sum + p.price * p.qty, 0)
   const hasValidProducts = items.some((item) => item.productId && item.qty > 0)
-  const canSubmit = form.cnpj.trim() !== '' && form.city.trim() !== '' && form.whatsapp.trim() !== '' && form.delivery.trim() !== '' && hasValidProducts
+  const canSubmit = selectedClientId !== '' && form.delivery.trim() !== '' && hasValidProducts
 
   const submit = async (e) => {
     e.preventDefault()
@@ -3728,19 +3815,24 @@ function NewOrderModal({ onClose, onCreateOrder, onUpdateOrder, editOrder }) {
           <div className="newOrderScrollArea">
             <h3>Dados do cliente</h3>
             <div className="settingsForm">
-              <label>Nome do cliente *
-                <input placeholder="Ex: Padaria Central" value={form.customer} onChange={(e) => set('customer', e.target.value)} required />
-              </label>
-              <label>CNPJ
-                <input placeholder="00.000.000/0001-00" value={form.cnpj} onChange={(e) => set('cnpj', e.target.value)} />
-              </label>
-              <label>Cidade / UF
-                <input placeholder="Lages - SC" value={form.city} onChange={(e) => set('city', e.target.value)} />
-              </label>
-              <label>WhatsApp
-                <input placeholder="(49) 99999-0000" value={form.whatsapp} onChange={(e) => set('whatsapp', e.target.value)} />
+              <label>Cliente *
+                <select value={selectedClientId} onChange={(e) => handleClientSelect(e.target.value)} required>
+                  <option value="">{clients.length === 0 ? 'Carregando clientes...' : 'Selecione o cliente'}</option>
+                  {clients.map((c) => <option key={c.id} value={c.id}>{c.establishmentName}{c.city ? ` — ${c.city}` : ''}</option>)}
+                </select>
               </label>
             </div>
+            {selectedClientId && (() => {
+              const c = clients.find((cl) => String(cl.id) === String(selectedClientId))
+              if (!c) return null
+              return (
+                <div className="supplierDetailGrid" style={{ marginTop: 10, marginBottom: 4 }}>
+                  {c.cnpj && <div className="supplierDetailItem"><span>CNPJ</span><b>{c.cnpj}</b></div>}
+                  {c.city && <div className="supplierDetailItem"><span>Cidade</span><b>{c.city}</b></div>}
+                  {c.contactNumber && <div className="supplierDetailItem"><span>WhatsApp</span><b>{c.contactNumber}</b></div>}
+                </div>
+              )
+            })()}
 
             <h3 className="newOrderSectionTitle">Produtos solicitados</h3>
             <div className="newOrderItems">

@@ -174,7 +174,20 @@ p{margin:0}.appShell{min-height:100vh;display:grid;grid-template-columns:300px 1
 .stockListMeta{text-align:right;flex-shrink:0;width:160px;overflow:hidden;display:flex;flex-direction:column;gap:2px}
 .stockListMeta b{font-size:.95rem;color:var(--navy-dark);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .stockListMeta small{color:var(--muted);font-weight:700;font-size:.76rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-@media(max-width:760px){.viewFilterWrap{position:static;transform:none;margin:8px 0}.stockSectionHeader{gap:10px}}
+.clientListView{display:flex;flex-direction:column;gap:8px}
+.clientListItem{background:#fff;border:1px solid var(--line);border-radius:16px;display:flex;align-items:center;gap:16px;padding:14px 20px;transition:.15s}
+.clientListItem:hover{border-color:var(--orange);box-shadow:0 8px 24px rgba(255,122,0,.08)}
+.clientListAvatar{width:40px;height:40px;border-radius:50%;background:var(--orange);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:1.05rem;flex-shrink:0}
+.clientListInfo{flex:1;min-width:0}
+.clientListInfo h3{font-size:1rem;margin:0 0 2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-family:'Montserrat',sans-serif;color:var(--navy-dark)}
+.clientListInfo p{font-size:.82rem;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin:0}
+.clientListMeta{text-align:right;flex-shrink:0;min-width:160px;display:flex;flex-direction:column;gap:2px;font-size:.8rem;color:var(--muted)}
+.clientListMeta b{color:var(--navy-dark)}
+.clientListActions{display:flex;gap:8px;flex-shrink:0}
+.clientListActions button{font-size:.8rem;padding:7px 14px;border-radius:999px;border:0;background:#f2f6fb;cursor:pointer;font-weight:900;color:var(--navy);transition:.15s}
+.clientListActions button:hover:not(:disabled){border-color:var(--orange);color:var(--orange)}
+.clientListActions button:disabled{opacity:.45;cursor:not-allowed}
+@media(max-width:760px){.viewFilterWrap{position:static;transform:none;margin:8px 0}.stockSectionHeader{gap:10px}.clientListItem{flex-wrap:wrap}.clientListMeta{display:none}.clientListActions{width:100%}}
 .supplierDetailModal{max-width:720px}
 .supplierDetailGrid{display:grid;grid-template-columns:1fr 1fr;gap:10px 20px;margin-top:12px}
 .supplierDetailItem{display:flex;flex-direction:column;gap:3px;background:#f8f9fb;border-radius:12px;padding:10px 14px}
