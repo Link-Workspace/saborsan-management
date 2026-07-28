@@ -271,3 +271,16 @@ p{margin:0}.appShell{min-height:100vh;display:grid;grid-template-columns:300px 1
 .deliveryOrdersItemBody b{font-size:.9rem;font-weight:900;color:var(--navy-dark)}
 .deliveryOrdersItemBody span{font-size:.85rem;font-weight:700;color:var(--text)}
 .deliveryOrdersItemBody small{font-size:.78rem;font-weight:700;color:var(--muted)}
+/* -- City picker (NewDeliveryModal) -------------------------------------------------- */
+.cityPickerWrapper{width:100%;margin-top:4px}
+.cityTagList{display:flex;flex-wrap:wrap;gap:6px;align-items:center;background:#fff;border:1.5px solid var(--line);border-radius:12px;padding:8px 10px;min-height:44px;cursor:text;transition:.15s}
+.cityTagList:focus-within{border-color:var(--orange);box-shadow:0 0 0 3px #ff8c0022}
+.cityTag{display:flex;align-items:center;gap:4px;background:#fff3e0;border:1.5px solid var(--orange);border-radius:20px;padding:3px 10px 3px 10px;font-size:.82rem;font-weight:800;color:var(--navy-dark);white-space:nowrap}
+.cityTagArrow{color:var(--orange);font-weight:900;margin-right:2px}
+.cityTagRemove{display:flex;align-items:center;justify-content:center;background:none;border:none;padding:0;margin-left:2px;cursor:pointer;color:var(--orange);line-height:1;opacity:.7;transition:.1s}
+.cityTagRemove:hover{opacity:1}
+.citySearchInputWrapper{position:relative;flex:1;min-width:140px}
+.citySearchInput{border:none;outline:none;background:transparent;font-size:.88rem;font-weight:700;color:var(--navy-dark);width:100%;padding:2px 4px}
+.citySuggestions{position:absolute;top:calc(100% + 6px);left:0;right:0;background:#fff;border:1.5px solid var(--orange);border-radius:12px;box-shadow:0 8px 28px #0001;z-index:200;list-style:none;margin:0;padding:4px 0;max-height:220px;overflow-y:auto}
+.citySuggestions li{padding:9px 16px;font-size:.88rem;font-weight:700;color:var(--navy-dark);cursor:pointer;transition:.1s}
+.citySuggestions li:hover{background:#fff3e0;color:var(--orange)}

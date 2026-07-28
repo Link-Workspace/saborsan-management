@@ -325,7 +325,7 @@ function App() {
   const [editProduct, setEditProduct] = useState(null)
   const [stockRefreshKey, setStockRefreshKey] = useState(0)
   const [topbarSearch, setTopbarSearch] = useState('')
-  const [deliveriesState, setDeliveriesState] = useState(deliveries)
+  const [deliveriesState, setDeliveriesState] = useState([])
   const [newDeliveryOpen, setNewDeliveryOpen] = useState(false)
   const [selectedDelivery, setSelectedDelivery] = useState(null)
   const [editDelivery, setEditDelivery] = useState(null)
@@ -339,7 +339,15 @@ function App() {
       .finally(() => setOrdersLoading(false))
   }
 
+  const fetchDeliveries = () => {
+    fetch(`${API_URL}/api/deliveries`)
+      .then((r) => r.json())
+      .then((data) => { if (data.deliveries) setDeliveriesState(data.deliveries) })
+      .catch(() => {})
+  }
+
   useEffect(() => { fetchOrders() }, [])
+  useEffect(() => { fetchDeliveries() }, [])
   useEffect(() => { setTopbarSearch('') }, [active])
 
   const totals = useMemo(() => {
@@ -377,7 +385,29 @@ function App() {
     fetch(`${API_URL}/api/deliveries`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ deliveryId: id, status: 'Cancelada', progress: 0 }),
+      body: JSON.stringify({ deliveryId: id, status: 'Cancelada' }),
+    }).catch(() => {})
+  }
+
+  const removeDelivery = (id) => {
+    setDeliveriesState((prev) => prev.filter((d) => d.id !== id))
+    setSelectedDelivery(null)
+    notify(`Entrega ${id} removida.`)
+    fetch(`${API_URL}/api/deliveries`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ deliveryId: id }),
+    }).catch(() => {})
+  }
+
+  const reactivateDelivery = (id) => {
+    setDeliveriesState((prev) => prev.map((d) => d.id === id ? { ...d, status: 'Planejada' } : d))
+    setSelectedDelivery(null)
+    notify(`Entrega ${id} reativada.`)
+    fetch(`${API_URL}/api/deliveries`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ deliveryId: id, status: 'Planejada' }),
     }).catch(() => {})
   }
 
@@ -510,7 +540,7 @@ function App() {
       {notifOpen && <NotifPanel onClose={() => setNotifOpen(false)} />}
       {newDeliveryOpen && <NewDeliveryModal onClose={() => setNewDeliveryOpen(false)} orders={orders} onCreate={(d) => { setDeliveriesState((prev) => [d, ...prev]); d.orderIds?.forEach((id) => updateOrderStatus(id, 'Rota')); notify(`Entrega ${d.id} criada com sucesso!`) }} />}
       {editDelivery && <NewDeliveryModal onClose={() => setEditDelivery(null)} orders={orders} editDelivery={editDelivery} onUpdate={(d) => { setDeliveriesState((prev) => prev.map((x) => x.id === d.id ? d : x)); setEditDelivery(null); notify(`Entrega ${d.id} atualizada com sucesso!`) }} onCreate={(d) => { setDeliveriesState((prev) => [d, ...prev]); d.orderIds?.forEach((id) => updateOrderStatus(id, 'Rota')); notify(`Entrega ${d.id} criada com sucesso!`) }} />}
-      {selectedDelivery && <DeliveryDetailModal delivery={selectedDelivery} onClose={() => setSelectedDelivery(null)} orders={orders} onCancel={cancelDelivery} onEdit={(d) => { setEditDelivery(d); setSelectedDelivery(null) }} />}
+      {selectedDelivery && <DeliveryDetailModal delivery={selectedDelivery} onClose={() => setSelectedDelivery(null)} orders={orders} onCancel={cancelDelivery} onRemove={removeDelivery} onReactivate={reactivateDelivery} onEdit={(d) => { setEditDelivery(d); setSelectedDelivery(null) }} />}
       {(newOrderOpen || editOrder) && <NewOrderModal onClose={() => { setNewOrderOpen(false); setEditOrder(null) }} onCreateOrder={createOrder} onUpdateOrder={updateOrder} editOrder={editOrder} />}
       {editProduct && <NewProductModal editProduct={editProduct} onClose={() => setEditProduct(null)} onCreated={() => {}} onUpdated={() => { setStockRefreshKey((k) => k + 1); notify('Produto atualizado com sucesso!') }} />}
       {removeConfirmOrder && (
@@ -2416,48 +2446,118 @@ function Deliveries({ onNewDelivery, onSelect, deliveries: list }) {
   )
 }
 
+const SC_CITIES = [
+  'Abelardo Luz','Agrolândia','Agronômica','Água Doce','Águas de Chapecó','Águas Frias','Águas Mornas','Alfredo Wagner','Alto Bela Vista',
+  'Anchieta','Angelina','Anita Garibaldi','Anitápolis','Antônio Carlos','Apiúna','Arabutã','Araquari','Armazém','Arroio Trinta','Arvoredo',
+  'Ascurra','Atalanta','Aurora','Balneário Arroio do Silva','Balneário Barra do Sul','Balneário Camboriú','Balneário Gaivota',
+  'Balneário Piçarras','Balneário Rincão','Bandeirante','Barra Bonita','Barra Velha','Bela Vista do Toldo','Belmonte','Benedito Novo',
+  'Biguaçu','Blumenau','Bocaina do Sul','Bom Jardim da Serra','Bom Jesus','Bom Jesus do Oeste','Bom Retiro','Bombinhas','Botuverá',
+  'Braço do Norte','Braço do Trombudo','Brunópolis','Brusque','Caçador','Caibi','Calmon','Camboriú','Campo Alegre','Campo Belo do Sul',
+  'Campo Erê','Campos Novos','Canelinha','Canoinhas','Capão Alto','Capinzal','Capivari de Baixo','Catanduvas','Caxambu do Sul',
+  'Celso Ramos','Cerro Negro','Chapadão do Lageado','Chapecó','Cocal do Sul','Concórdia','Cordilheira Alta','Coronel Freitas',
+  'Coronel Martins','Correia Pinto','Corupá','Criciúma','Cunha Porã','Cunhataí','Curitibanos','Descanso','Dionísio Cerqueira',
+  'Dona Emma','Doutor Pedrinho','Entre Rios','Ermo','Erval Velho','Faxinal dos Guedes','Flor do Sertão','Florianópolis',
+  'Formosa do Sul','Forquilhinha','Fraiburgo','Frei Rogério','Galvão','Garopaba','Garuva','Gaspar','Governador Celso Ramos',
+  'Grão Pará','Gravatal','Guabiruba','Guaraciaba','Guaramirim','Guarujá do Sul','Guatambú','Herval d\'Oeste','Ibiam','Ibicaré',
+  'Ibirama','Içara','Ilhota','Imaruí','Imbituba','Imbuia','Indaial','Iomerê','Ipira','Iporã do Oeste','Ipuaçu','Ipumirim',
+  'Iraceminha','Irani','Irati','Irineópolis','Itá','Itaiópolis','Itajaí','Itapema','Itapiranga','Itapoá','Ituporanga','Jaborá',
+  'Jacinto Machado','Jaguaruna','Jaraguá do Sul','Jardinópolis','Joaçaba','Joinville','José Boiteux','Jupiá','Lacerdópolis',
+  'Lages','Laguna','Lajeado Grande','Laurentino','Lauro Müller','Lebon Régis','Leoberto Leal','Lindóia do Sul','Lontras',
+  'Luiz Alves','Luzerna','Macieira','Mafra','Major Gercino','Major Vieira','Maracajá','Maravilha','Marema','Massaranduba',
+  'Matos Costa','Meleiro','Mirim Doce','Modelo','Mondaí','Monte Carlo','Monte Castelo','Morro da Fumaça','Morro Grande',
+  'Navegantes','Nova Erechim','Nova Itaberaba','Nova Trento','Nova Veneza','Novo Horizonte','Orleans','Otacílio Costa','Ouro',
+  'Ouro Verde','Paial','Painel','Palhoça','Palma Sola','Palmeira','Palmitos','Papanduva','Paraíso','Passo de Torres',
+  'Passos Maia','Paulo Lopes','Pedras Grandes','Penha','Peritiba','Pescaria Brava','Petrolândia','Pinhalzinho','Pinheiro Preto',
+  'Piratuba','Planalto Alegre','Pomerode','Ponte Alta','Ponte Alta do Norte','Ponte Serrada','Porto Belo','Porto União',
+  'Pouso Redondo','Praia Grande','Presidente Castelo Branco','Presidente Getúlio','Presidente Nereu','Princesa','Quilombo',
+  'Rancho Queimado','Rio das Antas','Rio do Campo','Rio do Oeste','Rio do Sul','Rio dos Cedros','Rio Fortuna','Rio Negrinho',
+  'Rio Rufino','Riqueza','Rodeio','Romelândia','Salete','Saltinho','Salto Veloso','Sangão','Santa Cecília','Santa Helena',
+  'Santa Rosa de Lima','Santa Rosa do Sul','Santa Terezinha','Santa Terezinha do Progresso','Santiago do Sul',
+  'Santo Amaro da Imperatriz','São Bento do Sul','São Bernardino','São Carlos','São Cristóvão do Sul','São Domingos',
+  'São Francisco do Sul','São João Batista','São João do Itaperiú','São João do Oeste','São João do Sul','São Joaquim',
+  'São José','São José do Cedro','São José do Cerrito','São Lourenço do Oeste','São Ludgero','São Marcos',
+  'São Miguel da Boa Vista','São Miguel do Oeste','São Pedro de Alcântara','Saudades','Schroeder','Seara','Serra Alta',
+  'Siderópolis','Sombrio','Sul Brasil','Taió','Tangará','Tigrinhos','Tijucas','Timbé do Sul','Timbó','Timbó Grande',
+  'Três Barras','Treviso','Treze de Maio','Treze Tílias','Trombudo Central','Tubarão','Tunápolis','Turvo','União do Oeste',
+  'Urubici','Urupema','Urussanga','Vargeão','Vargem','Vargem Bonita','Vidal Ramos','Videira','Vitor Meireles','Witmarsum',
+  'Xanxerê','Xavantina','Xaxim','Zortéa',
+]
+
+const VEHICLES = [
+  'Câmara fria 01',
+  'Câmara fria 02',
+  'Câmara fria 03',
+  'Van refrigerada 01',
+  'Van refrigerada 02',
+  'Baú refrigerado 01',
+  'Baú refrigerado 02',
+]
+
 function NewDeliveryModal({ onClose, onCreate, onUpdate, editDelivery, orders }) {
   const prefillSeller = editDelivery ? sellers.find((s) => s.name === editDelivery.driver) : null
   const [form, setForm] = useState(() => editDelivery ? {
-    route: editDelivery.route || '',
     sellerId: prefillSeller ? String(prefillSeller.id) : '',
-    vehicle: editDelivery.vehicle || '',
-    coldChamber: '',
+    vehicle: editDelivery.vehicle || VEHICLES[0],
     stops: String(editDelivery.stops || ''),
     temperature: editDelivery.temperature ? editDelivery.temperature.replace('°C', '') : '',
     departureDate: editDelivery.departureDate || '',
     arrivalDate: editDelivery.arrivalDate || '',
     notes: editDelivery.notes || '',
-    status: editDelivery.status || 'Planejada',
+    status: editDelivery.status === 'Em rota' ? 'Em rota' : 'Carregando',
   } : {
-    route: '',
     sellerId: '',
-    vehicle: '',
-    coldChamber: '',
+    vehicle: VEHICLES[0],
     stops: '',
     temperature: '',
     departureDate: '',
     arrivalDate: '',
     notes: '',
-    status: 'Planejada',
+    status: 'Carregando',
   })
+
+  const [selectedCities, setSelectedCities] = useState(() => {
+    if (!editDelivery?.route) return []
+    return editDelivery.route.split(' → ').map((c) => c.trim()).filter(Boolean)
+  })
+  const [citySearch, setCitySearch] = useState('')
+  const [showCitySuggestions, setShowCitySuggestions] = useState(false)
+  const cityInputRef = useRef(null)
+
+  const citySuggestions = citySearch.trim().length >= 2
+    ? SC_CITIES.filter((c) =>
+        c.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').includes(
+          citySearch.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+        ) && !selectedCities.includes(c)
+      ).slice(0, 8)
+    : []
+
+  const addCity = (city) => {
+    setSelectedCities((prev) => [...prev, city])
+    setCitySearch('')
+    setShowCitySuggestions(false)
+    cityInputRef.current?.focus()
+  }
+
+  const removeCity = (city) => setSelectedCities((prev) => prev.filter((c) => c !== city))
+
   const [selectedOrderIds, setSelectedOrderIds] = useState(editDelivery?.orderIds || [])
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }))
   const toggleOrder = (id) => setSelectedOrderIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id])
   const separacaoOrders = orders.filter((o) => o.status === 'Separação')
-  const canSubmit = form.route.trim() !== '' && form.sellerId !== ''
+  const canSubmit = selectedCities.length > 0 && form.sellerId !== ''
 
   const submit = (e) => {
     e.preventDefault()
     if (!canSubmit) return
+    const route = selectedCities.join(' → ')
     const seller = sellers.find((s) => s.id === Number(form.sellerId))
     if (editDelivery) {
       onUpdate({
         ...editDelivery,
-        route: form.route,
+        route,
         driver: seller ? seller.name : editDelivery.driver,
         driverPhone: seller ? seller.phone : editDelivery.driverPhone,
-        vehicle: form.vehicle || editDelivery.vehicle,
+        vehicle: form.vehicle,
         stops: selectedOrderIds.length || Number(form.stops) || 0,
         temperature: form.temperature ? form.temperature + '°C' : editDelivery.temperature,
         status: form.status,
@@ -2470,10 +2570,10 @@ function NewDeliveryModal({ onClose, onCreate, onUpdate, editDelivery, orders })
       const newId = 'R-' + (80 + Math.floor(Math.random() * 900))
       onCreate({
         id: newId,
-        route: form.route,
+        route,
         driver: seller ? seller.name : '',
         driverPhone: seller ? seller.phone : '',
-        vehicle: form.vehicle || 'Câmara fria ' + (form.coldChamber || '01'),
+        vehicle: form.vehicle,
         stops: selectedOrderIds.length || Number(form.stops) || 0,
         temperature: form.temperature ? form.temperature + '°C' : '-18.0°C',
         status: form.status,
@@ -2502,8 +2602,37 @@ function NewDeliveryModal({ onClose, onCreate, onUpdate, editDelivery, orders })
           <div className="newOrderScrollArea">
             <h3>Rota e entregador</h3>
             <div className="settingsForm">
-              <label>Rota *
-                <input placeholder="Ex: Centro → Coral → Conta Dinheiro" value={form.route} onChange={(e) => set('route', e.target.value)} required />
+              <label>Cidades da rota *
+                <div className="cityPickerWrapper">
+                  <div className="cityTagList">
+                    {selectedCities.map((city, idx) => (
+                      <span key={city} className="cityTag">
+                        {idx > 0 && <span className="cityTagArrow">→</span>}
+                        {city}
+                        <button type="button" className="cityTagRemove" onClick={() => removeCity(city)}><X size={12} /></button>
+                      </span>
+                    ))}
+                    <div className="citySearchInputWrapper">
+                      <input
+                        ref={cityInputRef}
+                        className="citySearchInput"
+                        placeholder={selectedCities.length === 0 ? 'Digite o nome de uma cidade de SC...' : 'Adicionar cidade...'}
+                        value={citySearch}
+                        onChange={(e) => { setCitySearch(e.target.value); setShowCitySuggestions(true) }}
+                        onFocus={() => setShowCitySuggestions(true)}
+                        onBlur={() => setTimeout(() => setShowCitySuggestions(false), 150)}
+                        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); if (citySuggestions.length > 0) addCity(citySuggestions[0]) } }}
+                      />
+                      {showCitySuggestions && citySuggestions.length > 0 && (
+                        <ul className="citySuggestions">
+                          {citySuggestions.map((city) => (
+                            <li key={city} onMouseDown={() => addCity(city)}>{city}</li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  </div>
+                </div>
               </label>
               <label>Entregador *
                 <select value={form.sellerId} onChange={(e) => set('sellerId', e.target.value)} required>
@@ -2512,10 +2641,9 @@ function NewDeliveryModal({ onClose, onCreate, onUpdate, editDelivery, orders })
                 </select>
               </label>
               <label>Veículo / Câmara fria
-                <input placeholder="Ex: Câmara fria 01" value={form.vehicle} onChange={(e) => set('vehicle', e.target.value)} />
-              </label>
-              <label>Número da câmara fria
-                <input type="number" min="1" placeholder="1" value={form.coldChamber} onChange={(e) => set('coldChamber', e.target.value)} />
+                <select value={form.vehicle} onChange={(e) => set('vehicle', e.target.value)}>
+                  {VEHICLES.map((v) => <option key={v} value={v}>{v}</option>)}
+                </select>
               </label>
             </div>
 
@@ -2543,11 +2671,8 @@ function NewDeliveryModal({ onClose, onCreate, onUpdate, editDelivery, orders })
             <div className="settingsForm">
               <label>Status
                 <select value={form.status} onChange={(e) => set('status', e.target.value)}>
-                  <option>Planejada</option>
                   <option>Carregando</option>
                   <option>Em rota</option>
-                  <option>Concluída</option>
-                  <option>Cancelada</option>
                 </select>
               </label>
               <label>Quantidade de paradas
@@ -2591,11 +2716,12 @@ function NewDeliveryModal({ onClose, onCreate, onUpdate, editDelivery, orders })
   )
 }
 
-function DeliveryDetailModal({ delivery, onClose, orders, onCancel, onEdit }) {
+function DeliveryDetailModal({ delivery, onClose, orders, onCancel, onRemove, onReactivate, onEdit }) {
   const [liveTemp, setLiveTemp] = useState(() => parseFloat(delivery.temperature) || -18.0)
   const [liveProgress, setLiveProgress] = useState(delivery.progress)
   const [elapsed, setElapsed] = useState(0)
   const [confirmCancel, setConfirmCancel] = useState(false)
+  const [confirmRemove, setConfirmRemove] = useState(false)
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -2727,6 +2853,15 @@ function DeliveryDetailModal({ delivery, onClose, orders, onCancel, onEdit }) {
           </div>
         )}
 
+        {isCancelled && (
+          <div className="newOrderFooter" style={{borderTop:'1px solid var(--line)',padding:'16px 28px',gap:'10px',justifyContent:'flex-end'}}>
+            <div className="newOrderFooterActions" style={{marginLeft:'auto'}}>
+              <button type="button" className="orderModalBtnDanger" onClick={() => setConfirmRemove(true)}>Remover</button>
+              <button type="button" className="btnPrimary" onClick={() => onReactivate(delivery.id)}><CheckCircle2 size={16} /> Reativar</button>
+            </div>
+          </div>
+        )}
+
       </div>
 
       {confirmCancel && (
@@ -2737,6 +2872,19 @@ function DeliveryDetailModal({ delivery, onClose, orders, onCancel, onEdit }) {
             <div className="cancelSepActions">
               <button className="cancelSepConfirm" style={{background:'var(--red)'}} onClick={() => { setConfirmCancel(false); onCancel(delivery.id) }}>Sim, cancelar entrega</button>
               <button className="cancelSepDeny" onClick={() => setConfirmCancel(false)}>Não, voltar</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {confirmRemove && (
+        <div className="cancelSepOverlay" onClick={(e) => { if (e.target.classList.contains('cancelSepOverlay')) setConfirmRemove(false) }}>
+          <div className="cancelSepModal">
+            <h3>Remover entrega?</h3>
+            <p>A entrega <b>{delivery.id}</b> de <b>{delivery.driver}</b> será removida permanentemente do sistema.</p>
+            <div className="cancelSepActions">
+              <button className="cancelSepConfirm" style={{background:'var(--red)'}} onClick={() => { setConfirmRemove(false); onRemove(delivery.id) }}>Sim, remover entrega</button>
+              <button className="cancelSepDeny" onClick={() => setConfirmRemove(false)}>Não, voltar</button>
             </div>
           </div>
         </div>
