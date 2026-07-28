@@ -263,7 +263,7 @@ const statusClass = (status) => {
   const s = status.toLowerCase()
   if (s.includes('recebido') || s.includes('aguardando') || s.includes('preparo')) return 'warning'
   if (s.includes('separação') || s.includes('rota') || s.includes('carregando')) return 'info'
-  if (s.includes('entregue') || s.includes('emitida') || s.includes('ativo') || s.includes('vip')) return 'success'
+  if (s.includes('entregue') || s.includes('emitida') || s.includes('ativo') || s.includes('vip') || s.includes('pronto')) return 'success'
   if (s.includes('inativo') || s.includes('atenção') || s.includes('reativar') || s.includes('baixo')) return 'danger'
   return 'neutral'
 }
@@ -520,7 +520,7 @@ function App() {
           ))}
         </nav>
         <div className="sideUserCard">
-          <div className="userPill"><span>{employee.email[0].toUpperCase()}</span><div><b>{employee.email}</b><small>{employee.role}</small></div></div>
+          <div className="userPill"><span>{employee.email[0].toUpperCase()}</span><div><b>{employee.email.split('@')[0]}</b><small>{employee.role}</small></div></div>
           <button className="logout" onClick={() => { localStorage.removeItem('saborsan_employee'); setEmployee(null) }}><LogOut size={18} /></button>
         </div>
       </aside>
@@ -791,8 +791,6 @@ function Dashboard({ totals, orders, aiEnabled, setActive }) {
 
 function Orders({ orders, ordersLoading, onSelect, updateOrderStatus, createInvoice, onGerarNota, onNewOrder, onVerNota, search = '' }) {
   const [filter, setFilter] = useState('Todos')
-  const [confirmCancelSep, setConfirmCancelSep] = useState(null)
-  const [confirmSepSemNota, setConfirmSepSemNota] = useState(null)
   const byStatus = filter === 'Todos' ? orders : orders.filter((o) => o.status === filter)
   const filtered = !search ? byStatus : byStatus.filter((o) => o.customer.toLowerCase().includes(search.toLowerCase()) || o.id.toLowerCase().includes(search.toLowerCase()))
   return (
@@ -802,56 +800,33 @@ function Orders({ orders, ordersLoading, onSelect, updateOrderStatus, createInvo
         <button className="btnSolid" onClick={onNewOrder}><Plus size={18} /> Novo pedido</button>
       </div>
       <div className="filtersRow">
-        {['Todos', 'Recebido', 'Separação', 'Rota', 'Entregue'].map((item) => <button key={item} className={filter === item ? 'active' : ''} onClick={() => setFilter(item)}><Filter size={15} />{item}</button>)}
+        {['Todos', 'Recebido', 'Separação', 'Pronto', 'Rota', 'Entregue'].map((item) => <button key={item} className={filter === item ? 'active' : ''} onClick={() => setFilter(item)}><Filter size={15} />{item}</button>)}
       </div>
       {ordersLoading && <p className="loadingText">Carregando pedidos...</p>}
       <div className="ordersBoard">
         {!ordersLoading && filtered.length === 0 && <p className="emptyText">Nenhum pedido encontrado.</p>}
         {filtered.map((order) => (
           <article className="orderCard" key={order.id}>
-            <div className="orderTop"><div><b>{order.id}</b><span>{order.source}</span></div><div style={{display:'flex',gap:'6px',flexWrap:'wrap',alignItems:'center'}}><Status status={order.status} />{order.status === 'Nota emitida' && <span className="status warning">Pronto para separação</span>}</div></div>
+            <div className="orderTop"><div><b>{order.id}</b><span>{order.source}</span></div><Status status={order.status} /></div>
             <h3>{order.customer}</h3>
             <p>{order.city} • {order.whatsapp}</p>
             <div className="orderProducts">{order.products.map((p) => <span key={p.name}>{p.qty} {p.unit} • {p.name}</span>)}</div>
             <div className="orderFooter"><strong>{money(order.value)}</strong><small>Entrega: {order.delivery}</small></div>
-            <div className="orderActions"><button onClick={() => onSelect(order)}>Detalhes</button>{(order.status === 'Nota emitida' || (order.status === 'Separação' && order.nfeData)) && <button onClick={() => onVerNota(order)}>Ver nota</button>}{order.status === 'Separação' ? <button className="cancelSep" onClick={() => setConfirmCancelSep(order)}>Cancelar separação</button> : <button onClick={() => (!order.nfeData && order.status !== 'Nota emitida') ? setConfirmSepSemNota(order) : updateOrderStatus(order.id, 'Separação')}>Separar</button>}{order.status !== 'Nota emitida' && !(order.status === 'Separação' && order.nfeData) && <button onClick={() => onGerarNota(order)}>Gerar nota</button>}</div>
+            <div className="orderActions">
+              <button onClick={() => onSelect(order)}>Detalhes</button>
+              {order.status === 'Recebido' && <button style={{background:'var(--orange)',color:'#fff'}} onClick={() => updateOrderStatus(order.id, 'Separação')}>Separar</button>}
+              {order.status === 'Pronto' && <button onClick={() => onGerarNota(order)}>Gerar nota</button>}
+            </div>
           </article>
         ))}
       </div>
-      {confirmCancelSep && (
-        <div className="cancelSepOverlay" onClick={(e) => { if (e.target.classList.contains('cancelSepOverlay')) setConfirmCancelSep(null) }}>
-          <div className="cancelSepModal">
-            <h3>Cancelar separação?</h3>
-            {confirmCancelSep.nfeData
-              ? <p>O pedido <b>{confirmCancelSep.id}</b> voltará para <b>Nota emitida</b> e <b>Pronto para separação</b>.</p>
-              : <p>O pedido <b>{confirmCancelSep.id}</b> voltará para o status <b>Recebido</b>.</p>
-            }
-            <div className="cancelSepActions">
-              <button className="cancelSepConfirm" onClick={() => { updateOrderStatus(confirmCancelSep.id, confirmCancelSep.nfeData ? 'Nota emitida' : 'Recebido'); setConfirmCancelSep(null) }}>Sim, cancelar separação</button>
-              <button className="cancelSepDeny" onClick={() => setConfirmCancelSep(null)}>Não, manter</button>
-            </div>
-          </div>
-        </div>
-      )}
-      {confirmSepSemNota && (
-        <div className="cancelSepOverlay" onClick={(e) => { if (e.target.classList.contains('cancelSepOverlay')) setConfirmSepSemNota(null) }}>
-          <div className="cancelSepModal">
-            <h3>Enviar para separação sem nota?</h3>
-            <p>O pedido <b>{confirmSepSemNota.id}</b> ainda não teve a nota fiscal emitida. Deseja enviar para separação mesmo assim?</p>
-            <div className="cancelSepActions">
-              <button className="cancelSepConfirm" onClick={() => { updateOrderStatus(confirmSepSemNota.id, 'Separação'); setConfirmSepSemNota(null) }}>Sim, enviar para separação</button>
-              <button className="cancelSepDeny" onClick={() => setConfirmSepSemNota(null)}>Não, voltar</button>
-            </div>
-          </div>
-        </div>
-      )}
     </section>
   )
 }
 
 function Invoices({ orders, onGerarNota, onVerNota, search = '' }) {
   const fiscalHistory = orders.filter((o) => o.nfeData && (!search || o.customer.toLowerCase().includes(search.toLowerCase())))
-  const readyToEmit = orders.filter((o) => !o.nfeData && o.status !== 'Entregue' && o.status !== 'Cancelado' && (!search || o.customer.toLowerCase().includes(search.toLowerCase())))
+  const readyToEmit = orders.filter((o) => o.status === 'Pronto' && (!search || o.customer.toLowerCase().includes(search.toLowerCase())))
 
   const formatNfeDate = (o) => {
     const iso = o.nfeData?.authorizedAt
@@ -4608,7 +4583,7 @@ function NotaFiscalModal({ order, onClose, updateOrderStatus, notify }) {
         if (data.status === 'AUTHORIZED') {
           setNfeResult(data)
           setStep('autorizada')
-          updateOrderStatus(order.id, 'Nota emitida', { nfeData: { ...data, reference: ref } })
+          updateOrderStatus(order.id, 'Rota', { nfeData: { ...data, reference: ref } })
           notify(`NF-e ${data.number ? `nº ${data.number} ` : ''}autorizada para ${order.customer}.`)
         } else if (data.status === 'REJECTED' || data.status === 'SUBMISSION_FAILED') {
           setNfeError(data)
@@ -4645,7 +4620,7 @@ function NotaFiscalModal({ order, onClose, updateOrderStatus, notify }) {
       if (data.status === 'AUTHORIZED') {
         setNfeResult(data)
         setStep('autorizada')
-        updateOrderStatus(order.id, 'Nota emitida', { nfeData: data })
+        updateOrderStatus(order.id, 'Rota', { nfeData: data })
         notify(`NF-e ${data.number ? `nº ${data.number} ` : ''}autorizada para ${order.customer}.`)
         return
       }
@@ -4865,7 +4840,7 @@ function NotaFiscalModal({ order, onClose, updateOrderStatus, notify }) {
                 <button className="nfDocBtn" onClick={() => downloadFile('xml')}><FileText size={15} /> Baixar XML</button>
                 <button className="nfDocBtn" onClick={() => downloadFile('danfe')}><ReceiptText size={15} /> Baixar DANFE</button>
               </div>
-              <div className="nfStatusBadge success">Pedido atualizado para: Nota emitida</div>
+              <div className="nfStatusBadge success">Pedido atualizado para: Rota</div>
             </div>
           </div>
         )}
