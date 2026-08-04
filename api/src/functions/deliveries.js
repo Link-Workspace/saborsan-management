@@ -128,6 +128,28 @@ app.http('deliveries', {
           return { status: 400, jsonBody: { error: 'sellerId e route são obrigatórios' } };
         }
 
+        // Verificar se algum dos pedidos já está em uma entrega ativa para evitar duplicação
+        if (Array.isArray(orderIds) && orderIds.length > 0) {
+          for (const orderId of orderIds) {
+            const existingCheck = await sql.query`
+              SELECT d.code
+              FROM Deliveries d
+              INNER JOIN DeliveryOrders dor ON dor.delivery_id = d.id
+              WHERE dor.order_id = ${orderId}
+              AND d.status NOT IN (N'Cancelada', N'Concluída')
+            `;
+            if (existingCheck.recordset.length > 0) {
+              return {
+                status: 409,
+                jsonBody: {
+                  error: `O pedido ${orderId} já está associado à entrega ativa ${existingCheck.recordset[0].code}. Use PATCH para atualizar a entrega existente.`,
+                  existingCode: existingCheck.recordset[0].code,
+                },
+              };
+            }
+          }
+        }
+
         const codeResult = await sql.query`
           SELECT MAX(TRY_CAST(SUBSTRING(code, 3, LEN(code)) AS INT)) AS maxNum
           FROM Deliveries WHERE code LIKE 'R-%'
@@ -209,8 +231,6 @@ app.http('deliveries', {
             }
           }
 
-          // Notificar entregador sobre pedidos em Separação vinculados a esta entrega
-          await notifyDriverAboutOrders(sellerId, orderIds || [], deliveryId);
         } else if (status !== undefined) {
           await sql.query`
             UPDATE Deliveries

@@ -550,7 +550,7 @@ function App() {
         {active === 'estoque' && <Stock onProduct={setSelectedProduct} refreshKey={stockRefreshKey} search={topbarSearch} />}
         {active === 'fornecedores' && <Suppliers onMessage={setSupplierModal} search={topbarSearch} />}
         {active === 'compras' && <Purchases notify={notify} />}
-        {active === 'entregas' && <Deliveries deliveries={deliveriesState} onNewDelivery={() => setNewDeliveryOpen(true)} onSelect={setSelectedDelivery} onOpenVehicles={() => setVehiclesOpen(true)} />}
+        {active === 'entregas' && <Deliveries deliveries={deliveriesState} onNewDelivery={() => setNewDeliveryOpen(true)} onSelect={(d) => { setSelectedDelivery(d); fetchDeliveries() }} onOpenVehicles={() => setVehiclesOpen(true)} />}
         {active === 'clientes' && <Clients clientsData={clientsState} clientsLoading={clientsLoading} onNewClient={() => setNewClientOpen(true)} onSelectClient={setSelectedClient} search={topbarSearch} />}
         {active === 'financeiro' && <Finance />}
         {active === 'relatorios' && <Reports />}
@@ -566,7 +566,7 @@ function App() {
       {notifOpen && <NotifPanel onClose={() => setNotifOpen(false)} />}
       {newDeliveryOpen && <NewDeliveryModal onClose={() => setNewDeliveryOpen(false)} orders={orders} vehicles={vehiclesState} onCreate={(d) => { setDeliveriesState((prev) => [d, ...prev]); notify(`Entrega ${d.id} criada com sucesso! O entregador será notificado sobre os pedidos em separação.`) }} />}
       {editDelivery && <NewDeliveryModal onClose={() => setEditDelivery(null)} orders={orders} vehicles={vehiclesState} editDelivery={editDelivery} onUpdate={(d) => { setDeliveriesState((prev) => prev.map((x) => x.id === d.id ? d : x)); setEditDelivery(null); notify(`Entrega ${d.id} atualizada com sucesso!`) }} onCreate={(d) => { setDeliveriesState((prev) => [d, ...prev]); notify(`Entrega ${d.id} criada com sucesso! O entregador será notificado sobre os pedidos em separação.`) }} />}
-      {selectedDelivery && <DeliveryDetailModal delivery={selectedDelivery} onClose={() => setSelectedDelivery(null)} orders={orders} onCancel={cancelDelivery} onRemove={removeDelivery} onReactivate={reactivateDelivery} onEdit={(d) => { setEditDelivery(d); setSelectedDelivery(null) }} />}
+      {selectedDelivery && <DeliveryDetailModal delivery={deliveriesState.find((d) => d.id === selectedDelivery.id) || selectedDelivery} onClose={() => setSelectedDelivery(null)} orders={orders} onCancel={cancelDelivery} onRemove={removeDelivery} onReactivate={reactivateDelivery} onEdit={(d) => { setEditDelivery(d); setSelectedDelivery(null) }} />}
       {vehiclesOpen && <VehiclesModal
         onClose={() => setVehiclesOpen(false)}
         vehicles={vehiclesState}
