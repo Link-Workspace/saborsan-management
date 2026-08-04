@@ -451,6 +451,10 @@ function App() {
     notify(`Pedido ${order.id} criado com sucesso!`)
   }
 
+  const openGerarNota = (order) => {
+    setNotaFiscalOrder(order)
+  }
+
   const sendNfeToClient = (id) => {
     const sentAt = new Date().toISOString()
     setOrders((items) => items.map((item) => item.id === id ? { ...item, nfeSentAt: sentAt } : item))
@@ -548,9 +552,9 @@ function App() {
         </section>
 
         {active === 'dashboard' && <Dashboard totals={totals} orders={orders} aiEnabled={aiEnabled} setActive={setActive} />}
-        {active === 'pedidos' && <Orders orders={orders} ordersLoading={ordersLoading} onSelect={setSelectedOrder} updateOrderStatus={updateOrderStatus} createInvoice={createInvoice} onGerarNota={setNotaFiscalOrder} onNewOrder={() => setNewOrderOpen(true)} onVerNota={setVerNotaOrder} search={topbarSearch} />}
+        {active === 'pedidos' && <Orders orders={orders} ordersLoading={ordersLoading} onSelect={setSelectedOrder} updateOrderStatus={updateOrderStatus} createInvoice={createInvoice} onGerarNota={openGerarNota} onNewOrder={() => setNewOrderOpen(true)} onVerNota={setVerNotaOrder} search={topbarSearch} />}
         {active === 'vendedores' && <Sellers search={topbarSearch} />}
-        {active === 'notas' && <Invoices orders={orders} onGerarNota={setNotaFiscalOrder} onVerNota={setVerNotaOrder} search={topbarSearch} />}
+        {active === 'notas' && <Invoices orders={orders} onGerarNota={openGerarNota} onVerNota={setVerNotaOrder} search={topbarSearch} />}
         {active === 'estoque' && <Stock onProduct={setSelectedProduct} refreshKey={stockRefreshKey} search={topbarSearch} />}
         {active === 'fornecedores' && <Suppliers onMessage={setSupplierModal} search={topbarSearch} />}
         {active === 'compras' && <Purchases notify={notify} />}
@@ -4710,6 +4714,13 @@ function NotaFiscalModal({ order, onClose, updateOrderStatus, notify }) {
               <h2>{order.customer}</h2>
               <p>{order.city} • CNPJ: {order.cnpj}</p>
             </div>
+            {order.nfeData && order.nfeData.nfeStatus !== 'AUTHORIZED' && (
+              <div className="verNotaErrorBox" style={{ marginBottom: 16 }}>
+                <div className="verNotaErrorTitle"><AlertTriangle size={17} /> Tentativa anterior com erro</div>
+                {order.nfeData.errorCode && <span className="verNotaErrorCode">Código: {order.nfeData.errorCode}</span>}
+                <p className="verNotaErrorMsg">{order.nfeData.errorMessage || 'Ocorreu um erro ao emitir esta nota fiscal.'}</p>
+              </div>
+            )}
             <div className="nfGrid">
               <div className="nfCard">
                 <p className="nfLabel">Emitente</p>
