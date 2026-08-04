@@ -55,6 +55,7 @@ app.http('orders', {
             SELECT orderId, focusReference, nfeNumber, nfeSeries, accessKey, protocol, authorizedAt, sentToClientAt, status, errorCode, errorMessage
             FROM GestaoFiscalDocuments
             WHERE status IN ('AUTHORIZED', 'REJECTED', 'SUBMISSION_FAILED')
+            ORDER BY id ASC
           `.catch(() => ({ recordset: [] })),
         ]);
 

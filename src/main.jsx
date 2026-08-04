@@ -4608,7 +4608,7 @@ function NotaFiscalModal({ order, onClose, updateOrderStatus, notify }) {
         } else if (data.status === 'REJECTED' || data.status === 'SUBMISSION_FAILED') {
           setNfeError(data)
           setStep('rejeitada')
-          updateOrderStatus(order.id, 'Pronto')
+          updateOrderStatus(order.id, 'Pronto', { nfeData: { nfeStatus: data.status, errorCode: data.errorCode || null, errorMessage: data.errorMessage || null, reference: ref } })
         } else {
           startPolling(ref, attempt + 1)
         }
@@ -4653,6 +4653,7 @@ function NotaFiscalModal({ order, onClose, updateOrderStatus, notify }) {
       if (data.status === 'REJECTED' || data.status === 'SUBMISSION_FAILED') {
         setNfeError(data)
         setStep('rejeitada')
+        updateOrderStatus(order.id, 'Pronto', { nfeData: { nfeStatus: data.status, errorCode: data.errorCode || null, errorMessage: data.errorMessage || null, reference: data.reference || null } })
         return
       }
       setNfeError({ errorMessage: data.error || 'Resposta inesperada do servidor.' })
@@ -5022,7 +5023,11 @@ function VerNotaModal({ order, onClose, onSendToClient, onGerarNota }) {
             <p>{order.customer} • {order.city}</p>
           </div>
           <div className="verNotaHeaderBadges">
-            <Status status={nfe?.nfeStatus === 'AUTHORIZED' ? 'Nota emitida' : 'Erro na nota'} />
+            <Status status={
+              (nfeDetails && nfeDetails.statusSefaz && nfeDetails.statusSefaz !== '100')
+                ? 'Erro na nota'
+                : nfe?.nfeStatus === 'AUTHORIZED' ? 'Nota emitida' : 'Erro na nota'
+            } />
             {nfe?.number && <small className="verNotaNum">NF-e nº {nfe.number}</small>}
           </div>
         </div>
@@ -5049,12 +5054,15 @@ function VerNotaModal({ order, onClose, onSendToClient, onGerarNota }) {
 
             {nfeDetails && !detailsLoading && (
               <>
-                {nfeDetails.messageSefaz && (
-                  <div className="verNotaDetailsBanner">
-                    <CheckCircle2 size={15} />
-                    <span>{nfeDetails.messageSefaz}{nfeDetails.statusSefaz ? ` (${nfeDetails.statusSefaz})` : ''}</span>
-                  </div>
-                )}
+                {nfeDetails.messageSefaz && (() => {
+                  const isErr = nfeDetails.statusSefaz && nfeDetails.statusSefaz !== '100'
+                  return (
+                    <div className={`verNotaDetailsBanner${isErr ? ' error' : ''}`}>
+                      {isErr ? <AlertTriangle size={15} /> : <CheckCircle2 size={15} />}
+                      <span>{nfeDetails.messageSefaz}{nfeDetails.statusSefaz ? ` (${nfeDetails.statusSefaz})` : ''}</span>
+                    </div>
+                  )
+                })()}
 
                 <div className="verNotaGrid" style={{ marginTop: 12 }}>
                   {nfeDetails.number && <div className="verNotaInfo"><small>Número NF-e</small><b>{nfeDetails.number}</b></div>}
