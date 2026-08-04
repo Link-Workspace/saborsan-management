@@ -268,7 +268,7 @@ const statusClass = (status) => {
   if (s.includes('recebido') || s.includes('aguardando') || s.includes('preparo')) return 'warning'
   if (s.includes('separação') || s.includes('rota') || s.includes('carregando')) return 'info'
   if (s.includes('entregue') || s.includes('emitida') || s.includes('ativo') || s.includes('vip') || s.includes('pronto')) return 'success'
-  if (s.includes('inativo') || s.includes('atenção') || s.includes('reativar') || s.includes('baixo')) return 'danger'
+  if (s.includes('inativo') || s.includes('atenção') || s.includes('reativar') || s.includes('baixo') || s.includes('erro') || s.includes('rejeitad')) return 'danger'
   return 'neutral'
 }
 
@@ -853,7 +853,7 @@ function Invoices({ orders, onGerarNota, onVerNota, search = '' }) {
                 <span>{o.customer}</span>
                 <strong>{money(o.value)}</strong>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <Status status="Emitida" />
+                  <Status status={o.nfeData.nfeStatus === 'AUTHORIZED' ? 'Emitida' : 'Erro'} />
                   <button onClick={() => onVerNota(o)}>Ver nota</button>
                 </div>
               </div>
@@ -4597,11 +4597,12 @@ function NotaFiscalModal({ order, onClose, updateOrderStatus, notify }) {
         if (data.status === 'AUTHORIZED') {
           setNfeResult(data)
           setStep('autorizada')
-          updateOrderStatus(order.id, 'Rota', { nfeData: { ...data, reference: ref } })
+          updateOrderStatus(order.id, 'Rota', { nfeData: { ...data, reference: ref, nfeStatus: 'AUTHORIZED' } })
           notify(`NF-e ${data.number ? `nº ${data.number} ` : ''}autorizada para ${order.customer}.`)
         } else if (data.status === 'REJECTED' || data.status === 'SUBMISSION_FAILED') {
           setNfeError(data)
           setStep('rejeitada')
+          updateOrderStatus(order.id, 'Pronto')
         } else {
           startPolling(ref, attempt + 1)
         }
@@ -4634,7 +4635,7 @@ function NotaFiscalModal({ order, onClose, updateOrderStatus, notify }) {
       if (data.status === 'AUTHORIZED') {
         setNfeResult(data)
         setStep('autorizada')
-        updateOrderStatus(order.id, 'Rota', { nfeData: data })
+        updateOrderStatus(order.id, 'Rota', { nfeData: { ...data, nfeStatus: 'AUTHORIZED' } })
         notify(`NF-e ${data.number ? `nº ${data.number} ` : ''}autorizada para ${order.customer}.`)
         return
       }
@@ -4993,7 +4994,7 @@ function VerNotaModal({ order, onClose, onSendToClient }) {
             <p>{order.customer} • {order.city}</p>
           </div>
           <div className="verNotaHeaderBadges">
-            <Status status="Nota emitida" />
+            <Status status={nfe?.nfeStatus === 'AUTHORIZED' ? 'Nota emitida' : 'Erro na nota'} />
             {nfe?.number && <small className="verNotaNum">NF-e nº {nfe.number}</small>}
           </div>
         </div>

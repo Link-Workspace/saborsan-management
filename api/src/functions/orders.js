@@ -52,9 +52,9 @@ app.http('orders', {
             ORDER BY id ASC
           `,
           sql.query`
-            SELECT orderId, focusReference, nfeNumber, nfeSeries, accessKey, protocol, authorizedAt, sentToClientAt
+            SELECT orderId, focusReference, nfeNumber, nfeSeries, accessKey, protocol, authorizedAt, sentToClientAt, status, errorCode, errorMessage
             FROM GestaoFiscalDocuments
-            WHERE status = 'AUTHORIZED'
+            WHERE status IN ('AUTHORIZED', 'REJECTED', 'SUBMISSION_FAILED')
           `.catch(() => ({ recordset: [] })),
         ]);
 
@@ -68,6 +68,9 @@ app.http('orders', {
             protocol: doc.protocol,
             authorizedAt: doc.authorizedAt ? doc.authorizedAt.toISOString() : null,
             sentToClientAt: doc.sentToClientAt ? doc.sentToClientAt.toISOString() : null,
+            nfeStatus: doc.status,
+            errorCode: doc.errorCode || null,
+            errorMessage: doc.errorMessage || null,
           };
         }
 

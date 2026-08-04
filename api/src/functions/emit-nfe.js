@@ -543,6 +543,11 @@ app.http('emit-nfe', {
                   updatedAt    = GETUTCDATE()
               WHERE focusReference = ${ref}
             `;
+            await sql.query`
+              UPDATE GestaoOrders
+              SET status = 'Pronto', updatedAt = GETUTCDATE()
+              WHERE id = ${doc.orderId}
+            `;
             return {
               jsonBody: {
                 status: 'REJECTED',
@@ -667,7 +672,7 @@ app.http('emit-nfe', {
           );
 
           const mapped = mapFocusStatus(focusRes.data);
-          const nextStatus = focusRes.httpStatus === 201 ? 'AUTHORIZED' : 'PROCESSING';
+          const nextStatus = mapped.status === 'AUTHORIZED' ? 'AUTHORIZED' : 'PROCESSING';
 
           await sql.query`
             UPDATE GestaoFiscalDocuments
