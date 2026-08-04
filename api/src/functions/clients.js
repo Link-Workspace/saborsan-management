@@ -11,66 +11,76 @@ const sqlConfig = {
   options: { encrypt: true, trustServerCertificate: false },
 };
 
+// Dedicated pool so sql.close() from other functions doesn't affect this module
+let _pool = null;
+async function getPool() {
+  if (!_pool || !_pool.connected) {
+    _pool = await new sql.ConnectionPool(sqlConfig).connect();
+  }
+  return _pool;
+}
+
 let _columnsEnsured = false;
 async function ensureClientColumns() {
   if (_columnsEnsured) return;
-  await sql.query`
+  const pool = await getPool();
+  await pool.request().query`
     IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Clients') AND name = 'cnpj')
       ALTER TABLE Clients ADD cnpj NVARCHAR(20) NULL
   `;
-  await sql.query`
+  await pool.request().query`
     IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Clients') AND name = 'city')
       ALTER TABLE Clients ADD city NVARCHAR(100) NULL
   `;
-  await sql.query`
+  await pool.request().query`
     IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Clients') AND name = 'cnpjNormalized')
       ALTER TABLE Clients ADD cnpjNormalized NVARCHAR(14) NULL
   `;
-  await sql.query`
+  await pool.request().query`
     IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Clients') AND name = 'stateRegistration')
       ALTER TABLE Clients ADD stateRegistration NVARCHAR(30) NULL
   `;
-  await sql.query`
+  await pool.request().query`
     IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Clients') AND name = 'stateRegistrationIndicator')
       ALTER TABLE Clients ADD stateRegistrationIndicator TINYINT NULL
   `;
-  await sql.query`
+  await pool.request().query`
     IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Clients') AND name = 'stateRegistrationUF')
       ALTER TABLE Clients ADD stateRegistrationUF NVARCHAR(2) NULL
   `;
-  await sql.query`
+  await pool.request().query`
     IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Clients') AND name = 'stateRegistrationStatus')
       ALTER TABLE Clients ADD stateRegistrationStatus NVARCHAR(50) NULL
   `;
-  await sql.query`
+  await pool.request().query`
     IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Clients') AND name = 'lastFiscalLookupAt')
       ALTER TABLE Clients ADD lastFiscalLookupAt DATETIME2 NULL
   `;
-  await sql.query`
+  await pool.request().query`
     IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Clients') AND name = 'lastFiscalLookupSuccessAt')
       ALTER TABLE Clients ADD lastFiscalLookupSuccessAt DATETIME2 NULL
   `;
-  await sql.query`
+  await pool.request().query`
     IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Clients') AND name = 'nextFiscalLookupAt')
       ALTER TABLE Clients ADD nextFiscalLookupAt DATETIME2 NULL
   `;
-  await sql.query`
+  await pool.request().query`
     IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Clients') AND name = 'fiscalLookupSource')
       ALTER TABLE Clients ADD fiscalLookupSource NVARCHAR(50) NULL
   `;
-  await sql.query`
+  await pool.request().query`
     IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Clients') AND name = 'lastFiscalLookupError')
       ALTER TABLE Clients ADD lastFiscalLookupError NVARCHAR(500) NULL
   `;
-  await sql.query`
+  await pool.request().query`
     IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Clients') AND name = 'requiresFiscalReview')
       ALTER TABLE Clients ADD requiresFiscalReview BIT NOT NULL DEFAULT 0
   `;
-  await sql.query`
+  await pool.request().query`
     IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Clients') AND name = 'fiscalLookupResponseJson')
       ALTER TABLE Clients ADD fiscalLookupResponseJson NVARCHAR(MAX) NULL
   `;
-  await sql.query`
+  await pool.request().query`
     IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Clients') AND name = 'purchasePurpose')
       ALTER TABLE Clients ADD purchasePurpose NVARCHAR(20) NULL
   `;
@@ -82,12 +92,12 @@ app.http('clients', {
   authLevel: 'anonymous',
   handler: async (request, context) => {
     try {
-      await sql.connect(sqlConfig);
+      const pool = await getPool();
       try { await ensureClientColumns(); } catch (_) {}
 
       // ─── GET ────────────────────────────────────────────────────────────────
       if (request.method === 'GET') {
-        const result = await sql.query`
+        const result = await pool.request().query`
           SELECT
             c.id,
             c.establishmentName,
@@ -187,7 +197,7 @@ app.http('clients', {
             return { status: 400, jsonBody: { error: 'Senha deve ter no mínimo 6 caracteres para acesso ao app.' } };
           }
 
-          const existing = await sql.query`
+          const existing = await pool.request().query`
             SELECT id FROM Users WHERE email = ${email.trim().toLowerCase()}
           `;
           if (existing.recordset.length > 0) {
@@ -195,7 +205,7 @@ app.http('clients', {
           }
 
           const passwordHash = await bcrypt.hash(password, 10);
-          const userResult = await sql.query`
+          const userResult = await pool.request().query`
             INSERT INTO Users (
               email, passwordHash, name, whatsapp, isCompany, cnpj,
               role, createdAt, address, establishmentName, invoicePreference, city
@@ -221,7 +231,7 @@ app.http('clients', {
 
         // Insert into Clients
         // cityId defaults to 1 (generic city) when not provided — required by schema
-        const clientResult = await sql.query`
+        const clientResult = await pool.request().query`
           INSERT INTO Clients (
             cityId, establishmentName, segment, priority, priorityReason,
             tag, clientName, address, contactNumber, invoicePreference, bestDay, cnpj, city, purchasePurpose
@@ -269,7 +279,7 @@ app.http('clients', {
               contactNumber: contactNumber || '',
               invoicePreference: invoicePreference || '',
               purchasePurpose: purchasePurpose || 'consumo',
-              email: email?.trim().toLowerCase() || '',,
+              email: email?.trim().toLowerCase() || '',
               cnpj: cnpj || '',
               city: city || '',
               indicadorIE: null,
@@ -295,7 +305,7 @@ app.http('clients', {
           return { status: 400, jsonBody: { error: 'ID do cliente é obrigatório.' } };
         }
 
-        await sql.query`
+        await pool.request().query`
           UPDATE Clients SET
             establishmentName = ${establishmentName || null},
             segment           = ${segment || null},
@@ -314,7 +324,7 @@ app.http('clients', {
         `;
 
         if (userId) {
-          await sql.query`
+          await pool.request().query`
             UPDATE Users SET
               name              = ${clientName || null},
               whatsapp          = ${contactNumber || null},
@@ -328,7 +338,7 @@ app.http('clients', {
         }
 
         // Propaga CNPJ, cidade e telefone para todos os pedidos deste cliente
-        await sql.query`
+        await pool.request().query`
           UPDATE GestaoOrders
           SET clientCnpj  = ${cnpj || null},
               clientCity  = ${city || null},
@@ -349,11 +359,11 @@ app.http('clients', {
           return { status: 400, jsonBody: { error: 'ID do cliente é obrigatório.' } };
         }
 
-        await sql.query`DELETE FROM Clients WHERE id = ${id}`;
+        await pool.request().query`DELETE FROM Clients WHERE id = ${id}`;
 
         // Remove linked User only when no other Clients share the same establishment
         if (userId) {
-          const remaining = await sql.query`
+          const remaining = await pool.request().query`
             SELECT c.id
             FROM Clients c
             INNER JOIN Users u
@@ -362,7 +372,7 @@ app.http('clients', {
             WHERE u.id = ${userId}
           `;
           if (remaining.recordset.length === 0) {
-            await sql.query`DELETE FROM Users WHERE id = ${userId} AND role = 'client'`;
+            await pool.request().query`DELETE FROM Users WHERE id = ${userId} AND role = 'client'`;
           }
         }
 
