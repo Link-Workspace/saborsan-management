@@ -11,12 +11,28 @@ const sqlConfig = {
   options: { encrypt: true, trustServerCertificate: false },
 };
 
+let _columnsEnsured = false;
+async function ensureClientColumns() {
+  if (_columnsEnsured) return;
+  // Migração não-destrutiva — executa apenas no primeiro cold start
+  await sql.query`
+    IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Clients') AND name = 'cnpj')
+      ALTER TABLE Clients ADD cnpj NVARCHAR(20) NULL
+  `;
+  await sql.query`
+    IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Clients') AND name = 'city')
+      ALTER TABLE Clients ADD city NVARCHAR(100) NULL
+  `;
+  _columnsEnsured = true;
+}
+
 app.http('clients', {
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
   authLevel: 'anonymous',
   handler: async (request, context) => {
     try {
       await sql.connect(sqlConfig);
+      try { await ensureClientColumns(); } catch (_) {}
 
       // ─── GET ────────────────────────────────────────────────────────────────
       if (request.method === 'GET') {
@@ -37,12 +53,14 @@ app.http('clients', {
             c.clientName,
             c.address          AS clientAddress,
             c.contactNumber,
+            c.cnpj             AS clientCnpj,
+            c.city             AS clientCity,
             c.invoicePreference AS clientInvoicePreference,
             u.id               AS userId,
             u.email,
             u.whatsapp,
-            u.cnpj,
-            u.city,
+            u.cnpj             AS userCnpj,
+            u.city             AS userCity,
             u.name             AS userName,
             u.address          AS userAddress,
             u.invoicePreference AS userInvoicePreference
@@ -72,8 +90,8 @@ app.http('clients', {
           contactNumber: c.contactNumber || c.whatsapp || '',
           invoicePreference: c.clientInvoicePreference || c.userInvoicePreference || '',
           email: c.email || '',
-          cnpj: c.cnpj || '',
-          city: c.city || '',
+          cnpj: c.clientCnpj || c.userCnpj || '',
+          city: c.clientCity || c.userCity || '',
         }));
 
         return { jsonBody: { clients } };
@@ -141,7 +159,7 @@ app.http('clients', {
         const clientResult = await sql.query`
           INSERT INTO Clients (
             cityId, establishmentName, segment, priority, priorityReason,
-            tag, clientName, address, contactNumber, invoicePreference, bestDay
+            tag, clientName, address, contactNumber, invoicePreference, bestDay, cnpj, city
           )
           OUTPUT INSERTED.id
           VALUES (
@@ -155,7 +173,9 @@ app.http('clients', {
             ${address || null},
             ${contactNumber || null},
             ${invoicePreference || null},
-            ${bestDay || null}
+            ${bestDay || null},
+            ${cnpj || null},
+            ${city || null}
           )
         `;
 
@@ -216,7 +236,9 @@ app.http('clients', {
             address           = ${address || null},
             contactNumber     = ${contactNumber || null},
             invoicePreference = ${invoicePreference || null},
-            bestDay           = ${bestDay || null}
+            bestDay           = ${bestDay || null},
+            cnpj              = ${cnpj || null},
+            city              = ${city || null}
           WHERE id = ${id}
         `;
 
@@ -233,6 +255,16 @@ app.http('clients', {
             WHERE id = ${userId}
           `;
         }
+
+        // Propaga CNPJ, cidade e telefone para todos os pedidos deste cliente
+        await sql.query`
+          UPDATE GestaoOrders
+          SET clientCnpj  = ${cnpj || null},
+              clientCity  = ${city || null},
+              clientPhone = ${contactNumber || null},
+              updatedAt   = GETUTCDATE()
+          WHERE clientName = ${establishmentName || null}
+        `;
 
         return { jsonBody: { success: true } };
       }

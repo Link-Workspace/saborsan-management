@@ -399,6 +399,66 @@ app.http('emit-nfe', {
         };
       }
 
+      // ── Full NF-e details from Focus NFe ─────────────────────────────────
+      if (request.method === 'GET' && ref && url.searchParams.get('details') === '1') {
+        try {
+          const focusRes = await focusRequest(`/v2/nfe/${encodeURIComponent(ref)}?completa=1`);
+          const d = focusRes.data;
+          const rawItems = d.items || d.itens || [];
+          const items = rawItems.map((i) => ({
+            number: i.numero_item,
+            code: i.codigo_produto,
+            description: i.descricao,
+            ncm: i.codigo_ncm,
+            cfop: i.cfop,
+            unit: i.unidade_comercial || i.unidade_tributavel,
+            quantity: Number(i.quantidade_comercial ?? i.quantidade_tributavel ?? 0),
+            unitPrice: Number(i.valor_unitario_comercial ?? i.valor_unitario_tributavel ?? 0),
+            total: Number(i.valor_bruto ?? 0),
+          }));
+
+          return {
+            jsonBody: {
+              reference: ref,
+              number: d.numero,
+              series: d.serie,
+              accessKey: d.chave_nfe || d.chave || d.chave_acesso,
+              protocol: d.protocolo || d.numero_protocolo,
+              statusSefaz: d.status_sefaz,
+              messageSefaz: d.mensagem_sefaz || d.mensagem,
+              issuedAt: d.data_emissao,
+              natureza: d.natureza_operacao,
+              emitter: {
+                cnpj: d.cnpj_emitente,
+                name: d.nome_emitente,
+              },
+              recipient: {
+                name: d.nome_destinatario,
+                cnpj: d.cnpj_destinatario,
+                city: d.municipio_destinatario,
+                state: d.uf_destinatario,
+              },
+              totals: {
+                products: Number(d.valor_produtos ?? 0),
+                total: Number(d.valor_total ?? 0),
+                icms: Number(d.valor_icms ?? 0),
+                pis: Number(d.valor_pis ?? 0),
+                cofins: Number(d.valor_cofins ?? 0),
+                freight: Number(d.valor_frete ?? 0),
+                discount: Number(d.valor_desconto ?? 0),
+              },
+              items,
+            },
+          };
+        } catch (err) {
+          if (err.configError) {
+            return { status: 503, jsonBody: { error: err.message, configError: true } };
+          }
+          context.error('Erro ao buscar detalhes NF-e:', err);
+          return { status: 502, jsonBody: { error: 'Falha ao buscar detalhes na Focus NFe' } };
+        }
+      }
+
       // ── Query NF-e status ────────────────────────────────────────────────
       if (request.method === 'GET' && ref) {
         const docResult = await sql.query`

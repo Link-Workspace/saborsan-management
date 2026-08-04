@@ -48,6 +48,10 @@ import {
   LayoutGrid,
   List,
   ChevronDown,
+  ArrowLeft,
+  Loader2,
+  Package,
+  Info,
 } from 'lucide-react'
 import './styles.css'
 
@@ -628,7 +632,7 @@ function App() {
           onClose={() => { setNewClientOpen(false); setEditClient(null) }}
           onCreated={(c) => { setClientsState((prev) => [c, ...prev]); notify(`Cliente ${c.establishmentName} cadastrado com sucesso!`) }}
           editClient={editClient}
-          onUpdated={(c) => { setClientsState((prev) => prev.map((x) => x.id === c.id ? c : x)); setSelectedClient(c); notify(`Cliente ${c.establishmentName} atualizado com sucesso!`) }}
+          onUpdated={(c) => { setClientsState((prev) => prev.map((x) => x.id === c.id ? c : x)); setSelectedClient(c); fetchOrders(); notify(`Cliente ${c.establishmentName} atualizado com sucesso!`) }}
         />
       )}
       {selectedClient && (
@@ -4926,6 +4930,11 @@ function VerNotaModal({ order, onClose, onSendToClient }) {
   const nfe = order.nfeData
   const hasSent = !!order.nfeSentAt
 
+  const [showDetails, setShowDetails] = useState(false)
+  const [nfeDetails, setNfeDetails] = useState(null)
+  const [detailsLoading, setDetailsLoading] = useState(false)
+  const [detailsError, setDetailsError] = useState(null)
+
   const downloadFile = async (type) => {
     if (!nfe?.reference) return
     try {
@@ -4945,15 +4954,33 @@ function VerNotaModal({ order, onClose, onSendToClient }) {
     }
   }
 
-  const openNfe = () => {
-    if (nfe?.accessKey) {
-      window.open(`https://www.nfe.fazenda.gov.br/portal/consultaRecaptcha.aspx?tipoConsulta=completa&tipoConteudo=7PhJ%2BgAVw2g%3D&nfe=${nfe.accessKey}`, '_blank')
+  const openNfeDetails = async () => {
+    if (!nfe?.reference) return
+    setShowDetails(true)
+    if (nfeDetails) return // already loaded
+    setDetailsLoading(true)
+    setDetailsError(null)
+    try {
+      const res = await fetch(`${API_URL}/api/emit-nfe?ref=${encodeURIComponent(nfe.reference)}&details=1`)
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Erro ao buscar detalhes')
+      setNfeDetails(data)
+    } catch (err) {
+      setDetailsError(err.message || 'Falha ao carregar detalhes da nota')
+    } finally {
+      setDetailsLoading(false)
     }
   }
 
   const sentLabel = order.nfeSentAt
     ? `Enviado em ${new Date(order.nfeSentAt).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })} às ${new Date(order.nfeSentAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`
     : 'Ainda não enviado'
+
+  const fmtDate = (iso) => {
+    if (!iso) return null
+    try { return new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) }
+    catch { return iso }
+  }
 
   return (
     <div className="modalBackdrop">
@@ -4971,7 +4998,99 @@ function VerNotaModal({ order, onClose, onSendToClient }) {
           </div>
         </div>
 
-        {nfe ? (
+        {showDetails ? (
+          <div className="verNotaDetailsWrapper">
+            <button className="verNotaDetailsBack" onClick={() => setShowDetails(false)}>
+              <ArrowLeft size={15} /> Voltar
+            </button>
+
+            {detailsLoading && (
+              <div className="verNotaDetailsLoading">
+                <Loader2 size={28} className="verNotaDetailsSpinner" />
+                <span>Consultando Focus NFe...</span>
+              </div>
+            )}
+
+            {detailsError && (
+              <div className="verNotaDetailsError">
+                <AlertTriangle size={18} />
+                <span>{detailsError}</span>
+              </div>
+            )}
+
+            {nfeDetails && !detailsLoading && (
+              <>
+                {nfeDetails.messageSefaz && (
+                  <div className="verNotaDetailsBanner">
+                    <CheckCircle2 size={15} />
+                    <span>{nfeDetails.messageSefaz}{nfeDetails.statusSefaz ? ` (${nfeDetails.statusSefaz})` : ''}</span>
+                  </div>
+                )}
+
+                <div className="verNotaGrid" style={{ marginTop: 12 }}>
+                  {nfeDetails.number && <div className="verNotaInfo"><small>Número NF-e</small><b>{nfeDetails.number}</b></div>}
+                  {nfeDetails.series && <div className="verNotaInfo"><small>Série</small><b>{nfeDetails.series}</b></div>}
+                  {nfeDetails.protocol && <div className="verNotaInfo"><small>Protocolo SEFAZ</small><b>{nfeDetails.protocol}</b></div>}
+                  {nfeDetails.issuedAt && <div className="verNotaInfo"><small>Emissão</small><b>{fmtDate(nfeDetails.issuedAt)}</b></div>}
+                  {nfeDetails.natureza && <div className="verNotaInfo verNotaSpan"><small>Natureza da operação</small><b>{nfeDetails.natureza}</b></div>}
+                  {nfeDetails.accessKey && <div className="verNotaInfo verNotaSpan"><small>Chave de acesso</small><b className="mono">{nfeDetails.accessKey}</b></div>}
+                </div>
+
+                {nfeDetails.recipient?.name && (
+                  <div className="verNotaDetailsSection">
+                    <div className="verNotaDetailsSectionTitle"><Users size={13} /> Destinatário</div>
+                    <div className="verNotaGrid" style={{ marginTop: 8 }}>
+                      <div className="verNotaInfo verNotaSpan"><small>Razão Social</small><b>{nfeDetails.recipient.name}</b></div>
+                      {nfeDetails.recipient.cnpj && <div className="verNotaInfo"><small>CNPJ</small><b>{nfeDetails.recipient.cnpj}</b></div>}
+                      {(nfeDetails.recipient.city || nfeDetails.recipient.state) && (
+                        <div className="verNotaInfo"><small>Município/UF</small><b>{[nfeDetails.recipient.city, nfeDetails.recipient.state].filter(Boolean).join(' - ')}</b></div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {nfeDetails.items?.length > 0 && (
+                  <div className="verNotaDetailsSection">
+                    <div className="verNotaDetailsSectionTitle"><Package size={13} /> Produtos ({nfeDetails.items.length})</div>
+                    <div className="verNotaDetailsTable">
+                      <div className="verNotaDetailsTableHead">
+                        <span>Descrição</span>
+                        <span>NCM</span>
+                        <span>CFOP</span>
+                        <span>Qtd</span>
+                        <span>Total</span>
+                      </div>
+                      {nfeDetails.items.map((item, i) => (
+                        <div className="verNotaDetailsTableRow" key={i}>
+                          <span>{item.description}</span>
+                          <span>{item.ncm}</span>
+                          <span>{item.cfop}</span>
+                          <span>{item.quantity} {item.unit}</span>
+                          <span>{money(item.total)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {nfeDetails.totals && (
+                  <div className="verNotaDetailsSection">
+                    <div className="verNotaDetailsSectionTitle"><Info size={13} /> Totais</div>
+                    <div className="verNotaDetailsTotals">
+                      {nfeDetails.totals.products > 0 && <div><span>Valor dos produtos</span><b>{money(nfeDetails.totals.products)}</b></div>}
+                      {nfeDetails.totals.icms > 0 && <div><span>ICMS</span><b>{money(nfeDetails.totals.icms)}</b></div>}
+                      {nfeDetails.totals.pis > 0 && <div><span>PIS</span><b>{money(nfeDetails.totals.pis)}</b></div>}
+                      {nfeDetails.totals.cofins > 0 && <div><span>COFINS</span><b>{money(nfeDetails.totals.cofins)}</b></div>}
+                      {nfeDetails.totals.freight > 0 && <div><span>Frete</span><b>{money(nfeDetails.totals.freight)}</b></div>}
+                      {nfeDetails.totals.discount > 0 && <div><span>Desconto</span><b>-{money(nfeDetails.totals.discount)}</b></div>}
+                      {nfeDetails.totals.total > 0 && <div className="verNotaDetailsTotalFinal"><span>Valor total NF-e</span><b>{money(nfeDetails.totals.total)}</b></div>}
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        ) : nfe ? (
           <>
             <div className="verNotaGrid">
               {nfe.number && <div className="verNotaInfo"><small>Número</small><b>{nfe.number}</b></div>}
@@ -4981,9 +5100,9 @@ function VerNotaModal({ order, onClose, onSendToClient }) {
             </div>
 
             <div className="verNotaActions">
-              <button className="verNotaActionBtn" onClick={openNfe} disabled={!nfe.accessKey}>
-                <div className="verNotaActionIcon"><ExternalLink size={20} /></div>
-                <div className="verNotaActionText"><b>Ver NF-e</b><span>Consultar na SEFAZ</span></div>
+              <button className="verNotaActionBtn" onClick={openNfeDetails} disabled={!nfe.reference}>
+                <div className="verNotaActionIcon"><FileText size={20} /></div>
+                <div className="verNotaActionText"><b>Ver NF-e</b><span>Detalhes completos via Focus NFe</span></div>
                 <ChevronRight size={15} />
               </button>
 
