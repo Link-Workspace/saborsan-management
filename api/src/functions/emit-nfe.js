@@ -1,6 +1,18 @@
 'use strict';
 const { app } = require('@azure/functions');
 const sql = require('mssql');
+const { initializeApp: initFirebase, cert, getApps } = require('firebase-admin/app');
+const { getMessaging } = require('firebase-admin/messaging');
+
+if (!getApps().length) {
+  initFirebase({
+    credential: cert({
+      projectId: process.env.FIREBASE_PROJECT_ID,
+      clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+      privateKey: (process.env.FIREBASE_PRIVATE_KEY || '').replace(/\\n/g, '\n'),
+    }),
+  });
+}
 
 const sqlConfig = {
   server: process.env.SQL_SERVER,
@@ -9,6 +21,55 @@ const sqlConfig = {
   password: process.env.SQL_PASSWORD,
   options: { encrypt: true, trustServerCertificate: false },
 };
+
+// ── FCM: notifica entregador quando NF-e é autorizada ────────────────────────
+
+async function notifyDriverNfeAuthorized(orderId) {
+  try {
+    const deliveryResult = await sql.query`
+      SELECT d.seller_id, d.code AS deliveryCode
+      FROM Deliveries d
+      INNER JOIN DeliveryOrders dord ON dord.delivery_id = d.id
+      WHERE dord.order_id = ${orderId}
+        AND d.status NOT IN (N'Cancelada', N'Concluída')
+    `;
+    if (!deliveryResult.recordset.length) return;
+    const { seller_id: sellerId, deliveryCode } = deliveryResult.recordset[0];
+
+    const sellerResult = await sql.query`SELECT userId FROM Sellers WHERE id = ${sellerId}`;
+    if (!sellerResult.recordset.length) return;
+    const { userId } = sellerResult.recordset[0];
+
+    const orderResult = await sql.query`SELECT clientName FROM GestaoOrders WHERE id = ${orderId}`;
+    const clientName = orderResult.recordset[0]?.clientName || 'cliente';
+
+    const tokensResult = await sql.query`SELECT token FROM PushTokens WHERE userId = ${userId}`;
+    const tokens = tokensResult.recordset.map((r) => r.token).filter(Boolean);
+    if (!tokens.length) return;
+
+    const messaging = getMessaging();
+    const msgTitle = `Nota fiscal do pedido ${orderId} emitida`;
+    const msgBody = `A NF-e de ${clientName} (entrega ${deliveryCode}) foi autorizada. Confirme para colocar em rota.`;
+
+    for (const token of tokens) {
+      try {
+        await messaging.send({
+          token,
+          notification: { title: msgTitle, body: msgBody },
+          data: { type: 'nfe_authorized', orderId: String(orderId), deliveryCode: String(deliveryCode) },
+          android: { priority: 'high' },
+          apns: { payload: { aps: { sound: 'default' } } },
+        });
+      } catch (err) {
+        if (err.code === 'messaging/invalid-registration-token' || err.code === 'messaging/registration-token-not-registered') {
+          await sql.query`DELETE FROM PushTokens WHERE token = ${token}`;
+        }
+      }
+    }
+  } catch {
+    // Não quebrar o fluxo principal de emissão da NF-e
+  }
+}
 
 // ── Focus NFe helpers ─────────────────────────────────────────────────────────
 
@@ -399,6 +460,7 @@ app.http('emit-nfe', {
               SET status = 'Nota emitida', updatedAt = GETUTCDATE()
               WHERE id = ${doc.orderId}
             `;
+            await notifyDriverNfeAuthorized(doc.orderId);
             return {
               jsonBody: {
                 status: 'AUTHORIZED',
@@ -573,6 +635,7 @@ app.http('emit-nfe', {
               SET status = 'Nota emitida', updatedAt = GETUTCDATE()
               WHERE id = ${orderId}
             `;
+            await notifyDriverNfeAuthorized(orderId);
             return {
               jsonBody: {
                 status: 'AUTHORIZED',
