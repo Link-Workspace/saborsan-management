@@ -4544,6 +4544,7 @@ const STEPS = ['previa', 'validacao', 'enviando', 'autorizada', 'cliente']
 
 function NotaFiscalModal({ order, onClose, updateOrderStatus, notify }) {
   const [step, setStep] = useState('previa')
+  const [purchasePurpose, setPurchasePurpose] = useState(order.purchasePurpose || 'consumo')
   // 0=preparando 1=enviando para Focus 2=recebido pela Focus 3=aguardando SEFAZ
   const [enviandoPhase, setEnviandoPhase] = useState(0)
   const [nfeResult, setNfeResult] = useState(null)   // { status, reference, number, series, accessKey, protocol }
@@ -4577,6 +4578,7 @@ function NotaFiscalModal({ order, onClose, updateOrderStatus, notify }) {
     { label: `Cidade/UF: ${hasCity ? order.city : 'Não informada'}`, ok: hasCity, required: true },
     { label: `${order.products.length} produto(s) no pedido`, ok: order.products.length > 0, required: true },
     { label: 'Quantidades e preços válidos', ok: allPricesOk, required: true },
+    { label: `Finalidade: ${purchasePurpose === 'consumo' ? 'Consumo próprio' : 'Revenda / industrialização'}`, ok: true, required: false },
     { label: 'NCM disponível para todos os produtos', ok: allNcmMapped, required: false },
   ]
   const canSubmit = validationItems.filter((v) => !v.ok && v.required).length === 0
@@ -4626,7 +4628,7 @@ function NotaFiscalModal({ order, onClose, updateOrderStatus, notify }) {
       const res = await fetch(`${API_URL}/api/emit-nfe`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ orderId: order.id }),
+        body: JSON.stringify({ orderId: order.id, purchasePurpose }),
       })
       const data = await res.json()
       if (!mountedRef.current) return
@@ -4741,6 +4743,21 @@ function NotaFiscalModal({ order, onClose, updateOrderStatus, notify }) {
                 <p className="nfLabel">Pedido de origem</p>
                 <b>{order.id}</b>
                 <small>{order.delivery}</small>
+              </div>
+            </div>
+            <div className="nfFinalidade">
+              <p className="nfLabel">Finalidade da compra</p>
+              <div className="nfFinalidadeOpts">
+                <label className={`nfFinalidadeOpt${purchasePurpose === 'consumo' ? ' selected' : ''}`}>
+                  <input type="radio" name="finalidade" value="consumo" checked={purchasePurpose === 'consumo'} onChange={() => setPurchasePurpose('consumo')} />
+                  <span>Consumo próprio</span>
+                  <small>Uso interno, sem revenda</small>
+                </label>
+                <label className={`nfFinalidadeOpt${purchasePurpose === 'revenda' ? ' selected' : ''}`}>
+                  <input type="radio" name="finalidade" value="revenda" checked={purchasePurpose === 'revenda'} onChange={() => setPurchasePurpose('revenda')} />
+                  <span>Revenda / Industrialização</span>
+                  <small>Requer Inscrição Estadual</small>
+                </label>
               </div>
             </div>
             <div className="nfTable">

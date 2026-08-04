@@ -14,7 +14,6 @@ const sqlConfig = {
 let _columnsEnsured = false;
 async function ensureClientColumns() {
   if (_columnsEnsured) return;
-  // Migração não-destrutiva — executa apenas no primeiro cold start
   await sql.query`
     IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Clients') AND name = 'cnpj')
       ALTER TABLE Clients ADD cnpj NVARCHAR(20) NULL
@@ -22,6 +21,58 @@ async function ensureClientColumns() {
   await sql.query`
     IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Clients') AND name = 'city')
       ALTER TABLE Clients ADD city NVARCHAR(100) NULL
+  `;
+  await sql.query`
+    IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Clients') AND name = 'cnpjNormalized')
+      ALTER TABLE Clients ADD cnpjNormalized NVARCHAR(14) NULL
+  `;
+  await sql.query`
+    IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Clients') AND name = 'stateRegistration')
+      ALTER TABLE Clients ADD stateRegistration NVARCHAR(30) NULL
+  `;
+  await sql.query`
+    IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Clients') AND name = 'stateRegistrationIndicator')
+      ALTER TABLE Clients ADD stateRegistrationIndicator TINYINT NULL
+  `;
+  await sql.query`
+    IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Clients') AND name = 'stateRegistrationUF')
+      ALTER TABLE Clients ADD stateRegistrationUF NVARCHAR(2) NULL
+  `;
+  await sql.query`
+    IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Clients') AND name = 'stateRegistrationStatus')
+      ALTER TABLE Clients ADD stateRegistrationStatus NVARCHAR(50) NULL
+  `;
+  await sql.query`
+    IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Clients') AND name = 'lastFiscalLookupAt')
+      ALTER TABLE Clients ADD lastFiscalLookupAt DATETIME2 NULL
+  `;
+  await sql.query`
+    IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Clients') AND name = 'lastFiscalLookupSuccessAt')
+      ALTER TABLE Clients ADD lastFiscalLookupSuccessAt DATETIME2 NULL
+  `;
+  await sql.query`
+    IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Clients') AND name = 'nextFiscalLookupAt')
+      ALTER TABLE Clients ADD nextFiscalLookupAt DATETIME2 NULL
+  `;
+  await sql.query`
+    IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Clients') AND name = 'fiscalLookupSource')
+      ALTER TABLE Clients ADD fiscalLookupSource NVARCHAR(50) NULL
+  `;
+  await sql.query`
+    IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Clients') AND name = 'lastFiscalLookupError')
+      ALTER TABLE Clients ADD lastFiscalLookupError NVARCHAR(500) NULL
+  `;
+  await sql.query`
+    IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Clients') AND name = 'requiresFiscalReview')
+      ALTER TABLE Clients ADD requiresFiscalReview BIT NOT NULL DEFAULT 0
+  `;
+  await sql.query`
+    IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Clients') AND name = 'fiscalLookupResponseJson')
+      ALTER TABLE Clients ADD fiscalLookupResponseJson NVARCHAR(MAX) NULL
+  `;
+  await sql.query`
+    IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Clients') AND name = 'purchasePurpose')
+      ALTER TABLE Clients ADD purchasePurpose NVARCHAR(20) NULL
   `;
   _columnsEnsured = true;
 }
@@ -56,6 +107,14 @@ app.http('clients', {
             c.cnpj             AS clientCnpj,
             c.city             AS clientCity,
             c.invoicePreference AS clientInvoicePreference,
+            c.purchasePurpose   AS clientPurchasePurpose,
+            c.stateRegistrationIndicator,
+            c.stateRegistration,
+            c.stateRegistrationUF,
+            c.stateRegistrationStatus,
+            c.lastFiscalLookupAt,
+            c.nextFiscalLookupAt,
+            c.requiresFiscalReview,
             u.id               AS userId,
             u.email,
             u.whatsapp,
@@ -89,9 +148,17 @@ app.http('clients', {
           address: c.clientAddress || c.userAddress || '',
           contactNumber: c.contactNumber || c.whatsapp || '',
           invoicePreference: c.clientInvoicePreference || c.userInvoicePreference || '',
+          purchasePurpose: c.clientPurchasePurpose || 'consumo',
           email: c.email || '',
           cnpj: c.clientCnpj || c.userCnpj || '',
           city: c.clientCity || c.userCity || '',
+          stateRegistrationIndicator: c.stateRegistrationIndicator ?? null,
+          stateRegistration: c.stateRegistration || null,
+          stateRegistrationUF: c.stateRegistrationUF || null,
+          stateRegistrationStatus: c.stateRegistrationStatus || null,
+          lastFiscalLookupAt: c.lastFiscalLookupAt ? c.lastFiscalLookupAt.toISOString() : null,
+          nextFiscalLookupAt: c.nextFiscalLookupAt ? c.nextFiscalLookupAt.toISOString() : null,
+          requiresFiscalReview: !!c.requiresFiscalReview,
         }));
 
         return { jsonBody: { clients } };
@@ -104,10 +171,8 @@ app.http('clients', {
           establishmentName, clientName, email, password,
           cnpj, contactNumber, address, city,
           segment, priority, priorityReason, tag,
-          invoicePreference, bestDay,
-        } = body;
-
-        if (!establishmentName?.trim()) {
+          invoicePreference, bestDay, purchasePurpose,
+        } = body; {
           return { status: 400, jsonBody: { error: 'Nome do estabelecimento é obrigatório.' } };
         }
         if (!clientName?.trim()) {
@@ -159,7 +224,7 @@ app.http('clients', {
         const clientResult = await sql.query`
           INSERT INTO Clients (
             cityId, establishmentName, segment, priority, priorityReason,
-            tag, clientName, address, contactNumber, invoicePreference, bestDay, cnpj, city
+            tag, clientName, address, contactNumber, invoicePreference, bestDay, cnpj, city, purchasePurpose
           )
           OUTPUT INSERTED.id
           VALUES (
@@ -175,7 +240,8 @@ app.http('clients', {
             ${invoicePreference || null},
             ${bestDay || null},
             ${cnpj || null},
-            ${city || null}
+            ${city || null},
+            ${purchasePurpose || null}
           )
         `;
 
@@ -202,9 +268,13 @@ app.http('clients', {
               address: address || '',
               contactNumber: contactNumber || '',
               invoicePreference: invoicePreference || '',
-              email: email?.trim().toLowerCase() || '',
+              purchasePurpose: purchasePurpose || 'consumo',
+              email: email?.trim().toLowerCase() || '',,
               cnpj: cnpj || '',
               city: city || '',
+              indicadorIE: null,
+              inscricaoEstadual: null,
+              requerRevisaoFiscal: false,
             },
           },
         };
@@ -218,7 +288,7 @@ app.http('clients', {
           establishmentName, clientName, email,
           cnpj, contactNumber, address, city,
           segment, priority, priorityReason, tag,
-          invoicePreference, bestDay,
+          invoicePreference, bestDay, purchasePurpose,
         } = body;
 
         if (!id) {
@@ -238,7 +308,8 @@ app.http('clients', {
             invoicePreference = ${invoicePreference || null},
             bestDay           = ${bestDay || null},
             cnpj              = ${cnpj || null},
-            city              = ${city || null}
+            city              = ${city || null},
+            purchasePurpose   = ${purchasePurpose || null}
           WHERE id = ${id}
         `;
 

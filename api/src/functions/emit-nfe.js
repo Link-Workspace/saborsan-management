@@ -194,7 +194,42 @@ function round2(v) { return Number(Number(v ?? 0).toFixed(2)); }
 function round4(v) { return Number(Number(v ?? 0).toFixed(4)); }
 function digits(v) { return v ? String(v).replace(/\D/g, '') : undefined; }
 
-function buildNfePayload(order, items) {
+// ── Helpers de classificação fiscal (IE / consumidor final) ───────────────────
+
+function classificarIEFocus(numero, situacao, ufRetorno) {
+  const sit = String(situacao || '').toUpperCase().trim();
+  const num = String(numero || '').trim();
+
+  if (sit === 'ISENTA' || sit === 'ISENTO' || num.toUpperCase() === 'ISENTO') {
+    return { stateRegistrationIndicator: 2, stateRegistration: null, stateRegistrationStatus: 'ISENTA', stateRegistrationUF: ufRetorno };
+  }
+  const inativas = ['CANCELADA', 'INAPTA', 'NULA', 'BAIXADA', 'SUSPENSA'];
+  if (inativas.includes(sit) || !num) {
+    return { stateRegistrationIndicator: 9, stateRegistration: null, stateRegistrationStatus: sit || 'NOT_FOUND', stateRegistrationUF: ufRetorno };
+  }
+  return { stateRegistrationIndicator: 1, stateRegistration: num, stateRegistrationStatus: sit || 'ACTIVE', stateRegistrationUF: ufRetorno };
+}
+
+function extrairIEDaResposta(data, targetUf) {
+  const uf = String(targetUf || '').toUpperCase().trim();
+
+  if (Array.isArray(data.inscricoes_estaduais) && data.inscricoes_estaduais.length > 0) {
+    const match = uf
+      ? data.inscricoes_estaduais.find((ie) => String(ie.uf || ie.estado || '').toUpperCase().trim() === uf)
+      : null;
+    const ie = match || data.inscricoes_estaduais[0];
+    const num = String(ie.inscricao_estadual || ie.numero || ie.ie || '').trim();
+    const sit = String(ie.situacao || ie.situacao_inscricao_estadual || ie.status || '').trim();
+    return classificarIEFocus(num, sit, String(ie.uf || ie.estado || targetUf || '').toUpperCase());
+  }
+
+  const num = String(data.inscricao_estadual || data.ie || '').trim();
+  const sit = String(data.situacao_inscricao_estadual || data.situacao_ie || data.situacao || '').trim();
+  const ufRetorno = String(data.uf || data.estado || targetUf || '').toUpperCase().trim();
+  return classificarIEFocus(num, sit, ufRetorno);
+}
+
+function buildNfePayload(order, items, { stateRegistrationIndicator = 9, stateRegistration = null, purchasePurpose = 'consumo' } = {}) {
   const cityStr = String(order.clientCity || '').trim();
   const uf = cityStr.includes(' - ') ? cityStr.split(' - ').pop().trim() : 'SC';
   const city = cityStr.includes(' - ') ? cityStr.split(' - ')[0].trim() : (cityStr || 'Lages');
@@ -262,13 +297,14 @@ function buildNfePayload(order, items) {
     tipo_documento: 1,
     local_destino: 1,
     finalidade_emissao: 1,
-    consumidor_final: 0,
+    consumidor_final: (stateRegistrationIndicator === 9 || purchasePurpose === 'consumo') ? 1 : 0,
     presenca_comprador: 4,
     cnpj_emitente: digits(process.env.SABORSAN_CNPJ) || '12345678000199',
     regime_tributario_emitente: Number(process.env.SABORSAN_TAX_REGIME || 3),
     nome_destinatario: order.clientName,
     cnpj_destinatario: order.clientCnpj ? digits(order.clientCnpj) : undefined,
-    indicador_inscricao_estadual_destinatario: 9,
+    indicador_inscricao_estadual_destinatario: stateRegistrationIndicator,
+    ...(stateRegistrationIndicator === 1 && stateRegistration ? { inscricao_estadual_destinatario: stateRegistration } : {}),
     logradouro_destinatario: order.clientStreet || 'Não informado',
     numero_destinatario: order.clientNumber || 'SN',
     bairro_destinatario: order.clientDistrict || 'Centro',
@@ -593,7 +629,7 @@ app.http('emit-nfe', {
         // Load order and items
         const [orderRes, itemsRes] = await Promise.all([
           sql.query`
-            SELECT id, clientName, clientCnpj, clientCity, clientPhone, status, totalValue
+            SELECT id, clientName, clientCnpj, clientCity, clientPhone, status, totalValue, purchasePurpose
             FROM GestaoOrders WHERE id = ${orderId}
           `,
           sql.query`
@@ -616,6 +652,110 @@ app.http('emit-nfe', {
 
         if (!items.length) {
           return { status: 422, jsonBody: { error: 'Pedido sem itens cadastrados' } };
+        }
+
+        // ── Consulta e validação fiscal do destinatário ──────────────────────
+        // Prioridade: corpo da requisição > salvo no pedido > padrão 'consumo'
+        const purchasePurpose = body.purchasePurpose || order.purchasePurpose || 'consumo';
+
+        let stateRegistrationIndicator = 9;
+        let stateRegistration = null;
+
+        const cnpjNorm = digits(order.clientCnpj);
+        if (cnpjNorm && cnpjNorm.length === 14) {
+          // Busca cliente pelo CNPJ normalizado ou pelo nome
+          const clientRes = await sql.query`
+            SELECT TOP 1 id, stateRegistrationIndicator, stateRegistration,
+                         nextFiscalLookupAt, requiresFiscalReview
+            FROM Clients
+            WHERE cnpjNormalized = ${cnpjNorm}
+               OR (cnpjNormalized IS NULL AND REPLACE(REPLACE(REPLACE(REPLACE(cnpj, '.',''),'/',''),'-',''),' ','') = ${cnpjNorm})
+               OR (cnpj IS NULL AND establishmentName = ${order.clientName})
+          `;
+
+          const clientRow = clientRes.recordset[0];
+
+          if (clientRow) {
+            const precisaConsultar =
+              clientRow.stateRegistrationIndicator === null ||
+              clientRow.stateRegistrationIndicator === undefined ||
+              !clientRow.nextFiscalLookupAt ||
+              new Date(clientRow.nextFiscalLookupAt) <= new Date() ||
+              clientRow.requiresFiscalReview;
+
+            if (precisaConsultar) {
+              try {
+                const clientUf = String(order.clientCity || '').includes(' - ')
+                  ? order.clientCity.split(' - ').pop().trim()
+                  : null;
+
+                const focusRes = await focusRequest(`/v2/cnpjs/${cnpjNorm}`);
+                const ieResult = extrairIEDaResposta(focusRes.data, clientUf);
+
+                // Preserva IE anterior se a nova consulta não a encontrou
+                const perdeuIE = clientRow.stateRegistrationIndicator === 1 && clientRow.stateRegistration && ieResult.stateRegistrationIndicator !== 1;
+                const novoIndicador = perdeuIE ? clientRow.stateRegistrationIndicator : ieResult.stateRegistrationIndicator;
+                const novaIE = perdeuIE ? clientRow.stateRegistration : ieResult.stateRegistration;
+                const requerRevisao = perdeuIE ? 1 : 0;
+                const proxima = new Date(Date.now() + 15 * 24 * 60 * 60 * 1000);
+
+                await sql.query`
+                  UPDATE Clients SET
+                    cnpjNormalized                  = ${cnpjNorm},
+                    stateRegistrationIndicator      = ${novoIndicador},
+                    stateRegistration               = ${novaIE},
+                    stateRegistrationUF             = ${ieResult.stateRegistrationUF || null},
+                    stateRegistrationStatus         = ${ieResult.stateRegistrationStatus || null},
+                    lastFiscalLookupAt              = GETUTCDATE(),
+                    lastFiscalLookupSuccessAt       = GETUTCDATE(),
+                    nextFiscalLookupAt              = ${proxima},
+                    fiscalLookupSource              = 'FOCUS_NFE',
+                    lastFiscalLookupError           = NULL,
+                    requiresFiscalReview            = ${requerRevisao},
+                    fiscalLookupResponseJson        = ${JSON.stringify(focusRes.data)}
+                  WHERE id = ${clientRow.id}
+                `;
+
+                stateRegistrationIndicator = novoIndicador;
+                stateRegistration = novaIE;
+              } catch (consultaErr) {
+                // Focus indisponível: usa último dado válido se existir
+                if (clientRow.stateRegistrationIndicator !== null && clientRow.stateRegistrationIndicator !== undefined) {
+                  stateRegistrationIndicator = clientRow.stateRegistrationIndicator;
+                  stateRegistration = clientRow.stateRegistration;
+                }
+                try {
+                  const errMsg = String(consultaErr.message || 'Erro na consulta CNPJ').slice(0, 490);
+                  await sql.query`
+                    UPDATE Clients SET
+                      lastFiscalLookupAt    = GETUTCDATE(),
+                      lastFiscalLookupError = ${errMsg}
+                    WHERE id = ${clientRow.id}
+                  `;
+                } catch (_) {}
+              }
+            } else {
+              // Dados ainda válidos
+              if (clientRow.stateRegistrationIndicator !== null && clientRow.stateRegistrationIndicator !== undefined) {
+                stateRegistrationIndicator = clientRow.stateRegistrationIndicator;
+                stateRegistration = clientRow.stateRegistration;
+              }
+            }
+          }
+        }
+
+        // Bloqueia emissão quando a combinação indicador 9 + revenda geraria rejeição 696
+        if (stateRegistrationIndicator === 9 && purchasePurpose === 'revenda') {
+          return {
+            status: 422,
+            jsonBody: {
+              status: 'VALIDATION_ERROR',
+              errorMessage:
+                'O destinatário está cadastrado como não contribuinte do ICMS, mas a compra foi ' +
+                'informada como destinada à revenda ou industrialização. Confirme a finalidade da ' +
+                'compra ou verifique se o cliente possui Inscrição Estadual antes de emitir a NF-e.',
+            },
+          };
         }
 
         // Idempotency: check for existing active document
@@ -653,7 +793,7 @@ app.http('emit-nfe', {
         `;
         const docId = createRes.recordset[0].id;
         const reference = createNfeReference(docId);
-        const payload = buildNfePayload(order, items);
+        const payload = buildNfePayload(order, items, { stateRegistrationIndicator, stateRegistration, purchasePurpose });
 
         await sql.query`
           UPDATE GestaoFiscalDocuments

@@ -42,7 +42,7 @@ app.http('orders', {
         const [ordersResult, itemsResult, nfeResult] = await Promise.all([
           sql.query`
             SELECT id, source, clientName, clientCnpj, clientCity, clientPhone,
-                   status, totalValue, deliveryAt, observations, createdAt
+                   status, totalValue, deliveryAt, observations, purchasePurpose, createdAt
             FROM GestaoOrders
             ORDER BY createdAt DESC
           `,
@@ -95,6 +95,7 @@ app.http('orders', {
               price: Number(i.unitPrice || 0),
             })),
           notes: o.observations || '',
+          purchasePurpose: o.purchasePurpose || 'consumo',
           ...(nfeByOrder[o.id] ? {
             nfeData: nfeByOrder[o.id],
             nfeSentAt: nfeByOrder[o.id].sentToClientAt || null,
@@ -132,7 +133,7 @@ app.http('orders', {
 
       if (request.method === 'PUT') {
         const body = await request.json();
-        const { orderId, source, clientName, clientCnpj, clientCity, clientPhone, totalValue, observations, items } = body;
+        const { orderId, source, clientName, clientCnpj, clientCity, clientPhone, totalValue, observations, items, purchasePurpose } = body;
 
         if (!orderId || !clientName || !items || items.length === 0) {
           return { status: 400, jsonBody: { error: 'orderId, clientName e items são obrigatórios' } };
@@ -147,6 +148,7 @@ app.http('orders', {
               clientPhone = ${clientPhone || null},
               totalValue = ${totalValue || 0},
               observations = ${observations || null},
+              purchasePurpose = ${purchasePurpose || null},
               updatedAt = GETUTCDATE()
           WHERE id = ${orderId}
         `;
@@ -165,7 +167,7 @@ app.http('orders', {
 
       if (request.method === 'POST') {
         const body = await request.json();
-        const { source, clientName, clientCnpj, clientCity, clientPhone, totalValue, observations, items } = body;
+        const { source, clientName, clientCnpj, clientCity, clientPhone, totalValue, observations, items, purchasePurpose } = body;
 
         if (!clientName || !items || items.length === 0) {
           return { status: 400, jsonBody: { error: 'clientName e items são obrigatórios' } };
@@ -179,7 +181,7 @@ app.http('orders', {
         const newId = `PED-${idResult.recordset[0].nextNum}`;
 
         const insertResult = await sql.query`
-          INSERT INTO GestaoOrders (id, source, clientName, clientCnpj, clientCity, clientPhone, status, totalValue, observations, createdAt, updatedAt)
+          INSERT INTO GestaoOrders (id, source, clientName, clientCnpj, clientCity, clientPhone, status, totalValue, observations, purchasePurpose, createdAt, updatedAt)
           OUTPUT INSERTED.createdAt
           VALUES (
             ${newId},
@@ -191,6 +193,7 @@ app.http('orders', {
             'Recebido',
             ${totalValue || 0},
             ${observations || null},
+            ${purchasePurpose || null},
             GETUTCDATE(),
             GETUTCDATE()
           )
@@ -227,6 +230,7 @@ app.http('orders', {
                 price: Number(i.unitPrice) || 0,
               })),
               notes: observations || '',
+              purchasePurpose: purchasePurpose || 'consumo',
             },
           },
         };
