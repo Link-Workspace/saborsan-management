@@ -3994,7 +3994,7 @@ function Settings({ notify }) {
       const saved = stored ? JSON.parse(stored) : {}
       return {
         empresa: 'Saborsan Distribuidora',
-        cnpj: '12.345.678/0001-99',
+        cnpj: '05.533.744/0001-95',
         email: 'contato@saborsan.com.br',
         telefone: '(49) 3224-0000',
         cidade: 'Lages - SC',
@@ -4031,7 +4031,7 @@ function Settings({ notify }) {
     } catch {
       return {
         empresa: 'Saborsan Distribuidora',
-        cnpj: '12.345.678/0001-99',
+        cnpj: '05.533.744/0001-95',
         email: 'contato@saborsan.com.br',
         telefone: '(49) 3224-0000',
         cidade: 'Lages - SC',
@@ -4725,7 +4725,7 @@ function NotaFiscalModal({ order, onClose, updateOrderStatus, notify }) {
               <div className="nfCard">
                 <p className="nfLabel">Emitente</p>
                 <b>Saborsan Distribuidora LTDA</b>
-                <small>CNPJ: 12.345.678/0001-99</small>
+                <small>CNPJ: 05.533.744/0001-95</small>
               </div>
               <div className="nfCard">
                 <p className="nfLabel">Destinatário</p>
