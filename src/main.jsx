@@ -566,7 +566,7 @@ function App() {
       {selectedProduct && <ProductModal product={selectedProduct} onClose={() => setSelectedProduct(null)} onRemove={() => setRemoveConfirmProduct(selectedProduct)} onEdit={() => { setEditProduct(selectedProduct); setSelectedProduct(null) }} />}
       {supplierModal && <SupplierModal supplier={supplierModal} onClose={() => setSupplierModal(null)} notify={notify} />}
       {notaFiscalOrder && <NotaFiscalModal order={notaFiscalOrder} onClose={() => setNotaFiscalOrder(null)} updateOrderStatus={updateOrderStatus} notify={notify} />}
-      {verNotaOrder && <VerNotaModal order={verNotaOrder} onClose={() => setVerNotaOrder(null)} onSendToClient={sendNfeToClient} />}
+      {verNotaOrder && <VerNotaModal order={verNotaOrder} onClose={() => setVerNotaOrder(null)} onSendToClient={sendNfeToClient} onGerarNota={(o) => { setVerNotaOrder(null); setNotaFiscalOrder(o) }} />}
       {notifOpen && <NotifPanel onClose={() => setNotifOpen(false)} />}
       {newDeliveryOpen && <NewDeliveryModal onClose={() => setNewDeliveryOpen(false)} orders={orders} vehicles={vehiclesState} onCreate={(d) => { setDeliveriesState((prev) => [d, ...prev]); notify(`Entrega ${d.id} criada com sucesso! O entregador será notificado sobre os pedidos em separação.`) }} />}
       {editDelivery && <NewDeliveryModal onClose={() => setEditDelivery(null)} orders={orders} vehicles={vehiclesState} editDelivery={editDelivery} onUpdate={(d) => { setDeliveriesState((prev) => prev.map((x) => x.id === d.id ? d : x)); setEditDelivery(null); notify(`Entrega ${d.id} atualizada com sucesso!`) }} onCreate={(d) => { setDeliveriesState((prev) => [d, ...prev]); notify(`Entrega ${d.id} criada com sucesso! O entregador será notificado sobre os pedidos em separação.`) }} />}
@@ -4927,7 +4927,7 @@ function NotaFiscalModal({ order, onClose, updateOrderStatus, notify }) {
   )
 }
 
-function VerNotaModal({ order, onClose, onSendToClient }) {
+function VerNotaModal({ order, onClose, onSendToClient, onGerarNota }) {
   const nfe = order.nfeData
   const hasSent = !!order.nfeSentAt
 
@@ -5093,14 +5093,28 @@ function VerNotaModal({ order, onClose, onSendToClient }) {
           </div>
         ) : nfe ? (
           <>
+            {nfe.nfeStatus !== 'AUTHORIZED' && (
+              <div className="verNotaErrorBox">
+                <div className="verNotaErrorTitle"><AlertTriangle size={17} /> Erro na emissão da nota fiscal</div>
+                {nfe.errorCode && <span className="verNotaErrorCode">Código: {nfe.errorCode}</span>}
+                <p className="verNotaErrorMsg">{nfe.errorMessage || 'Ocorreu um erro ao emitir esta nota fiscal. Verifique os dados e tente gerar uma nova nota.'}</p>
+              </div>
+            )}
+            {nfe.nfeStatus !== 'AUTHORIZED' && onGerarNota && (
+              <button className="verNotaGerarBtn" onClick={() => onGerarNota(order)}>
+                <ReceiptText size={17} /> Gerar nova nota
+              </button>
+            )}
+            {nfe.nfeStatus === 'AUTHORIZED' && (
             <div className="verNotaGrid">
               {nfe.number && <div className="verNotaInfo"><small>Número</small><b>{nfe.number}</b></div>}
               {nfe.series && <div className="verNotaInfo"><small>Série</small><b>{nfe.series}</b></div>}
               {nfe.protocol && <div className="verNotaInfo"><small>Protocolo SEFAZ</small><b>{nfe.protocol}</b></div>}
               {nfe.accessKey && <div className="verNotaInfo verNotaSpan"><small>Chave de acesso</small><b className="mono">{nfe.accessKey}</b></div>}
             </div>
+            )}
 
-            <div className="verNotaActions">
+            {nfe.nfeStatus === 'AUTHORIZED' && <div className="verNotaActions">
               <button className="verNotaActionBtn" onClick={openNfeDetails} disabled={!nfe.reference}>
                 <div className="verNotaActionIcon"><FileText size={20} /></div>
                 <div className="verNotaActionText"><b>Ver NF-e</b><span>Detalhes completos via Focus NFe</span></div>
@@ -5133,7 +5147,7 @@ function VerNotaModal({ order, onClose, onSendToClient }) {
                 <div className="verNotaActionText"><b>Cancelar NF-e</b><span>Disponível nas primeiras 24h após emissão</span></div>
                 <ChevronRight size={15} />
               </button>
-            </div>
+            </div>}
           </>
         ) : (
           <div className="verNotaUnavailable">
