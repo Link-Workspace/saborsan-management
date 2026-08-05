@@ -135,11 +135,38 @@ function createNfeReference(fiscalDocumentId) {
 // ── Status mapper ─────────────────────────────────────────────────────────────
 
 function mapFocusStatus(response) {
-  const raw = String(
-    response.status || response.status_sefaz || response.situacao || ''
-  ).toLowerCase();
+  // O código SEFAZ (status_sefaz) é a fonte de verdade definitiva; verificar primeiro
+  // para evitar falso AUTHORIZED quando status interno da Focus NFe contém 'autoriz'
+  // mas o SEFAZ já rejeitou (ex: status='autorizado', status_sefaz='1115').
+  const sefazCode = String(response.status_sefaz || '').trim();
 
-  if (raw.includes('autoriz') || response.status_sefaz === '100') {
+  if (sefazCode === '100') {
+    return {
+      status: 'AUTHORIZED',
+      number: response.numero,
+      series: response.serie,
+      accessKey: response.chave_nfe || response.chave || response.chave_acesso,
+      protocol: response.protocolo || response.numero_protocolo,
+      xmlPath: response.caminho_xml_nota_fiscal || response.caminho_xml,
+      danfePath: response.caminho_danfe || response.caminho_pdf,
+    };
+  }
+  if (sefazCode) {
+    // Qualquer código SEFAZ diferente de 100 indica rejeição
+    return {
+      status: 'REJECTED',
+      errorCode: sefazCode,
+      errorMessage:
+        response.mensagem_sefaz ||
+        response.mensagem ||
+        (Array.isArray(response.erros) ? response.erros.map((e) => e.mensagem).join('; ') : ''),
+    };
+  }
+
+  // Sem código SEFAZ ainda: usar o status interno da Focus NFe para estados intermediários
+  const raw = String(response.status || response.situacao || '').toLowerCase();
+
+  if (raw.includes('autoriz')) {
     return {
       status: 'AUTHORIZED',
       number: response.numero,
@@ -159,7 +186,7 @@ function mapFocusStatus(response) {
   if (raw.includes('erro') || raw.includes('rejeit')) {
     return {
       status: 'REJECTED',
-      errorCode: String(response.codigo_status || response.status_sefaz || ''),
+      errorCode: '',
       errorMessage:
         response.mensagem_sefaz ||
         response.mensagem ||
@@ -440,6 +467,22 @@ app.http('emit-nfe', {
         try {
           const focusRes = await focusRequest(`/v2/nfe/${encodeURIComponent(ref)}?completa=1`);
           const d = focusRes.data;
+
+          // Corrige divergência: se o BD tem AUTHORIZED mas o SEFAZ retornou rejeição
+          const detailsSefazCode = String(d.status_sefaz || '').trim();
+          if (detailsSefazCode && detailsSefazCode !== '100') {
+            try {
+              await sql.query`
+                UPDATE GestaoFiscalDocuments
+                SET status       = 'REJECTED',
+                    errorCode    = ${detailsSefazCode},
+                    errorMessage = ${d.mensagem_sefaz || d.mensagem || null},
+                    updatedAt    = GETUTCDATE()
+                WHERE focusReference = ${ref} AND status = 'AUTHORIZED'
+              `;
+            } catch (_) { /* não interromper o fluxo */ }
+          }
+
           const rawItems = d.items || d.itens || [];
           const items = rawItems.map((i) => ({
             number: i.numero_item,
