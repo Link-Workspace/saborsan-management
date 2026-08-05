@@ -1,6 +1,7 @@
 'use strict';
 const { app } = require('@azure/functions');
 const sql = require('mssql');
+const { validarRegrasFiscais } = require('./fiscal-rules-engine');
 const { initializeApp: initFirebase, cert, getApps } = require('firebase-admin/app');
 const { getMessaging } = require('firebase-admin/messaging');
 
@@ -779,6 +780,32 @@ app.http('emit-nfe', {
 
         // ── Carrega configurações fiscais por produto ────────────────────────
         const fiscalConfigs = await loadFiscalConfigs();
+
+        // ── Motor de regras fiscais — validação pré-emissão ──────────────────
+        const cityStrFiscal = String(order.clientCity || '').trim();
+        const ufDestinatario = cityStrFiscal.includes(' - ') ? cityStrFiscal.split(' - ').pop().trim() : 'SC';
+        const ufEmitente = (process.env.SABORSAN_UF || 'SC').toUpperCase().trim();
+        const crtEmitente = Number(process.env.SABORSAN_TAX_REGIME || 3);
+
+        const checagemFiscal = validarRegrasFiscais({
+          crt: crtEmitente,
+          items,
+          fiscalConfigs,
+          fiscalMap: FISCAL_MAP,
+          ufEmitente,
+          ufDestinatario,
+        });
+
+        if (!checagemFiscal.valido) {
+          return {
+            status: 422,
+            jsonBody: {
+              status: 'FISCAL_RULES_ERROR',
+              errorMessage: checagemFiscal.erros.join('\n'),
+              errors: checagemFiscal.erros,
+            },
+          };
+        }
 
         // ── Valida IBS/CBS antes de qualquer outra coisa ─────────────────────
         const semIbsCbs = items.filter((item) => {

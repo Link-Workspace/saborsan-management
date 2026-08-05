@@ -5037,6 +5037,11 @@ function NotaFiscalModal({ order, onClose, updateOrderStatus, notify }) {
         updateOrderStatus(order.id, 'Pronto', { nfeData: { nfeStatus: data.status, errorCode: data.errorCode || null, errorMessage: data.errorMessage || null, reference: data.reference || null } })
         return
       }
+      if (data.status === 'FISCAL_RULES_ERROR' || data.status === 'VALIDATION_ERROR') {
+        setNfeError({ errorMessage: data.errorMessage || data.error || 'Erro de validação fiscal.' })
+        setStep('rejeitada')
+        return
+      }
       setNfeError({ errorMessage: data.error || 'Resposta inesperada do servidor.' })
       setStep('rejeitada')
     } catch (err) {
