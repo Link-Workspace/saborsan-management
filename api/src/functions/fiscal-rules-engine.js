@@ -155,4 +155,106 @@ function validarRegrasFiscais({ crt, items, fiscalConfigs, fiscalMap, ufEmitente
   return { valido: erros.length === 0, erros };
 }
 
-module.exports = { validarRegrasFiscais };
+// ---------------------------------------------------------------------------
+// Benefício Fiscal (cBenef) — CST 41
+// ---------------------------------------------------------------------------
+
+function cstsCompativeis(cstsPermitidos, cst) {
+  if (!cstsPermitidos) return false;
+  return String(cstsPermitidos).split(',').map((s) => s.trim()).includes(String(cst).trim());
+}
+
+function vigente(beneficio, hoje) {
+  const inicio = beneficio.inicioVigencia ? new Date(beneficio.inicioVigencia) : null;
+  const fim    = beneficio.fimVigencia    ? new Date(beneficio.fimVigencia)    : null;
+  if (inicio && hoje < inicio) return false;
+  if (fim    && hoje > fim)    return false;
+  return true;
+}
+
+/**
+ * Resolve o cBenef para um único produto com CST 41.
+ *
+ * Tenta primeiro o código salvo no perfil do produto; se não estiver mais
+ * vigente ou compatível, busca nos benefícios cadastrados.
+ *
+ * @param {{ codigoBeneficioFiscalSalvo?: string, ufEmitente: string, fiscalBenefits: object[], hoje?: Date }}
+ * @returns {{ codigo: string|null, bloqueio: null|'nenhum'|'multiplos', opcoes?: string[] }}
+ */
+function resolverCBenef({ codigoBeneficioFiscalSalvo, ufEmitente, fiscalBenefits, hoje = new Date() }) {
+  const codigoSalvo = codigoBeneficioFiscalSalvo ? String(codigoBeneficioFiscalSalvo).trim() : null;
+  const uf = ufEmitente.toUpperCase();
+
+  if (codigoSalvo) {
+    const ainda_valido = fiscalBenefits.find(
+      (b) =>
+        b.codigo === codigoSalvo &&
+        b.uf.toUpperCase() === uf &&
+        b.ativo &&
+        cstsCompativeis(b.cstsPermitidos, '41') &&
+        vigente(b, hoje),
+    );
+    if (ainda_valido) return { codigo: codigoSalvo, bloqueio: null };
+  }
+
+  // Código salvo não é mais válido (ou inexistente): busca automaticamente
+  const compat = fiscalBenefits.filter(
+    (b) =>
+      b.uf.toUpperCase() === uf &&
+      b.ativo &&
+      cstsCompativeis(b.cstsPermitidos, '41') &&
+      vigente(b, hoje),
+  );
+
+  if (compat.length === 1) return { codigo: compat[0].codigo, bloqueio: null };
+  if (compat.length === 0) return { codigo: null, bloqueio: 'nenhum' };
+  return { codigo: null, bloqueio: 'multiplos', opcoes: compat.map((b) => b.codigo) };
+}
+
+/**
+ * Resolve cBenef para todos os itens que usam CST 41.
+ *
+ * @param {{ items, fiscalConfigs, fiscalMap, fiscalBenefits, ufEmitente }}
+ * @returns {{ map: {[productName]: string}, erros: string[] }}
+ */
+function resolverCBenefParaItens({ items, fiscalConfigs, fiscalMap, fiscalBenefits, ufEmitente }) {
+  const map   = {};
+  const erros = [];
+  const hoje  = new Date();
+
+  for (const item of items) {
+    const chave = item.productName.toLowerCase();
+    const cfg   = fiscalConfigs[chave] || fiscalConfigs[item.productName] || fiscalMap?.[item.productName] || null;
+    const icmsCst = String(cfg?.icmsCst ?? '').trim();
+
+    if (icmsCst !== '41') continue;
+
+    const resultado = resolverCBenef({
+      codigoBeneficioFiscalSalvo: cfg?.codigoBeneficioFiscal,
+      ufEmitente,
+      fiscalBenefits,
+      hoje,
+    });
+
+    if (resultado.bloqueio === 'nenhum') {
+      erros.push(
+        `Produto "${item.productName}": CST 41 exige código de benefício fiscal (cBenef), ` +
+        `mas nenhum benefício vigente foi encontrado para a UF ${ufEmitente}. ` +
+        `Cadastre o benefício em Configurações → Benefícios Fiscais.`,
+      );
+    } else if (resultado.bloqueio === 'multiplos') {
+      erros.push(
+        `Produto "${item.productName}": CST 41 exige código de benefício fiscal (cBenef), mas há ` +
+        `múltiplos benefícios vigentes para ${ufEmitente} (${resultado.opcoes.join(', ')}) ` +
+        `e o sistema não pode selecionar automaticamente. ` +
+        `Vincule o cBenef correto ao produto em Configurações → Configuração Fiscal.`,
+      );
+    } else {
+      map[item.productName] = resultado.codigo;
+    }
+  }
+
+  return { map, erros };
+}
+
+module.exports = { validarRegrasFiscais, resolverCBenefParaItens };

@@ -1,7 +1,7 @@
 'use strict';
 const { app } = require('@azure/functions');
 const sql = require('mssql');
-const { validarRegrasFiscais } = require('./fiscal-rules-engine');
+const { validarRegrasFiscais, resolverCBenefParaItens } = require('./fiscal-rules-engine');
 const { initializeApp: initFirebase, cert, getApps } = require('firebase-admin/app');
 const { getMessaging } = require('firebase-admin/messaging');
 
@@ -258,7 +258,7 @@ function extrairIEDaResposta(data, targetUf) {
   return classificarIEFocus(num, sit, ufRetorno);
 }
 
-function buildNfePayload(order, items, { stateRegistrationIndicator = 9, stateRegistration = null, purchasePurpose = 'consumo', fiscalConfigs = {} } = {}) {
+function buildNfePayload(order, items, { stateRegistrationIndicator = 9, stateRegistration = null, purchasePurpose = 'consumo', fiscalConfigs = {}, codigosBenef = {} } = {}) {
   const cityStr = String(order.clientCity || '').trim();
   const uf = cityStr.includes(' - ') ? cityStr.split(' - ').pop().trim() : 'SC';
   const city = cityStr.includes(' - ') ? cityStr.split(' - ')[0].trim() : (cityStr || 'Lages');
@@ -296,6 +296,12 @@ function buildNfePayload(order, items, { stateRegistrationIndicator = 9, stateRe
       pis_situacao_tributaria: f.pisCST,
       cofins_situacao_tributaria: f.cofinsCST,
     };
+
+    // CST 41 obriga o envio do cBenef à Focus NF-e
+    const cBenef = codigosBenef[item.productName];
+    if (String(f.icmsCst).trim() === '41' && cBenef) {
+      itemObj.codigo_beneficio_fiscal = cBenef;
+    }
 
     if (f.icmsAliq > 0) {
       Object.assign(itemObj, {
@@ -383,31 +389,64 @@ async function ensureTable() {
     )
     BEGIN
       CREATE TABLE ProductFiscalConfig (
-        id                INT IDENTITY(1,1) PRIMARY KEY,
-        productId         NVARCHAR(100)   NOT NULL,
-        productName       NVARCHAR(255)   NOT NULL,
-        ncm               NVARCHAR(10)    NOT NULL DEFAULT '21069090',
-        cfop              NVARCHAR(5)     NOT NULL DEFAULT '5102',
-        icmsOrigin        INT             NOT NULL DEFAULT 0,
-        icmsCst           NVARCHAR(5)     NOT NULL DEFAULT '400',
-        icmsAliq          DECIMAL(10,4)   NOT NULL DEFAULT 0,
-        pisCST            NVARCHAR(3)     NOT NULL DEFAULT '07',
-        pisAliq           DECIMAL(10,4)   NOT NULL DEFAULT 0,
-        cofinsCST         NVARCHAR(3)     NOT NULL DEFAULT '07',
-        cofinsAliq        DECIMAL(10,4)   NOT NULL DEFAULT 0,
-        ibsCbsCst         NVARCHAR(5)     NULL,
-        ibsCbsClassTrib   NVARCHAR(10)    NULL,
-        ibsCbsAliqUF      DECIMAL(10,4)   NOT NULL DEFAULT 0,
-        ibsCbsAliqMun     DECIMAL(10,4)   NOT NULL DEFAULT 0,
-        ibsCbsAliqCbs     DECIMAL(10,4)   NOT NULL DEFAULT 0,
-        fiscalApproved    BIT             NOT NULL DEFAULT 0,
-        approvedBy        NVARCHAR(100)   NULL,
-        notes             NVARCHAR(500)   NULL,
-        createdAt         DATETIME2       NOT NULL DEFAULT GETUTCDATE(),
-        updatedAt         DATETIME2       NOT NULL DEFAULT GETUTCDATE(),
+        id                     INT IDENTITY(1,1) PRIMARY KEY,
+        productId              NVARCHAR(100)   NOT NULL,
+        productName            NVARCHAR(255)   NOT NULL,
+        ncm                    NVARCHAR(10)    NOT NULL DEFAULT '21069090',
+        cfop                   NVARCHAR(5)     NOT NULL DEFAULT '5102',
+        icmsOrigin             INT             NOT NULL DEFAULT 0,
+        icmsCst                NVARCHAR(5)     NOT NULL DEFAULT '400',
+        icmsAliq               DECIMAL(10,4)   NOT NULL DEFAULT 0,
+        pisCST                 NVARCHAR(3)     NOT NULL DEFAULT '07',
+        pisAliq                DECIMAL(10,4)   NOT NULL DEFAULT 0,
+        cofinsCST              NVARCHAR(3)     NOT NULL DEFAULT '07',
+        cofinsAliq             DECIMAL(10,4)   NOT NULL DEFAULT 0,
+        ibsCbsCst              NVARCHAR(5)     NULL,
+        ibsCbsClassTrib        NVARCHAR(10)    NULL,
+        ibsCbsAliqUF           DECIMAL(10,4)   NOT NULL DEFAULT 0,
+        ibsCbsAliqMun          DECIMAL(10,4)   NOT NULL DEFAULT 0,
+        ibsCbsAliqCbs          DECIMAL(10,4)   NOT NULL DEFAULT 0,
+        codigoBeneficioFiscal  NVARCHAR(20)    NULL,
+        fiscalApproved         BIT             NOT NULL DEFAULT 0,
+        approvedBy             NVARCHAR(100)   NULL,
+        notes                  NVARCHAR(500)   NULL,
+        createdAt              DATETIME2       NOT NULL DEFAULT GETUTCDATE(),
+        updatedAt              DATETIME2       NOT NULL DEFAULT GETUTCDATE(),
         CONSTRAINT UQ_ProductFiscalConfig_ProductId UNIQUE (productId)
       );
       CREATE INDEX IX_ProductFiscalConfig_Name ON ProductFiscalConfig (productName);
+    END
+    ELSE
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_NAME = 'ProductFiscalConfig' AND COLUMN_NAME = 'codigoBeneficioFiscal'
+      )
+        ALTER TABLE ProductFiscalConfig ADD codigoBeneficioFiscal NVARCHAR(20) NULL;
+    END
+  `;
+  await sql.query`
+    IF NOT EXISTS (
+      SELECT 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'FiscalBenefits'
+    )
+    BEGIN
+      CREATE TABLE FiscalBenefits (
+        id               INT IDENTITY(1,1) PRIMARY KEY,
+        codigo           NVARCHAR(20)   NOT NULL,
+        uf               NVARCHAR(2)    NOT NULL DEFAULT 'SC',
+        descricao        NVARCHAR(500)  NOT NULL,
+        tipoBeneficio    NVARCHAR(50)   NOT NULL,
+        cstsPermitidos   NVARCHAR(100)  NOT NULL,
+        aplicavelSimples BIT            NOT NULL DEFAULT 0,
+        fundamentoLegal  NVARCHAR(500)  NULL,
+        inicioVigencia   DATE           NULL,
+        fimVigencia      DATE           NULL,
+        ativo            BIT            NOT NULL DEFAULT 1,
+        createdAt        DATETIME2      NOT NULL DEFAULT GETUTCDATE(),
+        updatedAt        DATETIME2      NOT NULL DEFAULT GETUTCDATE(),
+        CONSTRAINT UQ_FiscalBenefits_Codigo_UF UNIQUE (codigo, uf)
+      );
+      CREATE INDEX IX_FiscalBenefits_UF_Ativo ON FiscalBenefits (uf, ativo);
     END
   `;
   await sql.query`
@@ -449,7 +488,8 @@ async function loadFiscalConfigs() {
     const result = await sql.query`
       SELECT productName, ncm, cfop, icmsOrigin, icmsCst, icmsAliq,
              pisCST, pisAliq, cofinsCST, cofinsAliq,
-             ibsCbsCst, ibsCbsClassTrib, ibsCbsAliqUF, ibsCbsAliqMun, ibsCbsAliqCbs
+             ibsCbsCst, ibsCbsClassTrib, ibsCbsAliqUF, ibsCbsAliqMun, ibsCbsAliqCbs,
+             codigoBeneficioFiscal
       FROM ProductFiscalConfig
     `;
     const map = {};
@@ -459,6 +499,20 @@ async function loadFiscalConfigs() {
     return map;
   } catch {
     return {};
+  }
+}
+
+async function loadFiscalBenefits() {
+  try {
+    const result = await sql.query`
+      SELECT codigo, uf, cstsPermitidos, aplicavelSimples,
+             inicioVigencia, fimVigencia, ativo
+      FROM FiscalBenefits
+      WHERE ativo = 1
+    `;
+    return result.recordset;
+  } catch {
+    return [];
   }
 }
 
@@ -778,8 +832,11 @@ app.http('emit-nfe', {
           return { status: 422, jsonBody: { error: 'Pedido sem itens cadastrados' } };
         }
 
-        // ── Carrega configurações fiscais por produto ────────────────────────
-        const fiscalConfigs = await loadFiscalConfigs();
+        // ── Carrega configurações fiscais e benefícios fiscais ──────────────
+        const [fiscalConfigs, fiscalBenefits] = await Promise.all([
+          loadFiscalConfigs(),
+          loadFiscalBenefits(),
+        ]);
 
         // ── Motor de regras fiscais — validação pré-emissão ──────────────────
         const cityStrFiscal = String(order.clientCity || '').trim();
@@ -803,6 +860,26 @@ app.http('emit-nfe', {
               status: 'FISCAL_RULES_ERROR',
               errorMessage: checagemFiscal.erros.join('\n'),
               errors: checagemFiscal.erros,
+            },
+          };
+        }
+
+        // ── Resolução do cBenef para itens com CST 41 ────────────────────────
+        const { map: codigosBenef, erros: errosCBenef } = resolverCBenefParaItens({
+          items,
+          fiscalConfigs,
+          fiscalMap: FISCAL_MAP,
+          fiscalBenefits,
+          ufEmitente,
+        });
+
+        if (errosCBenef.length > 0) {
+          return {
+            status: 422,
+            jsonBody: {
+              status: 'FISCAL_CONFIG_PENDING',
+              errorMessage: errosCBenef.join('\n'),
+              errors: errosCBenef,
             },
           };
         }
@@ -964,7 +1041,7 @@ app.http('emit-nfe', {
         `;
         const docId = createRes.recordset[0].id;
         const reference = createNfeReference(docId);
-        const payload = buildNfePayload(order, items, { stateRegistrationIndicator, stateRegistration, purchasePurpose, fiscalConfigs });
+        const payload = buildNfePayload(order, items, { stateRegistrationIndicator, stateRegistration, purchasePurpose, fiscalConfigs, codigosBenef });
 
         await sql.query`
           UPDATE GestaoFiscalDocuments
@@ -992,6 +1069,23 @@ app.http('emit-nfe', {
                 updatedAt       = GETUTCDATE()
             WHERE id = ${docId}
           `;
+
+          // Persiste o vínculo cBenef recém-resolvido para reutilização futura
+          if (Object.keys(codigosBenef).length > 0) {
+            for (const [prodName, cBenef] of Object.entries(codigosBenef)) {
+              try {
+                await new sql.Request()
+                  .input('cBenef',   cBenef)
+                  .input('prodName', prodName)
+                  .query(`
+                    UPDATE ProductFiscalConfig
+                    SET codigoBeneficioFiscal = @cBenef, updatedAt = GETUTCDATE()
+                    WHERE productName = @prodName
+                      AND (codigoBeneficioFiscal IS NULL OR codigoBeneficioFiscal <> @cBenef)
+                  `);
+              } catch (_) { /* não quebrar o fluxo */ }
+            }
+          }
 
           if (nextStatus === 'AUTHORIZED') {
             await sql.query`
