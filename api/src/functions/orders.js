@@ -119,6 +119,16 @@ app.http('orders', {
             SET status = ${status}, updatedAt = GETUTCDATE()
             WHERE id = ${orderId}
           `;
+
+          if (status === 'Rota') {
+            await sql.query`
+              UPDATE Deliveries
+              SET status = N'Em rota', updated_at = GETUTCDATE()
+              WHERE id IN (
+                SELECT delivery_id FROM DeliveryOrders WHERE order_id = ${orderId}
+              )
+            `;
+          }
         }
 
         if (sentToClient) {

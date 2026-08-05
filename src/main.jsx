@@ -404,6 +404,14 @@ function App() {
     setOrders((items) => items.map((item) => item.id === id ? { ...item, status, ...extra } : item))
     if (selectedOrder?.id === id) setSelectedOrder((old) => ({ ...old, status, ...extra }))
     if (verNotaOrder?.id === id) setVerNotaOrder((old) => ({ ...old, status, ...extra }))
+
+    if (status === 'Rota') {
+      setDeliveriesState((prev) => prev.map((d) =>
+        d.orderIds?.includes(id) ? { ...d, status: 'Em rota', progress: 60 } : d
+      ))
+      setSelectedDelivery((d) => d?.orderIds?.includes(id) ? { ...d, status: 'Em rota', progress: 60 } : d)
+    }
+
     notify(`Pedido ${id} atualizado para ${status}.`)
     fetch(`${API_URL}/api/orders`, {
       method: 'PATCH',
