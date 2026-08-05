@@ -59,7 +59,9 @@ app.http('fiscal-config', {
           SELECT id, productId, productName, ncm, cfop, icmsOrigin, icmsCst, icmsAliq,
                  pisCST, pisAliq, cofinsCST, cofinsAliq,
                  ibsCbsCst, ibsCbsClassTrib, ibsCbsAliqUF, ibsCbsAliqMun, ibsCbsAliqCbs,
-                 fiscalApproved, approvedBy, notes, updatedAt
+                 fiscalApproved, approvedBy, notes,
+                 ncmSource, ncmClassifiedAt, ncmConfidence, ncmTableVersion,
+                 updatedAt
           FROM ProductFiscalConfig
           ORDER BY productName ASC
         `;
@@ -105,6 +107,9 @@ app.http('fiscal-config', {
               fiscalApproved  = ${fiscalApproved ? 1 : 0},
               approvedBy      = ${approvedBy || null},
               notes           = ${notes || null},
+              ncmSource       = 'manual',
+              ncmClassifiedAt = GETUTCDATE(),
+              ncmConfidence   = NULL,
               updatedAt       = GETUTCDATE()
             WHERE productId = ${productId}
           `;
@@ -114,7 +119,7 @@ app.http('fiscal-config', {
               productId, productName, ncm, cfop, icmsOrigin, icmsCst, icmsAliq,
               pisCST, pisAliq, cofinsCST, cofinsAliq,
               ibsCbsCst, ibsCbsClassTrib, ibsCbsAliqUF, ibsCbsAliqMun, ibsCbsAliqCbs,
-              fiscalApproved, approvedBy, notes
+              fiscalApproved, approvedBy, notes, ncmSource, ncmClassifiedAt
             ) VALUES (
               ${productId}, ${productName},
               ${ncm || '21069090'}, ${cfop || '5102'},
@@ -123,7 +128,8 @@ app.http('fiscal-config', {
               ${cofinsCST || '07'}, ${Number(cofinsAliq ?? 0)},
               ${cst}, ${classTrib},
               ${Number(ibsCbsAliqUF ?? 0)}, ${Number(ibsCbsAliqMun ?? 0)}, ${Number(ibsCbsAliqCbs ?? 0)},
-              ${fiscalApproved ? 1 : 0}, ${approvedBy || null}, ${notes || null}
+              ${fiscalApproved ? 1 : 0}, ${approvedBy || null}, ${notes || null},
+              'manual', GETUTCDATE()
             )
           `;
         }

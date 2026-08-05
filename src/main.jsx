@@ -52,6 +52,10 @@ import {
   Loader2,
   Package,
   Info,
+  RefreshCw,
+  Tag,
+  Wand2,
+  Database,
 } from 'lucide-react'
 import './styles.css'
 
@@ -3987,6 +3991,195 @@ function ReportCard({ icon: Icon, title, value, text }) {
   return <article className="reportCard"><Icon size={28} /><span>{title}</span><h3>{value}</h3><p>{text}</p></article>
 }
 
+function NcmManagementSection({ notify }) {
+  const [syncStatus, setSyncStatus] = useState(null)
+  const [syncing, setSyncing] = useState(false)
+  const [classifyProducts, setClassifyProducts] = useState([])
+  const [classifying, setClassifying] = useState(false)
+  const [classifyResults, setClassifyResults] = useState(null)
+  const [loadingStatus, setLoadingStatus] = useState(true)
+
+  useEffect(() => { loadStatus() }, [])
+
+  async function loadStatus() {
+    setLoadingStatus(true)
+    try {
+      const [sr, pr] = await Promise.all([
+        fetch(`${API_URL}/api/ncm/sync`),
+        fetch(`${API_URL}/api/ncm/classify`),
+      ])
+      const sd = sr.ok ? await sr.json() : null
+      const pd = pr.ok ? await pr.json() : null
+      setSyncStatus(sd)
+      setClassifyProducts(pd?.products || [])
+    } catch (_) {}
+    finally { setLoadingStatus(false) }
+  }
+
+  async function handleSync() {
+    if (syncing) return
+    setSyncing(true)
+    setClassifyResults(null)
+    try {
+      const res = await fetch(`${API_URL}/api/ncm/sync`, { method: 'POST' })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Erro na sincronização')
+      setSyncStatus(data)
+      notify(`Tabela NCM sincronizada: ${data.activeCount?.toLocaleString('pt-BR')} códigos ativos.`)
+      await loadStatus()
+    } catch (err) { notify(`Erro: ${err.message}`) }
+    finally { setSyncing(false) }
+  }
+
+  async function handleClassify() {
+    if (classifying) return
+    setClassifying(true)
+    setClassifyResults(null)
+    try {
+      const res = await fetch(`${API_URL}/api/ncm/classify`, { method: 'POST' })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Erro na classificação')
+      setClassifyResults(data)
+      notify(`Classificação concluída: ${data.classified} classificados, ${data.pending} pendentes.`)
+      await loadStatus()
+    } catch (err) { notify(`Erro: ${err.message}`) }
+    finally { setClassifying(false) }
+  }
+
+  const pendingCount = classifyProducts.filter(
+    (p) => !p.ncmSource || !['manual', 'ai'].includes(p.ncmSource)
+  ).length
+
+  function NcmSourceBadge({ source, confidence }) {
+    if (source === 'manual') return <span className="fiscalBadgeOk"><CheckCircle2 size={12} /> Manual</span>
+    if (source === 'ai') return (
+      <span className="fiscalBadgeOk" style={{ background: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe' }}>
+        <Sparkles size={12} /> IA {confidence ? `${Math.round(confidence)}%` : ''}
+      </span>
+    )
+    return <span className="fiscalBadgeWarn"><AlertTriangle size={12} /> Pendente</span>
+  }
+
+  return (
+    <div className="card settingsCard settingsCardFull">
+      <div className="cardHeader">
+        <div><p>Fiscal / NCM</p><h3>Sincronização e classificação automática</h3></div>
+        <Tag size={22} />
+      </div>
+
+      <div className="settingsInfo" style={{ marginBottom: 16 }}>
+        <Database size={14} />
+        <span>
+          A tabela NCM é obtida do Siscomex e sincronizada automaticamente toda segunda-feira às 3h (UTC).
+          Após a sincronização, a IA classifica os produtos sem NCM usando os dados reais do cadastro.
+        </span>
+      </div>
+
+      {loadingStatus ? (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-light)', padding: '8px 0' }}>
+          <Loader2 size={16} style={{ animation: 'spin 1s linear infinite' }} /><span>Carregando status...</span>
+        </div>
+      ) : (
+        <>
+          {/* Status row */}
+          <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: 20 }}>
+            <div style={{ flex: 1, minWidth: 140, background: 'var(--bg)', borderRadius: 12, padding: '14px 18px', border: '1.5px solid var(--line)' }}>
+              <div style={{ fontSize: '.72rem', color: 'var(--text-light)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 4 }}>Códigos ativos</div>
+              <div style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--text)' }}>
+                {syncStatus?.activeCount != null ? Number(syncStatus.activeCount).toLocaleString('pt-BR') : '—'}
+              </div>
+            </div>
+            <div style={{ flex: 1, minWidth: 140, background: 'var(--bg)', borderRadius: 12, padding: '14px 18px', border: '1.5px solid var(--line)' }}>
+              <div style={{ fontSize: '.72rem', color: 'var(--text-light)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 4 }}>Última sincronização</div>
+              <div style={{ fontSize: '.9rem', fontWeight: 700, color: 'var(--text)' }}>
+                {syncStatus?.lastSyncedAt
+                  ? new Date(syncStatus.lastSyncedAt).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+                  : 'Nunca sincronizado'}
+              </div>
+            </div>
+            <div style={{ flex: 1, minWidth: 140, background: pendingCount > 0 ? '#fff8f0' : 'var(--bg)', borderRadius: 12, padding: '14px 18px', border: `1.5px solid ${pendingCount > 0 ? '#fcd34d' : 'var(--line)'}` }}>
+              <div style={{ fontSize: '.72rem', color: 'var(--text-light)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 4 }}>Produtos sem NCM</div>
+              <div style={{ fontSize: '1.5rem', fontWeight: 800, color: pendingCount > 0 ? '#b45309' : 'var(--text)' }}>{pendingCount}</div>
+            </div>
+          </div>
+
+          {/* Action buttons */}
+          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 20 }}>
+            <button className="btnSolid" onClick={handleSync} disabled={syncing} style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
+              {syncing
+                ? <><Loader2 size={16} style={{ animation: 'spin 1s linear infinite' }} /> Sincronizando...</>
+                : <><RefreshCw size={16} /> Sincronizar tabela NCM</>}
+            </button>
+            <button
+              className={pendingCount === 0 ? 'btnOutline' : 'btnSolid'}
+              onClick={handleClassify}
+              disabled={classifying || !syncStatus?.activeCount}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: pendingCount > 0 && !classifying ? undefined : undefined }}
+            >
+              {classifying
+                ? <><Loader2 size={16} style={{ animation: 'spin 1s linear infinite' }} /> Classificando...</>
+                : <><Wand2 size={16} /> Classificar produtos com IA</>}
+            </button>
+          </div>
+
+          {!syncStatus?.activeCount && (
+            <div className="settingsInfo" style={{ marginBottom: 16, background: '#fff8f0', border: '1px solid #fcd34d' }}>
+              <AlertTriangle size={14} color="#b45309" />
+              <span>A tabela NCM está vazia. Execute a sincronização antes de classificar produtos.</span>
+            </div>
+          )}
+
+          {/* Classification results */}
+          {classifyResults && (
+            <div style={{ marginBottom: 20, padding: '14px 16px', borderRadius: 12, background: '#f0fdf4', border: '1.5px solid #86efac' }}>
+              <div style={{ fontWeight: 700, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+                <CheckCircle2 size={15} color="#16a34a" /> Resultado da classificação
+              </div>
+              <div style={{ display: 'flex', gap: 20, fontSize: '.85rem' }}>
+                <span><b style={{ color: '#16a34a' }}>{classifyResults.classified}</b> classificados</span>
+                <span><b style={{ color: '#b45309' }}>{classifyResults.pending}</b> pendentes (baixa confiança)</span>
+                <span><b style={{ color: '#dc2626' }}>{classifyResults.failed}</b> falhas</span>
+              </div>
+              {classifyResults.results?.filter(r => r.status === 'pending' || r.status === 'failed').length > 0 && (
+                <div style={{ marginTop: 10 }}>
+                  <div style={{ fontSize: '.78rem', fontWeight: 600, color: 'var(--text-light)', marginBottom: 6 }}>Produtos que precisam de revisão manual:</div>
+                  {classifyResults.results.filter(r => r.status !== 'classified').map(r => (
+                    <div key={r.productId} style={{ fontSize: '.8rem', padding: '4px 0', borderBottom: '1px solid #dcfce7', display: 'flex', gap: 8, alignItems: 'center' }}>
+                      <AlertTriangle size={12} color="#b45309" />
+                      <span><b>{r.productName}</b> — {r.status === 'failed' ? (r.reason || 'Falha') : `Confiança ${r.confidence}% — ${r.justification || ''}`}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Products table */}
+          {classifyProducts.length > 0 && (
+            <div className="fiscalConfigTable">
+              <div className="fiscalConfigHead">
+                <span>Produto</span><span>Código NCM</span><span>Origem</span><span>Classificado em</span>
+              </div>
+              {classifyProducts.map((p) => (
+                <div key={p.id} className="fiscalConfigRow">
+                  <span className="fiscalProdName">{p.name}</span>
+                  <span className="fiscalCode">{p.ncm || '—'}</span>
+                  <span><NcmSourceBadge source={p.ncmSource} confidence={p.ncmConfidence} /></span>
+                  <span style={{ fontSize: '.78rem', color: 'var(--text-light)' }}>
+                    {p.ncmClassifiedAt
+                      ? new Date(p.ncmClassifiedAt).toLocaleDateString('pt-BR')
+                      : '—'}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  )
+}
+
 function FiscalConfigSection({ notify }) {
   const [loading, setLoading] = useState(false)
   const [configs, setConfigs] = useState([])
@@ -4091,7 +4284,10 @@ function FiscalConfigSection({ notify }) {
               return (
                 <div key={product.id} className="fiscalConfigRow">
                   <span className="fiscalProdName">{product.name}</span>
-                  <span className="fiscalCode">{config?.ncm || '—'}</span>
+                  <span className="fiscalCode" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    {config?.ncm || '—'}
+                    {config?.ncmSource === 'ai' && <Sparkles size={11} color="#2563eb" title="Classificado por IA" />}
+                  </span>
                   <span className="fiscalCode">{config?.ibsCbsCst || '—'}</span>
                   <span className="fiscalCode">{config?.ibsCbsClassTrib || '—'}</span>
                   <span>
@@ -4422,6 +4618,7 @@ function Settings({ notify }) {
         </div>
 
         <FiscalConfigSection notify={notify} />
+        <NcmManagementSection notify={notify} />
 
       </div>
     </section>
