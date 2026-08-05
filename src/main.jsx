@@ -570,7 +570,7 @@ function App() {
       {selectedProduct && <ProductModal product={selectedProduct} onClose={() => setSelectedProduct(null)} onRemove={() => setRemoveConfirmProduct(selectedProduct)} onEdit={() => { setEditProduct(selectedProduct); setSelectedProduct(null) }} />}
       {supplierModal && <SupplierModal supplier={supplierModal} onClose={() => setSupplierModal(null)} notify={notify} />}
       {notaFiscalOrder && <NotaFiscalModal order={notaFiscalOrder} onClose={() => setNotaFiscalOrder(null)} updateOrderStatus={updateOrderStatus} notify={notify} />}
-      {verNotaOrder && <VerNotaModal order={verNotaOrder} onClose={() => setVerNotaOrder(null)} onSendToClient={sendNfeToClient} onGerarNota={(o) => { setVerNotaOrder(null); setNotaFiscalOrder(o) }} onNfeStatusFix={(orderId, fixedNfeData) => { setOrders((items) => items.map((item) => item.id === orderId ? { ...item, nfeData: fixedNfeData } : item)); setVerNotaOrder((old) => old ? { ...old, nfeData: fixedNfeData } : old) }} />}
+      {verNotaOrder && <VerNotaModal order={verNotaOrder} onClose={() => setVerNotaOrder(null)} onSendToClient={sendNfeToClient} onGerarNota={(o) => { setVerNotaOrder(null); setNotaFiscalOrder(o) }} updateOrderStatus={updateOrderStatus} />}
       {notifOpen && <NotifPanel onClose={() => setNotifOpen(false)} />}
       {newDeliveryOpen && <NewDeliveryModal onClose={() => setNewDeliveryOpen(false)} orders={orders} vehicles={vehiclesState} onCreate={(d) => { setDeliveriesState((prev) => [d, ...prev]); notify(`Entrega ${d.id} criada com sucesso! O entregador será notificado sobre os pedidos em separação.`) }} />}
       {editDelivery && <NewDeliveryModal onClose={() => setEditDelivery(null)} orders={orders} vehicles={vehiclesState} editDelivery={editDelivery} onUpdate={(d) => { setDeliveriesState((prev) => prev.map((x) => x.id === d.id ? d : x)); setEditDelivery(null); notify(`Entrega ${d.id} atualizada com sucesso!`) }} onCreate={(d) => { setDeliveriesState((prev) => [d, ...prev]); notify(`Entrega ${d.id} criada com sucesso! O entregador será notificado sobre os pedidos em separação.`) }} />}
@@ -4956,7 +4956,7 @@ function NotaFiscalModal({ order, onClose, updateOrderStatus, notify }) {
   )
 }
 
-function VerNotaModal({ order, onClose, onSendToClient, onGerarNota, onNfeStatusFix }) {
+function VerNotaModal({ order, onClose, onSendToClient, onGerarNota, updateOrderStatus }) {
   const nfe = order.nfeData
   const hasSent = !!order.nfeSentAt
 
@@ -4996,12 +4996,15 @@ function VerNotaModal({ order, onClose, onSendToClient, onGerarNota, onNfeStatus
       if (!res.ok) throw new Error(data.error || 'Erro ao buscar detalhes')
       setNfeDetails(data)
       // Corrige estado em memória se SEFAZ rejeitou mas a nota ainda consta como Emitida
-      if (data.statusSefaz && data.statusSefaz !== '100' && nfe.nfeStatus === 'AUTHORIZED' && onNfeStatusFix) {
-        onNfeStatusFix(order.id, {
-          ...nfe,
-          nfeStatus: 'REJECTED',
-          errorCode: data.statusSefaz,
-          errorMessage: data.messageSefaz || 'Nota rejeitada pelo SEFAZ',
+      // Corrige estado e status do pedido se SEFAZ rejeitou mas a nota constava como Emitida
+      if (data.statusSefaz && data.statusSefaz !== '100' && nfe.nfeStatus === 'AUTHORIZED' && updateOrderStatus) {
+        updateOrderStatus(order.id, 'Pronto', {
+          nfeData: {
+            ...nfe,
+            nfeStatus: 'REJECTED',
+            errorCode: data.statusSefaz,
+            errorMessage: data.messageSefaz || 'Nota rejeitada pelo SEFAZ',
+          },
         })
       }
     } catch (err) {
