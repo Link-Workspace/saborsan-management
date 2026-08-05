@@ -34,6 +34,7 @@ async function ensureTable() {
         ibsCbsAliqUF      DECIMAL(10,4)   NOT NULL DEFAULT 0,
         ibsCbsAliqMun     DECIMAL(10,4)   NOT NULL DEFAULT 0,
         ibsCbsAliqCbs     DECIMAL(10,4)   NOT NULL DEFAULT 0,
+        ibsCbsReducaoAliq DECIMAL(10,4)   NOT NULL DEFAULT 0,
         codigoBeneficioFiscal NVARCHAR(20) NULL,
         fiscalApproved    BIT             NOT NULL DEFAULT 0,
         approvedBy        NVARCHAR(100)   NULL,
@@ -51,6 +52,11 @@ async function ensureTable() {
         WHERE TABLE_NAME = 'ProductFiscalConfig' AND COLUMN_NAME = 'codigoBeneficioFiscal'
       )
         ALTER TABLE ProductFiscalConfig ADD codigoBeneficioFiscal NVARCHAR(20) NULL;
+      IF NOT EXISTS (
+        SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_NAME = 'ProductFiscalConfig' AND COLUMN_NAME = 'ibsCbsReducaoAliq'
+      )
+        ALTER TABLE ProductFiscalConfig ADD ibsCbsReducaoAliq DECIMAL(10,4) NOT NULL DEFAULT 0;
     END
   `;
 }
@@ -67,7 +73,7 @@ app.http('fiscal-config', {
         const result = await sql.query`
           SELECT id, productId, productName, ncm, cfop, icmsOrigin, icmsCst, icmsAliq,
                  pisCST, pisAliq, cofinsCST, cofinsAliq,
-                 ibsCbsCst, ibsCbsClassTrib, ibsCbsAliqUF, ibsCbsAliqMun, ibsCbsAliqCbs,
+                 ibsCbsCst, ibsCbsClassTrib, ibsCbsAliqUF, ibsCbsAliqMun, ibsCbsAliqCbs, ibsCbsReducaoAliq,
                  codigoBeneficioFiscal,
                  fiscalApproved, approvedBy, notes,
                  ncmSource, ncmClassifiedAt, ncmConfidence, ncmTableVersion,
@@ -83,7 +89,7 @@ app.http('fiscal-config', {
         const {
           productId, productName, ncm, cfop, icmsOrigin, icmsCst, icmsAliq,
           pisCST, pisAliq, cofinsCST, cofinsAliq,
-          ibsCbsCst, ibsCbsClassTrib, ibsCbsAliqUF, ibsCbsAliqMun, ibsCbsAliqCbs,
+          ibsCbsCst, ibsCbsClassTrib, ibsCbsAliqUF, ibsCbsAliqMun, ibsCbsAliqCbs, ibsCbsReducaoAliq,
           codigoBeneficioFiscal,
           fiscalApproved, approvedBy, notes,
         } = body;
@@ -115,6 +121,7 @@ app.http('fiscal-config', {
               ibsCbsAliqUF    = ${Number(ibsCbsAliqUF ?? 0)},
               ibsCbsAliqMun   = ${Number(ibsCbsAliqMun ?? 0)},
               ibsCbsAliqCbs   = ${Number(ibsCbsAliqCbs ?? 0)},
+              ibsCbsReducaoAliq = ${Number(ibsCbsReducaoAliq ?? 0)},
               codigoBeneficioFiscal = ${codigoBeneficioFiscal || null},
               fiscalApproved  = ${fiscalApproved ? 1 : 0},
               approvedBy      = ${approvedBy || null},
@@ -130,7 +137,7 @@ app.http('fiscal-config', {
             INSERT INTO ProductFiscalConfig (
               productId, productName, ncm, cfop, icmsOrigin, icmsCst, icmsAliq,
               pisCST, pisAliq, cofinsCST, cofinsAliq,
-              ibsCbsCst, ibsCbsClassTrib, ibsCbsAliqUF, ibsCbsAliqMun, ibsCbsAliqCbs,
+              ibsCbsCst, ibsCbsClassTrib, ibsCbsAliqUF, ibsCbsAliqMun, ibsCbsAliqCbs, ibsCbsReducaoAliq,
               codigoBeneficioFiscal,
               fiscalApproved, approvedBy, notes, ncmSource, ncmClassifiedAt
             ) VALUES (
@@ -140,7 +147,7 @@ app.http('fiscal-config', {
               ${pisCST || '07'}, ${Number(pisAliq ?? 0)},
               ${cofinsCST || '07'}, ${Number(cofinsAliq ?? 0)},
               ${cst}, ${classTrib},
-              ${Number(ibsCbsAliqUF ?? 0)}, ${Number(ibsCbsAliqMun ?? 0)}, ${Number(ibsCbsAliqCbs ?? 0)},
+              ${Number(ibsCbsAliqUF ?? 0)}, ${Number(ibsCbsAliqMun ?? 0)}, ${Number(ibsCbsAliqCbs ?? 0)}, ${Number(ibsCbsReducaoAliq ?? 0)},
               ${codigoBeneficioFiscal || null},
               ${fiscalApproved ? 1 : 0}, ${approvedBy || null}, ${notes || null},
               'manual', GETUTCDATE()

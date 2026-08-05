@@ -203,12 +203,12 @@ function mapFocusStatus(response) {
 // da Saborsan antes da emissão em produção.
 
 const FISCAL_MAP = {
-  'Pão de Queijo Tradicional': { ncm: '19059090', cfop: '5102', icmsCst: '00', icmsOrigin: 0, pisCST: '01', cofinsCST: '01', icmsAliq: 12, pisAliq: 0.65, cofinsAliq: 3.0, ibsCbsCst: null, ibsCbsClassTrib: null, ibsCbsAliqUF: 0, ibsCbsAliqMun: 0, ibsCbsAliqCbs: 0 },
-  'Mini Pizza Congelada':      { ncm: '19012000', cfop: '5102', icmsCst: '00', icmsOrigin: 0, pisCST: '01', cofinsCST: '01', icmsAliq: 12, pisAliq: 0.65, cofinsAliq: 3.0, ibsCbsCst: null, ibsCbsClassTrib: null, ibsCbsAliqUF: 0, ibsCbsAliqMun: 0, ibsCbsAliqCbs: 0 },
-  'Açaí Premium Balde':        { ncm: '20089200', cfop: '5102', icmsCst: '00', icmsOrigin: 0, pisCST: '01', cofinsCST: '01', icmsAliq: 12, pisAliq: 0.65, cofinsAliq: 3.0, ibsCbsCst: null, ibsCbsClassTrib: null, ibsCbsAliqUF: 0, ibsCbsAliqMun: 0, ibsCbsAliqCbs: 0 },
-  'Croissant Folhado':         { ncm: '19059090', cfop: '5102', icmsCst: '00', icmsOrigin: 0, pisCST: '01', cofinsCST: '01', icmsAliq: 12, pisAliq: 0.65, cofinsAliq: 3.0, ibsCbsCst: null, ibsCbsClassTrib: null, ibsCbsAliqUF: 0, ibsCbsAliqMun: 0, ibsCbsAliqCbs: 0 },
-  'Mix de Salgados':           { ncm: '21069090', cfop: '5102', icmsCst: '00', icmsOrigin: 0, pisCST: '01', cofinsCST: '01', icmsAliq: 12, pisAliq: 0.65, cofinsAliq: 3.0, ibsCbsCst: null, ibsCbsClassTrib: null, ibsCbsAliqUF: 0, ibsCbsAliqMun: 0, ibsCbsAliqCbs: 0 },
-  'Polpas de Frutas Sortidas': { ncm: '20089900', cfop: '5102', icmsCst: '00', icmsOrigin: 0, pisCST: '01', cofinsCST: '01', icmsAliq: 12, pisAliq: 0.65, cofinsAliq: 3.0, ibsCbsCst: null, ibsCbsClassTrib: null, ibsCbsAliqUF: 0, ibsCbsAliqMun: 0, ibsCbsAliqCbs: 0 },
+  'Pão de Queijo Tradicional': { ncm: '19059090', cfop: '5102', icmsCst: '00', icmsOrigin: 0, pisCST: '01', cofinsCST: '01', icmsAliq: 12, pisAliq: 0.65, cofinsAliq: 3.0, ibsCbsCst: null, ibsCbsClassTrib: null, ibsCbsAliqUF: 0, ibsCbsAliqMun: 0, ibsCbsAliqCbs: 0, ibsCbsReducaoAliq: 0 },
+  'Mini Pizza Congelada':      { ncm: '19012000', cfop: '5102', icmsCst: '00', icmsOrigin: 0, pisCST: '01', cofinsCST: '01', icmsAliq: 12, pisAliq: 0.65, cofinsAliq: 3.0, ibsCbsCst: null, ibsCbsClassTrib: null, ibsCbsAliqUF: 0, ibsCbsAliqMun: 0, ibsCbsAliqCbs: 0, ibsCbsReducaoAliq: 0 },
+  'Açaí Premium Balde':        { ncm: '20089200', cfop: '5102', icmsCst: '00', icmsOrigin: 0, pisCST: '01', cofinsCST: '01', icmsAliq: 12, pisAliq: 0.65, cofinsAliq: 3.0, ibsCbsCst: null, ibsCbsClassTrib: null, ibsCbsAliqUF: 0, ibsCbsAliqMun: 0, ibsCbsAliqCbs: 0, ibsCbsReducaoAliq: 0 },
+  'Croissant Folhado':         { ncm: '19059090', cfop: '5102', icmsCst: '00', icmsOrigin: 0, pisCST: '01', cofinsCST: '01', icmsAliq: 12, pisAliq: 0.65, cofinsAliq: 3.0, ibsCbsCst: null, ibsCbsClassTrib: null, ibsCbsAliqUF: 0, ibsCbsAliqMun: 0, ibsCbsAliqCbs: 0, ibsCbsReducaoAliq: 0 },
+  'Mix de Salgados':           { ncm: '21069090', cfop: '5102', icmsCst: '00', icmsOrigin: 0, pisCST: '01', cofinsCST: '01', icmsAliq: 12, pisAliq: 0.65, cofinsAliq: 3.0, ibsCbsCst: null, ibsCbsClassTrib: null, ibsCbsAliqUF: 0, ibsCbsAliqMun: 0, ibsCbsAliqCbs: 0, ibsCbsReducaoAliq: 0 },
+  'Polpas de Frutas Sortidas': { ncm: '20089900', cfop: '5102', icmsCst: '00', icmsOrigin: 0, pisCST: '01', cofinsCST: '01', icmsAliq: 12, pisAliq: 0.65, cofinsAliq: 3.0, ibsCbsCst: null, ibsCbsClassTrib: null, ibsCbsAliqUF: 0, ibsCbsAliqMun: 0, ibsCbsAliqCbs: 0, ibsCbsReducaoAliq: 0 },
 };
 
 // Fallback para produtos não mapeados: PIS/COFINS CST 07 = isento, ICMS zerado.
@@ -216,7 +216,7 @@ const FISCAL_MAP = {
 const DEFAULT_FISCAL = {
   ncm: '21069090', cfop: '5102', icmsCst: '41', icmsOrigin: 0,
   pisCST: '07', cofinsCST: '07', icmsAliq: 0, pisAliq: 0, cofinsAliq: 0,
-  ibsCbsCst: null, ibsCbsClassTrib: null, ibsCbsAliqUF: 0, ibsCbsAliqMun: 0, ibsCbsAliqCbs: 0,
+  ibsCbsCst: null, ibsCbsClassTrib: null, ibsCbsAliqUF: 0, ibsCbsAliqMun: 0, ibsCbsAliqCbs: 0, ibsCbsReducaoAliq: 0,
 };
 
 function round2(v) { return Number(Number(v ?? 0).toFixed(2)); }
@@ -293,8 +293,6 @@ function buildNfePayload(order, items, { stateRegistrationIndicator = 9, stateRe
       inclui_no_total: 1,
       icms_origem: f.icmsOrigin,
       icms_situacao_tributaria: f.icmsCst,
-      pis_situacao_tributaria: f.pisCST,
-      cofins_situacao_tributaria: f.cofinsCST,
     };
 
     // CST 41 obriga o envio do cBenef à Focus NF-e
@@ -303,14 +301,19 @@ function buildNfePayload(order, items, { stateRegistrationIndicator = 9, stateRe
       itemObj.codigo_beneficio_fiscal = cBenef;
     }
 
-    if (f.icmsAliq > 0) {
+    // CST 00: modBC deve preceder vBC no XML — campos agrupados em ordem antes de PIS/COFINS
+    if (String(f.icmsCst).trim() === '00') {
+      // CST 00 (tributação integral) exige alíquota > 0; fallback para base do FISCAL_MAP se DB retornar 0
+      const icmsAliqEfetiva = Number(f.icmsAliq) > 0 ? Number(f.icmsAliq) : (Number(base.icmsAliq) || 0);
       Object.assign(itemObj, {
         icms_modalidade_base_calculo: 3,
         icms_base_calculo: icmsBase,
-        icms_aliquota: f.icmsAliq,
-        icms_valor: icmsVal,
+        icms_aliquota: icmsAliqEfetiva,
+        icms_valor: round2(icmsBase * icmsAliqEfetiva / 100),
       });
     }
+
+    itemObj.pis_situacao_tributaria = f.pisCST;
     if (f.pisAliq > 0) {
       Object.assign(itemObj, {
         pis_base_calculo: gross,
@@ -318,6 +321,8 @@ function buildNfePayload(order, items, { stateRegistrationIndicator = 9, stateRe
         pis_valor: pisVal,
       });
     }
+
+    itemObj.cofins_situacao_tributaria = f.cofinsCST;
     if (f.cofinsAliq > 0) {
       Object.assign(itemObj, {
         cofins_base_calculo: gross,
@@ -328,23 +333,34 @@ function buildNfePayload(order, items, { stateRegistrationIndicator = 9, stateRe
 
     // IBS/CBS — Reforma Tributária (LC 214/2024)
     if (f.ibsCbsCst) {
-      const ibsUfVal  = round2(gross * (Number(f.ibsCbsAliqUF)  || 0) / 100);
-      const ibsMunVal = round2(gross * (Number(f.ibsCbsAliqMun) || 0) / 100);
-      const cbsVal    = round2(gross * (Number(f.ibsCbsAliqCbs) || 0) / 100);
+      const reducao       = Number(f.ibsCbsReducaoAliq) || 0;
+      const fator         = reducao > 0 ? (1 - reducao / 100) : 1;
+      const ibsUfAliq     = Number(f.ibsCbsAliqUF)  || 0;
+      const ibsMunAliq    = Number(f.ibsCbsAliqMun) || 0;
+      const cbsAliq       = Number(f.ibsCbsAliqCbs) || 0;
+      const ibsUfEfetiva  = round4(ibsUfAliq  * fator);
+      const ibsMunEfetiva = round4(ibsMunAliq * fator);
+      const cbsEfetiva    = round4(cbsAliq    * fator);
+      const ibsUfVal      = round2(gross * ibsUfEfetiva  / 100);
+      const ibsMunVal     = round2(gross * ibsMunEfetiva / 100);
+      const cbsVal        = round2(gross * cbsEfetiva    / 100);
       Object.assign(itemObj, {
-        ibs_cbs_situacao_tributaria:   f.ibsCbsCst,
+        ibs_cbs_situacao_tributaria:      f.ibsCbsCst,
         ibs_cbs_classificacao_tributaria: f.ibsCbsClassTrib,
-        ibs_cbs_base_calculo:          gross,
-        ibs_uf_aliquota:               Number(f.ibsCbsAliqUF)  || 0,
-        ibs_uf_aliquota_efetiva:       Number(f.ibsCbsAliqUF)  || 0,
-        ibs_uf_valor:                  ibsUfVal,
-        ibs_mun_aliquota:              Number(f.ibsCbsAliqMun) || 0,
-        ibs_mun_aliquota_efetiva:      Number(f.ibsCbsAliqMun) || 0,
-        ibs_mun_valor:                 ibsMunVal,
-        ibs_valor_total:               round2(ibsUfVal + ibsMunVal),
-        cbs_aliquota:                  Number(f.ibsCbsAliqCbs) || 0,
-        cbs_aliquota_efetiva:          Number(f.ibsCbsAliqCbs) || 0,
-        cbs_valor:                     cbsVal,
+        ibs_cbs_base_calculo:             gross,
+        ibs_uf_aliquota:                  ibsUfAliq,
+        ...(reducao > 0 ? { ibs_uf_percentual_reducao_aliquota: reducao } : {}),
+        ibs_uf_aliquota_efetiva:          ibsUfEfetiva,
+        ibs_uf_valor:                     ibsUfVal,
+        ibs_mun_aliquota:                 ibsMunAliq,
+        ...(reducao > 0 ? { ibs_mun_percentual_reducao_aliquota: reducao } : {}),
+        ibs_mun_aliquota_efetiva:         ibsMunEfetiva,
+        ibs_mun_valor:                    ibsMunVal,
+        ibs_valor_total:                  round2(ibsUfVal + ibsMunVal),
+        cbs_aliquota:                     cbsAliq,
+        ...(reducao > 0 ? { cbs_percentual_reducao_aliquota: reducao } : {}),
+        cbs_aliquota_efetiva:             cbsEfetiva,
+        cbs_valor:                        cbsVal,
       });
     }
 
@@ -406,6 +422,7 @@ async function ensureTable() {
         ibsCbsAliqUF           DECIMAL(10,4)   NOT NULL DEFAULT 0,
         ibsCbsAliqMun          DECIMAL(10,4)   NOT NULL DEFAULT 0,
         ibsCbsAliqCbs          DECIMAL(10,4)   NOT NULL DEFAULT 0,
+        ibsCbsReducaoAliq      DECIMAL(10,4)   NOT NULL DEFAULT 0,
         codigoBeneficioFiscal  NVARCHAR(20)    NULL,
         fiscalApproved         BIT             NOT NULL DEFAULT 0,
         approvedBy             NVARCHAR(100)   NULL,
@@ -423,6 +440,11 @@ async function ensureTable() {
         WHERE TABLE_NAME = 'ProductFiscalConfig' AND COLUMN_NAME = 'codigoBeneficioFiscal'
       )
         ALTER TABLE ProductFiscalConfig ADD codigoBeneficioFiscal NVARCHAR(20) NULL;
+      IF NOT EXISTS (
+        SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_NAME = 'ProductFiscalConfig' AND COLUMN_NAME = 'ibsCbsReducaoAliq'
+      )
+        ALTER TABLE ProductFiscalConfig ADD ibsCbsReducaoAliq DECIMAL(10,4) NOT NULL DEFAULT 0;
     END
   `;
   await sql.query`
@@ -489,7 +511,7 @@ async function loadFiscalConfigs() {
       SELECT productName, ncm, cfop, icmsOrigin, icmsCst, icmsAliq,
              pisCST, pisAliq, cofinsCST, cofinsAliq,
              ibsCbsCst, ibsCbsClassTrib, ibsCbsAliqUF, ibsCbsAliqMun, ibsCbsAliqCbs,
-             codigoBeneficioFiscal
+             ibsCbsReducaoAliq, codigoBeneficioFiscal
       FROM ProductFiscalConfig
     `;
     const map = {};

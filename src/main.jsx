@@ -4189,8 +4189,8 @@ function FiscalConfigSection({ notify }) {
   const defaultForm = {
     ncm: '21069090', cfop: '5102', icmsOrigin: '0', icmsCst: '400', icmsAliq: '0',
     pisCST: '07', pisAliq: '0', cofinsCST: '07', cofinsAliq: '0',
-    ibsCbsCst: '', ibsCbsClassTrib: '', ibsCbsAliqUF: '0', ibsCbsAliqMun: '0', ibsCbsAliqCbs: '0',
-    fiscalApproved: false, approvedBy: '', notes: '',
+    ibsCbsCst: '', ibsCbsClassTrib: '', ibsCbsAliqUF: '0', ibsCbsAliqMun: '0', ibsCbsAliqCbs: '0', ibsCbsReducaoAliq: '0',
+    fiscalApproved: false, approvedBy: '', notes: ''
   }
   const [form, setForm] = useState(defaultForm)
 
@@ -4221,7 +4221,7 @@ function FiscalConfigSection({ notify }) {
       cofinsAliq: String(cfg.cofinsAliq ?? 0),
       ibsCbsCst: cfg.ibsCbsCst || '', ibsCbsClassTrib: cfg.ibsCbsClassTrib || '',
       ibsCbsAliqUF: String(cfg.ibsCbsAliqUF ?? 0), ibsCbsAliqMun: String(cfg.ibsCbsAliqMun ?? 0),
-      ibsCbsAliqCbs: String(cfg.ibsCbsAliqCbs ?? 0),
+      ibsCbsAliqCbs: String(cfg.ibsCbsAliqCbs ?? 0), ibsCbsReducaoAliq: String(cfg.ibsCbsReducaoAliq ?? 0),
       fiscalApproved: !!cfg.fiscalApproved, approvedBy: cfg.approvedBy || '', notes: cfg.notes || '',
     } : { ...defaultForm })
     setEditProduct(product)
@@ -4244,7 +4244,7 @@ function FiscalConfigSection({ notify }) {
           ibsCbsCst: form.ibsCbsCst.trim() || null,
           ibsCbsClassTrib: form.ibsCbsClassTrib.trim() || null,
           ibsCbsAliqUF: Number(form.ibsCbsAliqUF), ibsCbsAliqMun: Number(form.ibsCbsAliqMun),
-          ibsCbsAliqCbs: Number(form.ibsCbsAliqCbs),
+          ibsCbsAliqCbs: Number(form.ibsCbsAliqCbs), ibsCbsReducaoAliq: Number(form.ibsCbsReducaoAliq),
           fiscalApproved: form.fiscalApproved,
           approvedBy: form.approvedBy.trim() || null,
           notes: form.notes.trim() || null,
@@ -4320,6 +4320,7 @@ function FiscalConfigSection({ notify }) {
                   <label>Alíquota IBS Estado (%)<input type="number" step="0.0001" min="0" value={form.ibsCbsAliqUF} onChange={e => setF('ibsCbsAliqUF', e.target.value)} /></label>
                   <label>Alíquota IBS Município (%)<input type="number" step="0.0001" min="0" value={form.ibsCbsAliqMun} onChange={e => setF('ibsCbsAliqMun', e.target.value)} /></label>
                   <label>Alíquota CBS (%)<input type="number" step="0.0001" min="0" value={form.ibsCbsAliqCbs} onChange={e => setF('ibsCbsAliqCbs', e.target.value)} /></label>
+                  <label>% Redução de alíquota (IBS/CBS)<input type="number" step="0.01" min="0" max="100" placeholder="Ex: 60" value={form.ibsCbsReducaoAliq} onChange={e => setF('ibsCbsReducaoAliq', e.target.value)} /></label>
                 </div>
               </div>
 
