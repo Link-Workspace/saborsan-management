@@ -25,8 +25,8 @@ function normalizeCode(raw) {
   return String(raw ?? '').replace(/\D/g, '').slice(0, 10);
 }
 
-async function ensureTables() {
-  await sql.query`
+async function ensureTables(pool) {
+  await pool.request().query(`
     IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'NcmCodes')
     BEGIN
       CREATE TABLE NcmCodes (
@@ -48,9 +48,9 @@ async function ensureTables() {
       );
       CREATE INDEX IX_NcmCodes_Active ON NcmCodes (active);
     END
-  `;
+  `);
 
-  await sql.query`
+  await pool.request().query(`
     IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'NcmClassificationLog')
     BEGIN
       CREATE TABLE NcmClassificationLog (
@@ -68,35 +68,35 @@ async function ensureTables() {
       );
       CREATE INDEX IX_NcmClassificationLog_ProductId ON NcmClassificationLog (productId);
     END
-  `;
+  `);
 
   // Columns tracking AI classification origin on ProductFiscalConfig
-  await sql.query`
+  await pool.request().query(`
     IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
                    WHERE TABLE_NAME = 'ProductFiscalConfig' AND COLUMN_NAME = 'ncmSource')
     ALTER TABLE ProductFiscalConfig ADD ncmSource NVARCHAR(20) NULL
-  `;
-  await sql.query`
+  `);
+  await pool.request().query(`
     IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
                    WHERE TABLE_NAME = 'ProductFiscalConfig' AND COLUMN_NAME = 'ncmClassifiedAt')
     ALTER TABLE ProductFiscalConfig ADD ncmClassifiedAt DATETIME2 NULL
-  `;
-  await sql.query`
+  `);
+  await pool.request().query(`
     IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
                    WHERE TABLE_NAME = 'ProductFiscalConfig' AND COLUMN_NAME = 'ncmTableVersion')
     ALTER TABLE ProductFiscalConfig ADD ncmTableVersion NVARCHAR(50) NULL
-  `;
-  await sql.query`
+  `);
+  await pool.request().query(`
     IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
                    WHERE TABLE_NAME = 'ProductFiscalConfig' AND COLUMN_NAME = 'ncmConfidence')
     ALTER TABLE ProductFiscalConfig ADD ncmConfidence DECIMAL(5,2) NULL
-  `;
+  `);
 }
 
 async function runSync(context) {
-  await sql.connect(sqlConfig);
+  const pool = await new sql.ConnectionPool(sqlConfig).connect();
   try {
-    await ensureTables();
+    await ensureTables(pool);
 
     context.log?.('Fetching NCM table from Siscomex...');
     const res = await fetch(SISCOMEX_URL, {
@@ -119,7 +119,7 @@ async function runSync(context) {
     const parsed = [];
     for (const item of items) {
       const code = normalizeCode(item.Codigo ?? item.codigo ?? item.code);
-      const description = String(item.Descricao ?? item.descricao ?? item.description ?? '').trim();
+      const description = String(item.Descricao ?? item.descricao ?? item.description ?? '').trim().slice(0, 1000);
       if (!code || !description) continue;
 
       const ve = parseDate(item.DataFim ?? item.dataFim ?? item.validityEnd ?? null);
@@ -129,10 +129,10 @@ async function runSync(context) {
         validityStart: parseDate(item.DataInicio ?? item.dataInicio ?? item.validityStart ?? null),
         validityEnd: ve,
         lastChangedAt: parseDate(item.DataAlteracao ?? item.dataAlteracao ?? null),
-        legalActType: String(item.TipoAto ?? item.tipoAto ?? '').trim() || null,
-        legalActNumber: String(item.NumeroAto ?? item.numeroAto ?? '').trim() || null,
-        legalActYear: String(item.AnoAto ?? item.anoAto ?? '').trim() || null,
-        legalActUrl: String(item.UrlAto ?? item.urlAto ?? '').trim() || null,
+        legalActType: (String(item.TipoAto ?? item.tipoAto ?? '').trim() || null)?.slice(0, 100),
+        legalActNumber: (String(item.NumeroAto ?? item.numeroAto ?? '').trim() || null)?.slice(0, 50),
+        legalActYear: (String(item.AnoAto ?? item.anoAto ?? '').trim() || null)?.slice(0, 10),
+        legalActUrl: (String(item.UrlAto ?? item.urlAto ?? '').trim() || null)?.slice(0, 500),
         // Active if no expiry date or expiry is in the future
         active: !ve || new Date(ve) >= new Date() ? 1 : 0,
       });
@@ -145,7 +145,7 @@ async function runSync(context) {
     for (let i = 0; i < parsed.length; i += CHUNK) {
       await Promise.all(
         parsed.slice(i, i + CHUNK).map((item) => {
-          const r = new sql.Request();
+          const r = pool.request();
           r.input('code', sql.NVarChar(10), item.code);
           r.input('desc', sql.NVarChar(1000), item.description);
           r.input('vs', sql.Date, item.validityStart);
@@ -186,20 +186,20 @@ async function runSync(context) {
     }
 
     // Mark codes not touched in this sync as inactive
-    const deactivateReq = new sql.Request();
+    const deactivateReq = pool.request();
     deactivateReq.input('syncStart', sql.DateTime2, syncStart);
     const deactivated = await deactivateReq.query(`
       UPDATE NcmCodes SET active = 0, updatedAt = GETUTCDATE()
       WHERE active = 1 AND syncedAt < @syncStart
     `);
 
-    const stats = await sql.query`
+    const stats = await pool.request().query(`
       SELECT
         COUNT(*)                                                   AS total,
         SUM(CASE WHEN active = 1 THEN 1 ELSE 0 END)               AS activeCount,
         CONVERT(NVARCHAR(50), MAX(syncedAt), 127)                  AS lastSyncedAt
       FROM NcmCodes
-    `;
+    `);
 
     return {
       success: true,
@@ -208,7 +208,7 @@ async function runSync(context) {
       ...stats.recordset[0],
     };
   } finally {
-    try { await sql.close(); } catch (_) {}
+    await pool.close();
   }
 }
 
@@ -220,19 +220,19 @@ app.http('ncm-sync', {
   handler: async (request, context) => {
     try {
       if (request.method === 'GET') {
-        await sql.connect(sqlConfig);
+        const pool = await new sql.ConnectionPool(sqlConfig).connect();
         try {
-          await ensureTables();
-          const stats = await sql.query`
+          await ensureTables(pool);
+          const stats = await pool.request().query(`
             SELECT
               COUNT(*)                                             AS total,
               SUM(CASE WHEN active = 1 THEN 1 ELSE 0 END)         AS activeCount,
               CONVERT(NVARCHAR(50), MAX(syncedAt), 127)            AS lastSyncedAt
             FROM NcmCodes
-          `;
+          `);
           return { jsonBody: { ...stats.recordset[0] } };
         } finally {
-          try { await sql.close(); } catch (_) {}
+          await pool.close();
         }
       }
 
