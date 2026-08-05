@@ -4220,8 +4220,11 @@ function FiscalConfigSection({ notify }) {
       pisAliq: String(cfg.pisAliq ?? 0), cofinsCST: cfg.cofinsCST || '07',
       cofinsAliq: String(cfg.cofinsAliq ?? 0),
       ibsCbsCst: cfg.ibsCbsCst || '', ibsCbsClassTrib: cfg.ibsCbsClassTrib || '',
-      ibsCbsAliqUF: String(cfg.ibsCbsAliqUF ?? 0), ibsCbsAliqMun: String(cfg.ibsCbsAliqMun ?? 0),
-      ibsCbsAliqCbs: String(cfg.ibsCbsAliqCbs ?? 0), ibsCbsReducaoAliq: String(cfg.ibsCbsReducaoAliq ?? 0),
+      // Se IBS ativo mas alíquota zerada, mostrar o default 2026 que a emissão já usa
+      ibsCbsAliqUF: String(Number(cfg.ibsCbsAliqUF) || (cfg.ibsCbsCst ? 0.1 : 0)),
+      ibsCbsAliqMun: String(cfg.ibsCbsAliqMun ?? 0),
+      ibsCbsAliqCbs: String(Number(cfg.ibsCbsAliqCbs) || (cfg.ibsCbsCst ? 0.9 : 0)),
+      ibsCbsReducaoAliq: String(cfg.ibsCbsReducaoAliq ?? 0),
       fiscalApproved: !!cfg.fiscalApproved, approvedBy: cfg.approvedBy || '', notes: cfg.notes || '',
     } : { ...defaultForm })
     setEditProduct(product)

@@ -223,6 +223,11 @@ function round2(v) { return Number(Number(v ?? 0).toFixed(2)); }
 function round4(v) { return Number(Number(v ?? 0).toFixed(4)); }
 function digits(v) { return v ? String(v).replace(/\D/g, '') : undefined; }
 
+// Alíquotas transitórias 2026 (LC 214/2024) — usadas quando o produto não tem valor configurado
+const IBS_UF_ALIQ_DEFAULT  = Number(process.env.IBS_2026_UF_ALIQ  ?? 0.1);
+const IBS_MUN_ALIQ_DEFAULT = Number(process.env.IBS_2026_MUN_ALIQ ?? 0);
+const CBS_ALIQ_DEFAULT     = Number(process.env.IBS_2026_CBS_ALIQ  ?? 0.9);
+
 // ── Helpers de classificação fiscal (IE / consumidor final) ───────────────────
 
 function classificarIEFocus(numero, situacao, ufRetorno) {
@@ -335,9 +340,10 @@ function buildNfePayload(order, items, { stateRegistrationIndicator = 9, stateRe
     if (f.ibsCbsCst) {
       const reducao       = Number(f.ibsCbsReducaoAliq) || 0;
       const fator         = reducao > 0 ? (1 - reducao / 100) : 1;
-      const ibsUfAliq     = Number(f.ibsCbsAliqUF)  || 0;
-      const ibsMunAliq    = Number(f.ibsCbsAliqMun) || 0;
-      const cbsAliq       = Number(f.ibsCbsAliqCbs) || 0;
+      // Fallback para alíquotas transitórias de 2026 quando o produto não tem valor salvo
+      const ibsUfAliq     = Number(f.ibsCbsAliqUF)  || IBS_UF_ALIQ_DEFAULT;
+      const ibsMunAliq    = Number(f.ibsCbsAliqMun) > 0 ? Number(f.ibsCbsAliqMun) : IBS_MUN_ALIQ_DEFAULT;
+      const cbsAliq       = Number(f.ibsCbsAliqCbs) || CBS_ALIQ_DEFAULT;
       const ibsUfEfetiva  = round4(ibsUfAliq  * fator);
       const ibsMunEfetiva = round4(ibsMunAliq * fator);
       const cbsEfetiva    = round4(cbsAliq    * fator);
