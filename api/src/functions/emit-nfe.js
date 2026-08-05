@@ -202,12 +202,12 @@ function mapFocusStatus(response) {
 // da Saborsan antes da emissão em produção.
 
 const FISCAL_MAP = {
-  'Pão de Queijo Tradicional': { ncm: '19059090', cfop: '5102', icmsCst: '00', icmsOrigin: 0, pisCST: '01', cofinsCST: '01', icmsAliq: 12, pisAliq: 0.65, cofinsAliq: 3.0 },
-  'Mini Pizza Congelada':      { ncm: '19012000', cfop: '5102', icmsCst: '00', icmsOrigin: 0, pisCST: '01', cofinsCST: '01', icmsAliq: 12, pisAliq: 0.65, cofinsAliq: 3.0 },
-  'Açaí Premium Balde':        { ncm: '20089200', cfop: '5102', icmsCst: '00', icmsOrigin: 0, pisCST: '01', cofinsCST: '01', icmsAliq: 12, pisAliq: 0.65, cofinsAliq: 3.0 },
-  'Croissant Folhado':         { ncm: '19059090', cfop: '5102', icmsCst: '00', icmsOrigin: 0, pisCST: '01', cofinsCST: '01', icmsAliq: 12, pisAliq: 0.65, cofinsAliq: 3.0 },
-  'Mix de Salgados':           { ncm: '21069090', cfop: '5102', icmsCst: '00', icmsOrigin: 0, pisCST: '01', cofinsCST: '01', icmsAliq: 12, pisAliq: 0.65, cofinsAliq: 3.0 },
-  'Polpas de Frutas Sortidas': { ncm: '20089900', cfop: '5102', icmsCst: '00', icmsOrigin: 0, pisCST: '01', cofinsCST: '01', icmsAliq: 12, pisAliq: 0.65, cofinsAliq: 3.0 },
+  'Pão de Queijo Tradicional': { ncm: '19059090', cfop: '5102', icmsCst: '00', icmsOrigin: 0, pisCST: '01', cofinsCST: '01', icmsAliq: 12, pisAliq: 0.65, cofinsAliq: 3.0, ibsCbsCst: null, ibsCbsClassTrib: null, ibsCbsAliqUF: 0, ibsCbsAliqMun: 0, ibsCbsAliqCbs: 0 },
+  'Mini Pizza Congelada':      { ncm: '19012000', cfop: '5102', icmsCst: '00', icmsOrigin: 0, pisCST: '01', cofinsCST: '01', icmsAliq: 12, pisAliq: 0.65, cofinsAliq: 3.0, ibsCbsCst: null, ibsCbsClassTrib: null, ibsCbsAliqUF: 0, ibsCbsAliqMun: 0, ibsCbsAliqCbs: 0 },
+  'Açaí Premium Balde':        { ncm: '20089200', cfop: '5102', icmsCst: '00', icmsOrigin: 0, pisCST: '01', cofinsCST: '01', icmsAliq: 12, pisAliq: 0.65, cofinsAliq: 3.0, ibsCbsCst: null, ibsCbsClassTrib: null, ibsCbsAliqUF: 0, ibsCbsAliqMun: 0, ibsCbsAliqCbs: 0 },
+  'Croissant Folhado':         { ncm: '19059090', cfop: '5102', icmsCst: '00', icmsOrigin: 0, pisCST: '01', cofinsCST: '01', icmsAliq: 12, pisAliq: 0.65, cofinsAliq: 3.0, ibsCbsCst: null, ibsCbsClassTrib: null, ibsCbsAliqUF: 0, ibsCbsAliqMun: 0, ibsCbsAliqCbs: 0 },
+  'Mix de Salgados':           { ncm: '21069090', cfop: '5102', icmsCst: '00', icmsOrigin: 0, pisCST: '01', cofinsCST: '01', icmsAliq: 12, pisAliq: 0.65, cofinsAliq: 3.0, ibsCbsCst: null, ibsCbsClassTrib: null, ibsCbsAliqUF: 0, ibsCbsAliqMun: 0, ibsCbsAliqCbs: 0 },
+  'Polpas de Frutas Sortidas': { ncm: '20089900', cfop: '5102', icmsCst: '00', icmsOrigin: 0, pisCST: '01', cofinsCST: '01', icmsAliq: 12, pisAliq: 0.65, cofinsAliq: 3.0, ibsCbsCst: null, ibsCbsClassTrib: null, ibsCbsAliqUF: 0, ibsCbsAliqMun: 0, ibsCbsAliqCbs: 0 },
 };
 
 // Fallback para produtos não mapeados: PIS/COFINS CST 07 = isento, ICMS zerado.
@@ -215,6 +215,7 @@ const FISCAL_MAP = {
 const DEFAULT_FISCAL = {
   ncm: '21069090', cfop: '5102', icmsCst: '41', icmsOrigin: 0,
   pisCST: '07', cofinsCST: '07', icmsAliq: 0, pisAliq: 0, cofinsAliq: 0,
+  ibsCbsCst: null, ibsCbsClassTrib: null, ibsCbsAliqUF: 0, ibsCbsAliqMun: 0, ibsCbsAliqCbs: 0,
 };
 
 function round2(v) { return Number(Number(v ?? 0).toFixed(2)); }
@@ -256,7 +257,7 @@ function extrairIEDaResposta(data, targetUf) {
   return classificarIEFocus(num, sit, ufRetorno);
 }
 
-function buildNfePayload(order, items, { stateRegistrationIndicator = 9, stateRegistration = null, purchasePurpose = 'consumo' } = {}) {
+function buildNfePayload(order, items, { stateRegistrationIndicator = 9, stateRegistration = null, purchasePurpose = 'consumo', fiscalConfigs = {} } = {}) {
   const cityStr = String(order.clientCity || '').trim();
   const uf = cityStr.includes(' - ') ? cityStr.split(' - ').pop().trim() : 'SC';
   const city = cityStr.includes(' - ') ? cityStr.split(' - ')[0].trim() : (cityStr || 'Lages');
@@ -264,7 +265,11 @@ function buildNfePayload(order, items, { stateRegistrationIndicator = 9, stateRe
   const productTotal = round2(items.reduce((s, i) => s + i.quantity * i.unitPrice, 0));
 
   const nfeItems = items.map((item, index) => {
-    const f = FISCAL_MAP[item.productName] || DEFAULT_FISCAL;
+    const nameKey = item.productName.toLowerCase();
+    const dbCfg = fiscalConfigs[nameKey] || fiscalConfigs[item.productName] || null;
+    const base = FISCAL_MAP[item.productName] || DEFAULT_FISCAL;
+    // DB config overrides hardcoded map values
+    const f = dbCfg ? { ...base, ...dbCfg } : base;
     const gross = round2(item.quantity * item.unitPrice);
     const icmsBase = gross;
     const icmsVal = round2(icmsBase * f.icmsAliq / 100);
@@ -314,6 +319,28 @@ function buildNfePayload(order, items, { stateRegistrationIndicator = 9, stateRe
       });
     }
 
+    // IBS/CBS — Reforma Tributária (LC 214/2024)
+    if (f.ibsCbsCst) {
+      const ibsUfVal  = round2(gross * (Number(f.ibsCbsAliqUF)  || 0) / 100);
+      const ibsMunVal = round2(gross * (Number(f.ibsCbsAliqMun) || 0) / 100);
+      const cbsVal    = round2(gross * (Number(f.ibsCbsAliqCbs) || 0) / 100);
+      Object.assign(itemObj, {
+        ibs_cbs_situacao_tributaria:   f.ibsCbsCst,
+        ibs_cbs_classificacao_tributaria: f.ibsCbsClassTrib,
+        ibs_cbs_base_calculo:          gross,
+        ibs_uf_aliquota:               Number(f.ibsCbsAliqUF)  || 0,
+        ibs_uf_aliquota_efetiva:       Number(f.ibsCbsAliqUF)  || 0,
+        ibs_uf_valor:                  ibsUfVal,
+        ibs_mun_aliquota:              Number(f.ibsCbsAliqMun) || 0,
+        ibs_mun_aliquota_efetiva:      Number(f.ibsCbsAliqMun) || 0,
+        ibs_mun_valor:                 ibsMunVal,
+        ibs_valor_total:               round2(ibsUfVal + ibsMunVal),
+        cbs_aliquota:                  Number(f.ibsCbsAliqCbs) || 0,
+        cbs_aliquota_efetiva:          Number(f.ibsCbsAliqCbs) || 0,
+        cbs_valor:                     cbsVal,
+      });
+    }
+
     return itemObj;
   });
 
@@ -346,9 +373,42 @@ function buildNfePayload(order, items, { stateRegistrationIndicator = 9, stateRe
   };
 }
 
-// ── SQL: ensure table exists ──────────────────────────────────────────────────
+// ── SQL: ensure tables ───────────────────────────────────────────────────────
 
 async function ensureTable() {
+  await sql.query`
+    IF NOT EXISTS (
+      SELECT 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'ProductFiscalConfig'
+    )
+    BEGIN
+      CREATE TABLE ProductFiscalConfig (
+        id                INT IDENTITY(1,1) PRIMARY KEY,
+        productId         NVARCHAR(100)   NOT NULL,
+        productName       NVARCHAR(255)   NOT NULL,
+        ncm               NVARCHAR(10)    NOT NULL DEFAULT '21069090',
+        cfop              NVARCHAR(5)     NOT NULL DEFAULT '5102',
+        icmsOrigin        INT             NOT NULL DEFAULT 0,
+        icmsCst           NVARCHAR(5)     NOT NULL DEFAULT '400',
+        icmsAliq          DECIMAL(10,4)   NOT NULL DEFAULT 0,
+        pisCST            NVARCHAR(3)     NOT NULL DEFAULT '07',
+        pisAliq           DECIMAL(10,4)   NOT NULL DEFAULT 0,
+        cofinsCST         NVARCHAR(3)     NOT NULL DEFAULT '07',
+        cofinsAliq        DECIMAL(10,4)   NOT NULL DEFAULT 0,
+        ibsCbsCst         NVARCHAR(5)     NULL,
+        ibsCbsClassTrib   NVARCHAR(10)    NULL,
+        ibsCbsAliqUF      DECIMAL(10,4)   NOT NULL DEFAULT 0,
+        ibsCbsAliqMun     DECIMAL(10,4)   NOT NULL DEFAULT 0,
+        ibsCbsAliqCbs     DECIMAL(10,4)   NOT NULL DEFAULT 0,
+        fiscalApproved    BIT             NOT NULL DEFAULT 0,
+        approvedBy        NVARCHAR(100)   NULL,
+        notes             NVARCHAR(500)   NULL,
+        createdAt         DATETIME2       NOT NULL DEFAULT GETUTCDATE(),
+        updatedAt         DATETIME2       NOT NULL DEFAULT GETUTCDATE(),
+        CONSTRAINT UQ_ProductFiscalConfig_ProductId UNIQUE (productId)
+      );
+      CREATE INDEX IX_ProductFiscalConfig_Name ON ProductFiscalConfig (productName);
+    END
+  `;
   await sql.query`
     IF NOT EXISTS (
       SELECT 1 FROM INFORMATION_SCHEMA.TABLES
@@ -379,6 +439,26 @@ async function ensureTable() {
       )
     END
   `;
+}
+
+// ── Load fiscal configs from DB (keyed by lowercase product name) ─────────────
+
+async function loadFiscalConfigs() {
+  try {
+    const result = await sql.query`
+      SELECT productName, ncm, cfop, icmsOrigin, icmsCst, icmsAliq,
+             pisCST, pisAliq, cofinsCST, cofinsAliq,
+             ibsCbsCst, ibsCbsClassTrib, ibsCbsAliqUF, ibsCbsAliqMun, ibsCbsAliqCbs
+      FROM ProductFiscalConfig
+    `;
+    const map = {};
+    for (const row of result.recordset) {
+      map[row.productName.toLowerCase()] = row;
+    }
+    return map;
+  } catch {
+    return {};
+  }
 }
 
 // ── Azure Function handler ────────────────────────────────────────────────────
@@ -697,6 +777,27 @@ app.http('emit-nfe', {
           return { status: 422, jsonBody: { error: 'Pedido sem itens cadastrados' } };
         }
 
+        // ── Carrega configurações fiscais por produto ────────────────────────
+        const fiscalConfigs = await loadFiscalConfigs();
+
+        // ── Valida IBS/CBS antes de qualquer outra coisa ─────────────────────
+        const semIbsCbs = items.filter((item) => {
+          const cfg = fiscalConfigs[item.productName.toLowerCase()];
+          return !cfg || !cfg.ibsCbsCst;
+        });
+        if (semIbsCbs.length > 0) {
+          const nomes = semIbsCbs.map((i) => `"${i.productName}"`).join(', ');
+          return {
+            status: 422,
+            jsonBody: {
+              status: 'VALIDATION_ERROR',
+              errorMessage:
+                `IBS/CBS não configurado para: ${nomes}. ` +
+                'Acesse Configurações → Configuração Fiscal e preencha o CST e a Classificação Tributária de cada produto.',
+            },
+          };
+        }
+
         // ── Consulta e validação fiscal do destinatário ──────────────────────
         // Prioridade: corpo da requisição > salvo no pedido > padrão 'consumo'
         const purchasePurpose = body.purchasePurpose || order.purchasePurpose || 'consumo';
@@ -836,7 +937,7 @@ app.http('emit-nfe', {
         `;
         const docId = createRes.recordset[0].id;
         const reference = createNfeReference(docId);
-        const payload = buildNfePayload(order, items, { stateRegistrationIndicator, stateRegistration, purchasePurpose });
+        const payload = buildNfePayload(order, items, { stateRegistrationIndicator, stateRegistration, purchasePurpose, fiscalConfigs });
 
         await sql.query`
           UPDATE GestaoFiscalDocuments

@@ -3987,6 +3987,188 @@ function ReportCard({ icon: Icon, title, value, text }) {
   return <article className="reportCard"><Icon size={28} /><span>{title}</span><h3>{value}</h3><p>{text}</p></article>
 }
 
+function FiscalConfigSection({ notify }) {
+  const [loading, setLoading] = useState(false)
+  const [configs, setConfigs] = useState([])
+  const [products, setProducts] = useState([])
+  const [editProduct, setEditProduct] = useState(null)
+  const [saving, setSaving] = useState(false)
+  const defaultForm = {
+    ncm: '21069090', cfop: '5102', icmsOrigin: '0', icmsCst: '400', icmsAliq: '0',
+    pisCST: '07', pisAliq: '0', cofinsCST: '07', cofinsAliq: '0',
+    ibsCbsCst: '', ibsCbsClassTrib: '', ibsCbsAliqUF: '0', ibsCbsAliqMun: '0', ibsCbsAliqCbs: '0',
+    fiscalApproved: false, approvedBy: '', notes: '',
+  }
+  const [form, setForm] = useState(defaultForm)
+
+  useEffect(() => { loadData() }, [])
+
+  async function loadData() {
+    setLoading(true)
+    try {
+      const [pr, cr] = await Promise.all([
+        fetch(`${API_URL}/api/products`),
+        fetch(`${API_URL}/api/fiscal-config`),
+      ])
+      const pd = pr.ok ? await pr.json() : {}
+      const cd = cr.ok ? await cr.json() : {}
+      setProducts(pd.products || [])
+      setConfigs(cd.configs || [])
+    } catch (_) {}
+    finally { setLoading(false) }
+  }
+
+  function openEdit(product) {
+    const cfg = configs.find(c => c.productId === product.id || c.productName === product.name)
+    setForm(cfg ? {
+      ncm: cfg.ncm || '21069090', cfop: cfg.cfop || '5102',
+      icmsOrigin: String(cfg.icmsOrigin ?? 0), icmsCst: cfg.icmsCst || '400',
+      icmsAliq: String(cfg.icmsAliq ?? 0), pisCST: cfg.pisCST || '07',
+      pisAliq: String(cfg.pisAliq ?? 0), cofinsCST: cfg.cofinsCST || '07',
+      cofinsAliq: String(cfg.cofinsAliq ?? 0),
+      ibsCbsCst: cfg.ibsCbsCst || '', ibsCbsClassTrib: cfg.ibsCbsClassTrib || '',
+      ibsCbsAliqUF: String(cfg.ibsCbsAliqUF ?? 0), ibsCbsAliqMun: String(cfg.ibsCbsAliqMun ?? 0),
+      ibsCbsAliqCbs: String(cfg.ibsCbsAliqCbs ?? 0),
+      fiscalApproved: !!cfg.fiscalApproved, approvedBy: cfg.approvedBy || '', notes: cfg.notes || '',
+    } : { ...defaultForm })
+    setEditProduct(product)
+  }
+
+  async function save() {
+    if (!editProduct || saving) return
+    setSaving(true)
+    try {
+      const res = await fetch(`${API_URL}/api/fiscal-config`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          productId: editProduct.id, productName: editProduct.name,
+          ncm: form.ncm.trim(), cfop: form.cfop.trim(),
+          icmsOrigin: Number(form.icmsOrigin), icmsCst: form.icmsCst.trim(),
+          icmsAliq: Number(form.icmsAliq), pisCST: form.pisCST.trim(),
+          pisAliq: Number(form.pisAliq), cofinsCST: form.cofinsCST.trim(),
+          cofinsAliq: Number(form.cofinsAliq),
+          ibsCbsCst: form.ibsCbsCst.trim() || null,
+          ibsCbsClassTrib: form.ibsCbsClassTrib.trim() || null,
+          ibsCbsAliqUF: Number(form.ibsCbsAliqUF), ibsCbsAliqMun: Number(form.ibsCbsAliqMun),
+          ibsCbsAliqCbs: Number(form.ibsCbsAliqCbs),
+          fiscalApproved: form.fiscalApproved,
+          approvedBy: form.approvedBy.trim() || null,
+          notes: form.notes.trim() || null,
+        }),
+      })
+      if (!res.ok) throw new Error()
+      notify(`Configuração fiscal de "${editProduct.name}" salva.`)
+      setEditProduct(null)
+      await loadData()
+    } catch (_) { notify('Erro ao salvar configuração fiscal.') }
+    finally { setSaving(false) }
+  }
+
+  const setF = (k, v) => setForm(f => ({ ...f, [k]: v }))
+  const rows = products.map(p => ({ product: p, config: configs.find(c => c.productId === p.id || c.productName === p.name) }))
+
+  return (
+    <>
+      <div className="card settingsCard settingsCardFull">
+        <div className="cardHeader"><div><p>Reforma Tributária</p><h3>Classificação fiscal por produto</h3></div><ReceiptText size={22} /></div>
+        <div className="settingsInfo" style={{ marginBottom: 16 }}>
+          <AlertTriangle size={14} />
+          <span>Configure o <b>CST</b> e a <b>Classificação Tributária (cClassTrib)</b> do IBS/CBS para cada produto. Campos obrigatórios para emissão de NF-e conforme LC 214/2024.</span>
+        </div>
+        {loading ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-light)', padding: '8px 0' }}>
+            <Loader2 size={16} style={{ animation: 'spin 1s linear infinite' }} /><span>Carregando...</span>
+          </div>
+        ) : (
+          <div className="fiscalConfigTable">
+            <div className="fiscalConfigHead">
+              <span>Produto</span><span>NCM</span><span>CST IBS/CBS</span><span>cClassTrib</span><span>Status</span><span></span>
+            </div>
+            {rows.length === 0 && <div style={{ padding: '12px 0', color: 'var(--text-light)', fontSize: '.88rem' }}>Nenhum produto cadastrado.</div>}
+            {rows.map(({ product, config }) => {
+              const ok = config && config.ibsCbsCst
+              return (
+                <div key={product.id} className="fiscalConfigRow">
+                  <span className="fiscalProdName">{product.name}</span>
+                  <span className="fiscalCode">{config?.ncm || '—'}</span>
+                  <span className="fiscalCode">{config?.ibsCbsCst || '—'}</span>
+                  <span className="fiscalCode">{config?.ibsCbsClassTrib || '—'}</span>
+                  <span>
+                    {ok
+                      ? <span className="fiscalBadgeOk"><CheckCircle2 size={12} /> Configurado</span>
+                      : <span className="fiscalBadgeWarn"><AlertTriangle size={12} /> IBS/CBS pendente</span>
+                    }
+                  </span>
+                  <span><button className="btnOutline" style={{ padding: '5px 12px', fontSize: '.78rem', display: 'inline-flex', alignItems: 'center', gap: 5 }} onClick={() => openEdit(product)}><ClipboardEdit size={13} /> Editar</button></span>
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </div>
+
+      {editProduct && (
+        <div className="modalBackdrop">
+          <div className="detailModal newOrderModal" style={{ maxWidth: 580 }}>
+            <button className="closeBtn" onClick={() => setEditProduct(null)}><X /></button>
+            <div className="modalHeader">
+              <div><span>Configuração Fiscal</span><h2>{editProduct.name}</h2><p>Defina os dados tributários para emissão de NF-e</p></div>
+            </div>
+            <div className="newOrderScrollArea">
+              <div style={{ background: '#fff8f0', border: '1.5px solid #ffd89b', borderRadius: 12, padding: '16px 18px', marginBottom: 20 }}>
+                <h3 style={{ margin: '0 0 12px', fontSize: '.9rem', display: 'flex', alignItems: 'center', gap: 6 }}><AlertTriangle size={16} color="#b45309" /> IBS/CBS — Reforma Tributária <span style={{ background: '#f97316', color: '#fff', fontSize: '.68rem', fontWeight: 900, padding: '2px 7px', borderRadius: 999, marginLeft: 4 }}>obrigatório</span></h3>
+                <div className="settingsForm settingsTwoCols">
+                  <label>CST IBS/CBS *<input placeholder="Ex: 40" value={form.ibsCbsCst} onChange={e => setF('ibsCbsCst', e.target.value)} maxLength={5} /></label>
+                  <label>Classificação Tributária (cClassTrib) *<input placeholder="Ex: 01.001" value={form.ibsCbsClassTrib} onChange={e => setF('ibsCbsClassTrib', e.target.value)} maxLength={10} /></label>
+                  <label>Alíquota IBS Estado (%)<input type="number" step="0.0001" min="0" value={form.ibsCbsAliqUF} onChange={e => setF('ibsCbsAliqUF', e.target.value)} /></label>
+                  <label>Alíquota IBS Município (%)<input type="number" step="0.0001" min="0" value={form.ibsCbsAliqMun} onChange={e => setF('ibsCbsAliqMun', e.target.value)} /></label>
+                  <label>Alíquota CBS (%)<input type="number" step="0.0001" min="0" value={form.ibsCbsAliqCbs} onChange={e => setF('ibsCbsAliqCbs', e.target.value)} /></label>
+                </div>
+              </div>
+
+              <h3 style={{ margin: '0 0 10px', fontSize: '.88rem' }}>Classificação básica</h3>
+              <div className="settingsForm settingsTwoCols">
+                <label>NCM<input placeholder="Ex: 19059090" value={form.ncm} onChange={e => setF('ncm', e.target.value)} maxLength={10} /></label>
+                <label>CFOP<input placeholder="Ex: 5102" value={form.cfop} onChange={e => setF('cfop', e.target.value)} maxLength={5} /></label>
+              </div>
+
+              <h3 style={{ margin: '16px 0 10px', fontSize: '.88rem' }}>ICMS</h3>
+              <div className="settingsForm settingsTwoCols">
+                <label>CST ICMS<input placeholder="Ex: 400" value={form.icmsCst} onChange={e => setF('icmsCst', e.target.value)} maxLength={5} /></label>
+                <label>Alíquota ICMS (%)<input type="number" step="0.01" min="0" value={form.icmsAliq} onChange={e => setF('icmsAliq', e.target.value)} /></label>
+              </div>
+
+              <h3 style={{ margin: '16px 0 10px', fontSize: '.88rem' }}>PIS / COFINS</h3>
+              <div className="settingsForm settingsTwoCols">
+                <label>CST PIS<input placeholder="Ex: 07" value={form.pisCST} onChange={e => setF('pisCST', e.target.value)} maxLength={3} /></label>
+                <label>Alíquota PIS (%)<input type="number" step="0.01" min="0" value={form.pisAliq} onChange={e => setF('pisAliq', e.target.value)} /></label>
+                <label>CST COFINS<input placeholder="Ex: 07" value={form.cofinsCST} onChange={e => setF('cofinsCST', e.target.value)} maxLength={3} /></label>
+                <label>Alíquota COFINS (%)<input type="number" step="0.01" min="0" value={form.cofinsAliq} onChange={e => setF('cofinsAliq', e.target.value)} /></label>
+              </div>
+
+              <h3 style={{ margin: '16px 0 10px', fontSize: '.88rem' }}>Controle</h3>
+              <div className="settingsForm">
+                <label>Validado pelo contador<input placeholder="Nome do responsável" value={form.approvedBy} onChange={e => setF('approvedBy', e.target.value)} /></label>
+                <label>Observações<textarea rows={2} value={form.notes} onChange={e => setF('notes', e.target.value)} style={{ resize: 'vertical', width: '100%', padding: '9px 12px', borderRadius: 10, border: '1.5px solid var(--line)', fontSize: '.88rem', fontFamily: 'inherit' }} /></label>
+              </div>
+              <div className="settingsToggleRow" style={{ marginTop: 10 }}>
+                <span>Aprovado pelo contador</span>
+                <label className="switch"><input type="checkbox" checked={form.fiscalApproved} onChange={() => setF('fiscalApproved', !form.fiscalApproved)} /><span></span></label>
+              </div>
+            </div>
+            <div className="orderModalFooter">
+              <button className="btnSolid" onClick={save} disabled={saving} style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
+                {saving ? <><Loader2 size={16} style={{ animation: 'spin 1s linear infinite' }} /> Salvando...</> : <><CheckCircle2 size={16} /> Salvar configuração</>}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  )
+}
+
 function Settings({ notify }) {
   const [form, setForm] = useState(() => {
     try {
@@ -4238,6 +4420,8 @@ function Settings({ notify }) {
             </>
           )}
         </div>
+
+        <FiscalConfigSection notify={notify} />
 
       </div>
     </section>
