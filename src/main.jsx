@@ -845,7 +845,7 @@ function Orders({ orders, ordersLoading, onSelect, updateOrderStatus, createInvo
         {!ordersLoading && filtered.length === 0 && <p className="emptyText">Nenhum pedido encontrado.</p>}
         {filtered.map((order) => (
           <article className="orderCard" key={order.id}>
-            <div className="orderTop"><div><b>{order.id}</b><span>{order.source}</span></div><Status status={order.status} /></div>
+            <div className="orderTop"><div><b>{order.id}</b><span>{order.source}</span></div><div style={{display:'flex',gap:'6px',alignItems:'center',flexWrap:'wrap',justifyContent:'flex-end'}}><Status status={order.status} />{order.status === 'Pronto' && order.nfeData && (order.nfeData.nfeStatus === 'AUTHORIZED' ? <span className="nfeSubStatus success">Nota emitida com sucesso</span> : <span className="nfeSubStatus error">Erro na emição da nota</span>)}</div></div>
             <h3>{order.customer}</h3>
             <p>{order.city} • {order.whatsapp}</p>
             <div className="orderProducts">{order.products.map((p) => <span key={p.name}>{p.qty} {p.unit} • {p.name}</span>)}</div>
@@ -5016,7 +5016,7 @@ function NotaFiscalModal({ order, onClose, updateOrderStatus, notify }) {
         if (data.status === 'AUTHORIZED') {
           setNfeResult(data)
           setStep('autorizada')
-          updateOrderStatus(order.id, 'Rota', { nfeData: { ...data, reference: ref, nfeStatus: 'AUTHORIZED' } })
+          updateOrderStatus(order.id, 'Pronto', { nfeData: { ...data, reference: ref, nfeStatus: 'AUTHORIZED' } })
           notify(`NF-e ${data.number ? `nº ${data.number} ` : ''}autorizada para ${order.customer}.`)
         } else if (data.status === 'REJECTED' || data.status === 'SUBMISSION_FAILED') {
           setNfeError(data)
@@ -5054,7 +5054,7 @@ function NotaFiscalModal({ order, onClose, updateOrderStatus, notify }) {
       if (data.status === 'AUTHORIZED') {
         setNfeResult(data)
         setStep('autorizada')
-        updateOrderStatus(order.id, 'Rota', { nfeData: { ...data, nfeStatus: 'AUTHORIZED' } })
+        updateOrderStatus(order.id, 'Pronto', { nfeData: { ...data, nfeStatus: 'AUTHORIZED' } })
         notify(`NF-e ${data.number ? `nº ${data.number} ` : ''}autorizada para ${order.customer}.`)
         return
       }
@@ -5302,7 +5302,7 @@ function NotaFiscalModal({ order, onClose, updateOrderStatus, notify }) {
                 <button className="nfDocBtn" onClick={() => downloadFile('xml')}><FileText size={15} /> Baixar XML</button>
                 <button className="nfDocBtn" onClick={() => downloadFile('danfe')}><ReceiptText size={15} /> Baixar DANFE</button>
               </div>
-              <div className="nfStatusBadge success">Pedido atualizado para: Rota</div>
+              <div className="nfStatusBadge success">NF-e autorizada – pedido permanece em Pronto</div>
             </div>
           </div>
         )}

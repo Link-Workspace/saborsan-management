@@ -781,11 +781,6 @@ app.http('emit-nfe', {
                   updatedAt    = GETUTCDATE()
               WHERE focusReference = ${ref}
             `;
-            await sql.query`
-              UPDATE GestaoOrders
-              SET status = 'Nota emitida', updatedAt = GETUTCDATE()
-              WHERE id = ${doc.orderId}
-            `;
             await notifyDriverNfeAuthorized(doc.orderId);
             return {
               jsonBody: {
@@ -1151,11 +1146,6 @@ app.http('emit-nfe', {
                   authorizedAt = GETUTCDATE(),
                   updatedAt    = GETUTCDATE()
               WHERE id = ${docId}
-            `;
-            await sql.query`
-              UPDATE GestaoOrders
-              SET status = 'Nota emitida', updatedAt = GETUTCDATE()
-              WHERE id = ${orderId}
             `;
             await notifyDriverNfeAuthorized(orderId);
             return {
