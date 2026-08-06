@@ -25,7 +25,7 @@ const sqlConfig = {
 
 // ── FCM: notifica entregador quando NF-e é autorizada ────────────────────────
 
-async function notifyDriverNfeAuthorized(orderId) {
+async function notifyDriverNfeAuthorized(orderId, context) {
   try {
     const deliveryResult = await sql.query`
       SELECT d.id AS deliveryId, d.seller_id, d.code AS deliveryCode
@@ -34,7 +34,10 @@ async function notifyDriverNfeAuthorized(orderId) {
       WHERE dord.order_id = ${orderId}
         AND d.status NOT IN (N'Cancelada', N'Concluída')
     `;
-    if (!deliveryResult.recordset.length) return;
+    if (!deliveryResult.recordset.length) {
+      context.warn(`[notifyDriverNfe] pedido ${orderId} não tem entrega vinculada ou está cancelada/concluída`);
+      return;
+    }
     const { deliveryId, seller_id: sellerId, deliveryCode } = deliveryResult.recordset[0];
 
     // Verifica se TODOS os pedidos da entrega já têm NFe com status AUTHORIZED
@@ -47,10 +50,16 @@ async function notifyDriverNfeAuthorized(orderId) {
           WHERE fd.orderId = dord.order_id AND fd.status = 'AUTHORIZED'
         )
     `;
-    if (pendingResult.recordset.length > 0) return;
+    if (pendingResult.recordset.length > 0) {
+      context.log(`[notifyDriverNfe] entrega ${deliveryId} ainda tem ${pendingResult.recordset.length} pedido(s) sem NFe autorizada`);
+      return;
+    }
 
     const sellerResult = await sql.query`SELECT userId FROM Sellers WHERE id = ${sellerId}`;
-    if (!sellerResult.recordset.length) return;
+    if (!sellerResult.recordset.length) {
+      context.warn(`[notifyDriverNfe] seller_id ${sellerId} não encontrado na tabela Sellers`);
+      return;
+    }
     const { userId } = sellerResult.recordset[0];
 
     const allOrdersResult = await sql.query`
@@ -61,8 +70,12 @@ async function notifyDriverNfeAuthorized(orderId) {
 
     const tokensResult = await sql.query`SELECT token FROM PushTokens WHERE userId = ${userId}`;
     const tokens = tokensResult.recordset.map((r) => r.token).filter(Boolean);
-    if (!tokens.length) return;
+    if (!tokens.length) {
+      context.warn(`[notifyDriverNfe] userId ${userId} não tem push token registrado em PushTokens`);
+      return;
+    }
 
+    context.log(`[notifyDriverNfe] enviando FCM para userId ${userId}, tokens: ${tokens.length}`);
     const messaging = getMessaging();
     const msgTitle = isMultiple
       ? `Notas fiscais da entrega ${deliveryCode} emitidas`
@@ -85,14 +98,16 @@ async function notifyDriverNfeAuthorized(orderId) {
           android: { priority: 'high' },
           apns: { payload: { aps: { sound: 'default' } } },
         });
+        context.log(`[notifyDriverNfe] FCM enviado com sucesso para token ...${token.slice(-8)}`);
       } catch (err) {
+        context.error(`[notifyDriverNfe] erro ao enviar FCM: ${err.code || err.message}`);
         if (err.code === 'messaging/invalid-registration-token' || err.code === 'messaging/registration-token-not-registered') {
           await sql.query`DELETE FROM PushTokens WHERE token = ${token}`;
         }
       }
     }
-  } catch {
-    // Não quebrar o fluxo principal de emissão da NF-e
+  } catch (err) {
+    context.error('[notifyDriverNfe] erro inesperado:', err);
   }
 }
 
@@ -781,7 +796,12 @@ app.http('emit-nfe', {
                   updatedAt    = GETUTCDATE()
               WHERE focusReference = ${ref}
             `;
-            await notifyDriverNfeAuthorized(doc.orderId);
+            await sql.query`
+              UPDATE GestaoOrders
+              SET status = N'Nota emitida', updatedAt = GETUTCDATE()
+              WHERE id = ${doc.orderId}
+            `;
+            await notifyDriverNfeAuthorized(doc.orderId, context);
             return {
               jsonBody: {
                 status: 'AUTHORIZED',
@@ -1147,7 +1167,12 @@ app.http('emit-nfe', {
                   updatedAt    = GETUTCDATE()
               WHERE id = ${docId}
             `;
-            await notifyDriverNfeAuthorized(orderId);
+            await sql.query`
+              UPDATE GestaoOrders
+              SET status = N'Nota emitida', updatedAt = GETUTCDATE()
+              WHERE id = ${orderId}
+            `;
+            await notifyDriverNfeAuthorized(orderId, context);
             return {
               jsonBody: {
                 status: 'AUTHORIZED',

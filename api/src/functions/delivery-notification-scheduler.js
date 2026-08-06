@@ -66,9 +66,9 @@ async function notifyDeliveryConfirmation(sellerId, deliveryCode) {
   }
 }
 
-// Executa uma vez por dia às 6h UTC para notificar entregadores sobre entregas com saída agendada para hoje
+// Executa a cada 30 minutos para notificar entregadores quando a data/hora de saída agendada chegar
 app.timer('deliveryNotificationScheduler', {
-  schedule: '0 0 6 * * *',
+  schedule: '0 */30 * * * *',
   handler: async (myTimer, context) => {
     try {
       await sql.connect(sqlConfig);
@@ -80,7 +80,7 @@ app.timer('deliveryNotificationScheduler', {
         WHERE d.status = N'Planejada'
           AND d.departure_date IS NOT NULL
           AND d.confirmation_sent = 0
-          AND CAST(d.departure_date AS DATE) = CAST(GETUTCDATE() AS DATE)
+          AND d.departure_date <= GETUTCDATE()
       `;
 
       for (const delivery of result.recordset) {
