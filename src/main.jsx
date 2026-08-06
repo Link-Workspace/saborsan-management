@@ -2535,11 +2535,15 @@ function Purchases({ notify }) {
 }
 
 function Deliveries({ onNewDelivery, onSelect, deliveries: list, onOpenVehicles }) {
+  const [view, setView] = useState('ativas')
+  const filtered = view === 'ativas'
+    ? list.filter((d) => !['Concluída', 'Cancelada'].includes(d.status))
+    : list.filter((d) => ['Concluída', 'Cancelada'].includes(d.status))
   return (
     <section className="pageStack">
-      <div className="sectionHeader"><div><p>Rotas, motoristas e temperatura</p></div><div style={{display:'flex',gap:'8px'}}><button className="btnSolid" onClick={onNewDelivery}><Plus size={18} /> Nova entrega</button><button className="btnSolid" onClick={onOpenVehicles}><Truck size={18} /> Veículos</button></div></div>
+      <div className="sectionHeader stockSectionHeader"><div><p>Rotas, motoristas e temperatura</p></div><div className="viewFilterWrap"><div className="deliverySegmented"><button className={`deliverySegBtn${view === 'ativas' ? ' active' : ''}`} onClick={() => setView('ativas')}>Entregas ativas</button><button className={`deliverySegBtn${view === 'historico' ? ' active' : ''}`} onClick={() => setView('historico')}>Histórico de entregas</button></div></div><div style={{display:'flex',gap:'8px'}}><button className="btnSolid" onClick={onNewDelivery}><Plus size={18} /> Nova entrega</button><button className="btnSolid" onClick={onOpenVehicles}><Truck size={18} /> Veículos</button></div></div>
       <div className="deliveryGrid">
-        {list.map((delivery) => (
+        {filtered.map((delivery) => (
           <article className="deliveryCard" key={delivery.id} onClick={() => onSelect(delivery)} style={{cursor:'pointer'}}>
             <div className="deliveryMap"><MapPin size={38} /><span>{delivery.route}</span></div>
             <div className="deliveryBody">
