@@ -21,6 +21,42 @@ const sqlConfig = {
   options: { encrypt: true, trustServerCertificate: false },
 };
 
+// Envia notificação delivery-confirmations ao entregador para confirmar data da entrega
+async function notifyDeliveryConfirmation(sellerId, deliveryCode) {
+  if (!sellerId) return;
+  try {
+    const sellerRow = await sql.query`SELECT userId FROM Sellers WHERE id = ${sellerId}`;
+    if (!sellerRow.recordset.length) return;
+    const { userId } = sellerRow.recordset[0];
+
+    const tokensResult = await sql.query`SELECT token FROM PushTokens WHERE userId = ${userId}`;
+    const tokens = tokensResult.recordset.map((r) => r.token).filter(Boolean);
+    if (!tokens.length) return;
+
+    const messaging = getMessaging();
+    for (const token of tokens) {
+      try {
+        await messaging.send({
+          token,
+          notification: {
+            title: `Entrega ${deliveryCode} planejada`,
+            body: 'Confirme a data de saída para esta entrega.',
+          },
+          data: { type: 'delivery-confirmations', deliveryCode: String(deliveryCode) },
+          android: { priority: 'high' },
+          apns: { payload: { aps: { sound: 'default' } } },
+        });
+      } catch (err) {
+        if (err.code === 'messaging/invalid-registration-token' || err.code === 'messaging/registration-token-not-registered') {
+          await sql.query`DELETE FROM PushTokens WHERE token = ${token}`;
+        }
+      }
+    }
+  } catch {
+    // Silenciar erros de notificação
+  }
+}
+
 // Envia notificação push ao entregador sobre pedidos em Separação vinculados à entrega
 async function notifyDriverAboutOrders(sellerId, orderIds, deliveryCode) {
   if (!sellerId || !orderIds.length) return;
@@ -66,6 +102,17 @@ async function notifyDriverAboutOrders(sellerId, orderIds, deliveryCode) {
   } catch {
     // Silenciar erros de notificação para não quebrar o fluxo principal
   }
+}
+
+// Garante que a coluna confirmation_sent existe na tabela Deliveries
+async function ensureConfirmationSentColumn() {
+  await sql.query`
+    IF NOT EXISTS (
+      SELECT 1 FROM sys.columns
+      WHERE object_id = OBJECT_ID(N'Deliveries') AND name = N'confirmation_sent'
+    )
+      ALTER TABLE Deliveries ADD confirmation_sent bit NOT NULL DEFAULT 0
+  `;
 }
 
 app.http('deliveries', {
@@ -162,16 +209,19 @@ app.http('deliveries', {
         const tempVal = temperature !== undefined && temperature !== '' && temperature !== null
           ? parseFloat(String(temperature).replace('°C', ''))
           : -18.0;
-        const statusVal = status || 'Carregando';
+        const statusVal = 'Planejada';
         const stopsCount = stops || 0;
         const notesVal = notes || '';
         const departureDateVal = departureDate ? new Date(departureDate) : null;
         const arrivalDateVal = arrivalDate ? new Date(arrivalDate) : null;
+        const confirmationSent = departureDateVal ? 0 : 1;
+
+        await ensureConfirmationSentColumn();
 
         const insertResult = await sql.query`
-          INSERT INTO Deliveries (code, route, seller_id, status, cold_chamber_number, stops_count, temperature, departure_date, arrival_date, notes, updated_at)
+          INSERT INTO Deliveries (code, route, seller_id, status, cold_chamber_number, stops_count, temperature, departure_date, arrival_date, notes, confirmation_sent, updated_at)
           OUTPUT INSERTED.id
-          VALUES (${code}, ${route}, ${sellerId}, ${statusVal}, ${chamberNum}, ${stopsCount}, ${tempVal}, ${departureDateVal}, ${arrivalDateVal}, ${notesVal}, GETUTCDATE())
+          VALUES (${code}, ${route}, ${sellerId}, ${statusVal}, ${chamberNum}, ${stopsCount}, ${tempVal}, ${departureDateVal}, ${arrivalDateVal}, ${notesVal}, ${confirmationSent}, GETUTCDATE())
         `;
 
         const newId = insertResult.recordset[0].id;
@@ -184,6 +234,10 @@ app.http('deliveries', {
 
         // Notificar entregador sobre pedidos em Separação vinculados a esta entrega
         await notifyDriverAboutOrders(sellerId, orderIds || [], code);
+        // Enviar delivery-confirmations imediatamente apenas se não houver data de saída agendada
+        if (!departureDateVal) {
+          await notifyDeliveryConfirmation(sellerId, code);
+        }
 
         return { status: 201, jsonBody: { success: true, code, id: newId } };
       }
@@ -209,12 +263,12 @@ app.http('deliveries', {
             UPDATE Deliveries
             SET route = ${route},
                 seller_id = ${sellerId},
-                status = ${status},
                 cold_chamber_number = ${chamberNum},
                 stops_count = ${stops || 0},
                 temperature = ${tempVal},
                 departure_date = ${departureDateVal},
                 arrival_date = ${arrivalDateVal},
+                confirmation_sent = 0,
                 notes = ${notes || ''},
                 updated_at = GETUTCDATE()
             WHERE code = ${deliveryId}
@@ -238,6 +292,25 @@ app.http('deliveries', {
                 updated_at = GETUTCDATE()
             WHERE code = ${deliveryId}
           `;
+        } else if (body.deliveryConfirmation) {
+          const { type, scheduledDate } = body.deliveryConfirmation;
+          let departureDateVal, arrivalDateVal;
+          if (type === 'now') {
+            departureDateVal = new Date();
+            arrivalDateVal = new Date(departureDateVal.getTime() + 4 * 60 * 60 * 1000);
+          } else if (type === 'scheduled' && scheduledDate) {
+            departureDateVal = new Date(scheduledDate);
+            arrivalDateVal = new Date(departureDateVal.getTime() + 4 * 60 * 60 * 1000);
+          }
+          if (departureDateVal && arrivalDateVal) {
+            await sql.query`
+              UPDATE Deliveries
+              SET departure_date = ${departureDateVal},
+                  arrival_date = ${arrivalDateVal},
+                  updated_at = GETUTCDATE()
+              WHERE code = ${deliveryId}
+            `;
+          }
         }
 
         return { jsonBody: { success: true } };

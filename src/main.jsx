@@ -864,7 +864,7 @@ function Orders({ orders, ordersLoading, onSelect, updateOrderStatus, createInvo
 
 function Invoices({ orders, onGerarNota, onVerNota, search = '' }) {
   const fiscalHistory = orders.filter((o) => o.nfeData && (!search || o.customer.toLowerCase().includes(search.toLowerCase())))
-  const readyToEmit = orders.filter((o) => !o.isDeleted && o.status === 'Pronto' && (!search || o.customer.toLowerCase().includes(search.toLowerCase())))
+  const readyToEmit = orders.filter((o) => !o.isDeleted && o.status === 'Pronto' && o.nfeData?.nfeStatus !== 'AUTHORIZED' && (!search || o.customer.toLowerCase().includes(search.toLowerCase())))
 
   const formatNfeDate = (o) => {
     const iso = o.nfeData?.authorizedAt
@@ -2759,10 +2759,9 @@ function NewDeliveryModal({ onClose, onCreate, onUpdate, editDelivery, orders, v
     sellerId: '',
     vehicle: editDelivery.vehicle || defaultVehicle,
     temperature: editDelivery.temperature ? editDelivery.temperature.replace('°C', '') : '',
-    departureDate: editDelivery.departureDate || '',
-    arrivalDate: editDelivery.arrivalDate || '',
+    departureDate: editDelivery.departureDate ? editDelivery.departureDate.slice(0, 16) : '',
+    arrivalDate: editDelivery.arrivalDate ? editDelivery.arrivalDate.slice(0, 16) : '',
     notes: editDelivery.notes || '',
-    status: editDelivery.status === 'Em rota' ? 'Em rota' : 'Carregando',
   } : {
     sellerId: '',
     vehicle: defaultVehicle,
@@ -2770,7 +2769,6 @@ function NewDeliveryModal({ onClose, onCreate, onUpdate, editDelivery, orders, v
     departureDate: '',
     arrivalDate: '',
     notes: '',
-    status: 'Carregando',
   })
 
   useEffect(() => {
@@ -2820,11 +2818,7 @@ function NewDeliveryModal({ onClose, onCreate, onUpdate, editDelivery, orders, v
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }))
   const toggleOrder = (id) => setSelectedOrderIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id])
   const eligibleOrders = orders.filter((o) => !o.isDeleted && (o.status === 'Separação' || o.status === 'Pronto'))
-  const hasUnreadyOrders = selectedOrderIds.some((id) => {
-    const o = orders.find((x) => x.id === id)
-    return o && o.status === 'Separação'
-  })
-  const canSubmit = selectedCities.length > 0 && form.sellerId !== '' && !(form.status === 'Em rota' && hasUnreadyOrders)
+  const canSubmit = selectedCities.length > 0 && form.sellerId !== ''
 
   const submit = async (e) => {
     e.preventDefault()
@@ -2846,7 +2840,6 @@ function NewDeliveryModal({ onClose, onCreate, onUpdate, editDelivery, orders, v
             vehicle: form.vehicle,
             stops: selectedCities.length,
             temperature: form.temperature ? parseFloat(form.temperature) : null,
-            status: form.status,
             departureDate: form.departureDate || null,
             arrivalDate: form.arrivalDate || null,
             notes: form.notes,
@@ -2863,9 +2856,8 @@ function NewDeliveryModal({ onClose, onCreate, onUpdate, editDelivery, orders, v
           vehicle: form.vehicle,
           stops: selectedCities.length,
           temperature: form.temperature ? form.temperature + '°C' : editDelivery.temperature,
-          status: form.status,
-          departureDate: form.departureDate,
-          arrivalDate: form.arrivalDate,
+          departureDate: form.departureDate || null,
+          arrivalDate: form.arrivalDate || null,
           notes: form.notes,
           orderIds: selectedOrderIds,
         })
@@ -2879,7 +2871,6 @@ function NewDeliveryModal({ onClose, onCreate, onUpdate, editDelivery, orders, v
             vehicle: form.vehicle,
             stops: selectedCities.length,
             temperature: form.temperature ? parseFloat(form.temperature) : -18.0,
-            status: form.status,
             departureDate: form.departureDate || null,
             arrivalDate: form.arrivalDate || null,
             notes: form.notes,
@@ -2896,10 +2887,10 @@ function NewDeliveryModal({ onClose, onCreate, onUpdate, editDelivery, orders, v
           vehicle: form.vehicle,
           stops: selectedCities.length,
           temperature: form.temperature ? form.temperature + '°C' : '-18.0°C',
-          status: form.status,
+          status: 'Planejada',
           progress: 0,
-          departureDate: form.departureDate,
-          arrivalDate: form.arrivalDate,
+          departureDate: form.departureDate || null,
+          arrivalDate: form.arrivalDate || null,
           notes: form.notes,
           orderIds: selectedOrderIds,
         })
@@ -3000,21 +2991,12 @@ function NewDeliveryModal({ onClose, onCreate, onUpdate, editDelivery, orders, v
 
             <h3 className="newOrderSectionTitle">Detalhes da rota</h3>
             <div className="settingsForm">
-              <label>Status
-                <select value={form.status} onChange={(e) => set('status', e.target.value)}>
-                  <option>Carregando</option>
-                  <option value="Em rota" disabled={hasUnreadyOrders}>Em rota{hasUnreadyOrders ? ' (aguardando confirmação dos pedidos)' : ''}</option>
-                </select>
-              </label>
-              {hasUnreadyOrders && form.status === 'Em rota' && (
-                <p style={{color:'var(--orange)',fontWeight:700,fontSize:'.82rem',margin:'-8px 0 0'}}>O entregador precisa confirmar todos os pedidos em separação antes de avançar para Em rota.</p>
-              )}
               <label>Temperatura da câmara (°C)
                 <input placeholder="Ex: -18.0" value={form.temperature} onChange={(e) => set('temperature', e.target.value)} />
               </label>
             </div>
 
-            <h3 className="newOrderSectionTitle">Datas</h3>
+            <h3 className="newOrderSectionTitle">Datas <span style={{fontWeight:400,fontSize:'.8rem',color:'var(--muted)'}}>— opcionais</span></h3>
             <div className="settingsForm">
               <label>Data de saída
                 <input type="datetime-local" value={form.departureDate} onChange={(e) => set('departureDate', e.target.value)} />
