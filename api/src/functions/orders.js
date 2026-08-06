@@ -39,11 +39,19 @@ app.http('orders', {
       await sql.connect(sqlConfig);
 
       if (request.method === 'GET') {
+        // Ensure soft-delete column exists (one-time migration, safe to repeat)
+        await sql.query`
+          IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('GestaoOrders') AND name = 'deletedAt')
+            ALTER TABLE GestaoOrders ADD deletedAt DATETIME NULL
+        `.catch(() => {});
+
         const [ordersResult, itemsResult, nfeResult] = await Promise.all([
           sql.query`
             SELECT id, source, clientName, clientCnpj, clientCity, clientPhone,
-                   status, totalValue, deliveryAt, observations, purchasePurpose, createdAt
+                   status, totalValue, deliveryAt, observations, purchasePurpose, createdAt, deletedAt
             FROM GestaoOrders
+            WHERE deletedAt IS NULL
+               OR id IN (SELECT orderId FROM GestaoFiscalDocuments WHERE status = 'AUTHORIZED')
             ORDER BY createdAt DESC
           `,
           sql.query`
@@ -87,6 +95,7 @@ app.http('orders', {
           priority: 'Normal',
           time: formatTime(new Date(o.createdAt)),
           delivery: formatDelivery(o.deliveryAt, o.status),
+          isDeleted: !!o.deletedAt,
           products: itemsResult.recordset
             .filter((i) => i.orderId === o.id)
             .map((i) => ({
@@ -252,11 +261,23 @@ app.http('orders', {
           return { status: 400, jsonBody: { error: 'orderId é obrigatório' } };
         }
 
-        await sql.query`DELETE FROM GestaoOrderItems WHERE orderId = ${orderId}`;
-        await sql.query`DELETE FROM GestaoFiscalDocuments WHERE orderId = ${orderId}`;
-        await sql.query`DELETE FROM GestaoOrders WHERE id = ${orderId}`;
+        // Check if this order has an authorized fiscal document
+        const nfeCheck = await sql.query`
+          SELECT id FROM GestaoFiscalDocuments WHERE orderId = ${orderId} AND status = 'AUTHORIZED'
+        `;
+        const hasAuthorizedNfe = nfeCheck.recordset.length > 0;
 
-        return { jsonBody: { success: true } };
+        await sql.query`DELETE FROM GestaoOrderItems WHERE orderId = ${orderId}`;
+
+        if (hasAuthorizedNfe) {
+          // Soft delete: keep the order and its fiscal document for fiscal history
+          await sql.query`UPDATE GestaoOrders SET deletedAt = GETUTCDATE() WHERE id = ${orderId}`;
+        } else {
+          await sql.query`DELETE FROM GestaoFiscalDocuments WHERE orderId = ${orderId}`;
+          await sql.query`DELETE FROM GestaoOrders WHERE id = ${orderId}`;
+        }
+
+        return { jsonBody: { success: true, softDeleted: hasAuthorizedNfe } };
       }
     } catch (error) {
       context.error('Erro na função orders:', error);

@@ -385,11 +385,12 @@ function App() {
   useEffect(() => { setTopbarSearch('') }, [active])
 
   const totals = useMemo(() => {
-    const today = orders.filter((o) => o.time !== 'Ontem')
+    const activeOrders = orders.filter((o) => !o.isDeleted)
+    const today = activeOrders.filter((o) => o.time !== 'Ontem')
     return {
-      revenue: orders.reduce((sum, item) => sum + item.value, 0),
+      revenue: activeOrders.reduce((sum, item) => sum + item.value, 0),
       todayCount: today.length,
-      pending: orders.filter((o) => !['Entregue', 'Cancelado'].includes(o.status)).length,
+      pending: activeOrders.filter((o) => !['Entregue', 'Cancelado'].includes(o.status)).length,
       lowStock: products.filter((p) => p.stock <= p.min).length,
     }
   }, [orders])
@@ -480,6 +481,7 @@ function App() {
   }
 
   const removeOrder = async (id) => {
+    let softDeleted = false
     try {
       const res = await fetch(`${API_URL}/api/orders`, {
         method: 'DELETE',
@@ -487,11 +489,18 @@ function App() {
         body: JSON.stringify({ orderId: id }),
       })
       if (!res.ok) throw new Error('Falha ao remover pedido')
+      const data = await res.json()
+      softDeleted = data.softDeleted === true
     } catch (err) {
       notify('Erro ao remover pedido do servidor.')
       return
     }
-    setOrders((items) => items.filter((item) => item.id !== id))
+    if (softDeleted) {
+      // Keep in fiscal history — mark as deleted but preserve nfeData
+      setOrders((items) => items.map((item) => item.id === id ? { ...item, isDeleted: true, products: [] } : item))
+    } else {
+      setOrders((items) => items.filter((item) => item.id !== id))
+    }
     setRemoveConfirmOrder(null)
     setSelectedOrder(null)
     notify(`Pedido ${id} removido.`)
@@ -819,7 +828,8 @@ function Dashboard({ totals, orders, aiEnabled, setActive }) {
 
 function Orders({ orders, ordersLoading, onSelect, updateOrderStatus, createInvoice, onGerarNota, onNewOrder, onVerNota, search = '' }) {
   const [filter, setFilter] = useState('Todos')
-  const byStatus = filter === 'Todos' ? orders : orders.filter((o) => o.status === filter)
+  const activeOrders = orders.filter((o) => !o.isDeleted)
+  const byStatus = filter === 'Todos' ? activeOrders : activeOrders.filter((o) => o.status === filter)
   const filtered = !search ? byStatus : byStatus.filter((o) => o.customer.toLowerCase().includes(search.toLowerCase()) || o.id.toLowerCase().includes(search.toLowerCase()))
   return (
     <section className="pageStack">
@@ -854,7 +864,7 @@ function Orders({ orders, ordersLoading, onSelect, updateOrderStatus, createInvo
 
 function Invoices({ orders, onGerarNota, onVerNota, search = '' }) {
   const fiscalHistory = orders.filter((o) => o.nfeData && (!search || o.customer.toLowerCase().includes(search.toLowerCase())))
-  const readyToEmit = orders.filter((o) => o.status === 'Pronto' && (!search || o.customer.toLowerCase().includes(search.toLowerCase())))
+  const readyToEmit = orders.filter((o) => !o.isDeleted && o.status === 'Pronto' && (!search || o.customer.toLowerCase().includes(search.toLowerCase())))
 
   const formatNfeDate = (o) => {
     const iso = o.nfeData?.authorizedAt
@@ -2805,7 +2815,7 @@ function NewDeliveryModal({ onClose, onCreate, onUpdate, editDelivery, orders, v
   const [saveError, setSaveError] = useState('')
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }))
   const toggleOrder = (id) => setSelectedOrderIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id])
-  const eligibleOrders = orders.filter((o) => o.status === 'Separação' || o.status === 'Pronto')
+  const eligibleOrders = orders.filter((o) => !o.isDeleted && (o.status === 'Separação' || o.status === 'Pronto'))
   const hasUnreadyOrders = selectedOrderIds.some((id) => {
     const o = orders.find((x) => x.id === id)
     return o && o.status === 'Separação'

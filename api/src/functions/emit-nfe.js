@@ -28,36 +28,60 @@ const sqlConfig = {
 async function notifyDriverNfeAuthorized(orderId) {
   try {
     const deliveryResult = await sql.query`
-      SELECT d.seller_id, d.code AS deliveryCode
+      SELECT d.id AS deliveryId, d.seller_id, d.code AS deliveryCode
       FROM Deliveries d
       INNER JOIN DeliveryOrders dord ON dord.delivery_id = d.id
       WHERE dord.order_id = ${orderId}
         AND d.status NOT IN (N'Cancelada', N'Concluída')
     `;
     if (!deliveryResult.recordset.length) return;
-    const { seller_id: sellerId, deliveryCode } = deliveryResult.recordset[0];
+    const { deliveryId, seller_id: sellerId, deliveryCode } = deliveryResult.recordset[0];
+
+    // Verifica se TODOS os pedidos da entrega já têm NFe com status AUTHORIZED
+    const pendingResult = await sql.query`
+      SELECT dord.order_id
+      FROM DeliveryOrders dord
+      WHERE dord.delivery_id = ${deliveryId}
+        AND NOT EXISTS (
+          SELECT 1 FROM GestaoFiscalDocuments fd
+          WHERE fd.orderId = dord.order_id AND fd.status = 'AUTHORIZED'
+        )
+    `;
+    if (pendingResult.recordset.length > 0) return;
 
     const sellerResult = await sql.query`SELECT userId FROM Sellers WHERE id = ${sellerId}`;
     if (!sellerResult.recordset.length) return;
     const { userId } = sellerResult.recordset[0];
 
-    const orderResult = await sql.query`SELECT clientName FROM GestaoOrders WHERE id = ${orderId}`;
-    const clientName = orderResult.recordset[0]?.clientName || 'cliente';
+    const allOrdersResult = await sql.query`
+      SELECT dord.order_id AS orderId FROM DeliveryOrders dord WHERE dord.delivery_id = ${deliveryId}
+    `;
+    const allOrderIds = allOrdersResult.recordset.map((r) => r.orderId);
+    const isMultiple = allOrderIds.length > 1;
 
     const tokensResult = await sql.query`SELECT token FROM PushTokens WHERE userId = ${userId}`;
     const tokens = tokensResult.recordset.map((r) => r.token).filter(Boolean);
     if (!tokens.length) return;
 
     const messaging = getMessaging();
-    const msgTitle = `Nota fiscal do pedido ${orderId} emitida`;
-    const msgBody = `A NF-e de ${clientName} (entrega ${deliveryCode}) foi autorizada. Confirme para colocar em rota.`;
+    const msgTitle = isMultiple
+      ? `Notas fiscais da entrega ${deliveryCode} emitidas`
+      : `Nota fiscal do pedido ${orderId} emitida`;
+    const msgBody = isMultiple
+      ? `Todas as NF-e da entrega ${deliveryCode} foram autorizadas pelo SEFAZ. Confirme para colocar em rota.`
+      : `A NF-e do pedido ${orderId} (entrega ${deliveryCode}) foi autorizada pelo SEFAZ. Confirme para colocar em rota.`;
 
     for (const token of tokens) {
       try {
         await messaging.send({
           token,
           notification: { title: msgTitle, body: msgBody },
-          data: { type: 'nfe_authorized', orderId: String(orderId), deliveryCode: String(deliveryCode) },
+          data: {
+            type: 'nfe_authorized',
+            deliveryId: String(deliveryId),
+            deliveryCode: String(deliveryCode),
+            orderId: String(orderId),
+          },
           android: { priority: 'high' },
           apns: { payload: { aps: { sound: 'default' } } },
         });
