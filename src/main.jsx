@@ -578,7 +578,6 @@ function App() {
         {active === 'configuracoes' && <Settings notify={notify} />}
       </main>
 
-      {selectedOrder && <OrderModal order={selectedOrder} onClose={() => setSelectedOrder(null)} updateOrderStatus={updateOrderStatus} createInvoice={createInvoice} onRemove={() => setRemoveConfirmOrder(selectedOrder)} onEdit={() => { setEditOrder(selectedOrder); setSelectedOrder(null) }} />}
       {selectedProduct && <ProductModal product={selectedProduct} onClose={() => setSelectedProduct(null)} onRemove={() => setRemoveConfirmProduct(selectedProduct)} onEdit={() => { setEditProduct(selectedProduct); setSelectedProduct(null) }} />}
       {supplierModal && <SupplierModal supplier={supplierModal} onClose={() => setSupplierModal(null)} notify={notify} />}
       {notaFiscalOrder && <NotaFiscalModal order={notaFiscalOrder} onClose={() => setNotaFiscalOrder(null)} updateOrderStatus={updateOrderStatus} notify={notify} />}
@@ -586,7 +585,12 @@ function App() {
       {notifOpen && <NotifPanel onClose={() => setNotifOpen(false)} />}
       {newDeliveryOpen && <NewDeliveryModal onClose={() => setNewDeliveryOpen(false)} orders={orders} vehicles={vehiclesState} onCreate={(d) => { setDeliveriesState((prev) => [d, ...prev]); notify(`Entrega ${d.id} criada com sucesso! O entregador será notificado sobre os pedidos em separação.`) }} />}
       {editDelivery && <NewDeliveryModal onClose={() => setEditDelivery(null)} orders={orders} vehicles={vehiclesState} editDelivery={editDelivery} onUpdate={(d) => { setDeliveriesState((prev) => prev.map((x) => x.id === d.id ? d : x)); setEditDelivery(null); notify(`Entrega ${d.id} atualizada com sucesso!`) }} onCreate={(d) => { setDeliveriesState((prev) => [d, ...prev]); notify(`Entrega ${d.id} criada com sucesso! O entregador será notificado sobre os pedidos em separação.`) }} />}
-      {selectedDelivery && <DeliveryDetailModal delivery={deliveriesState.find((d) => d.id === selectedDelivery.id) || selectedDelivery} onClose={() => setSelectedDelivery(null)} orders={orders} onCancel={cancelDelivery} onRemove={removeDelivery} onReactivate={reactivateDelivery} onEdit={(d) => { setEditDelivery(d); setSelectedDelivery(null) }} />}
+      {selectedDelivery && <DeliveryDetailModal delivery={deliveriesState.find((d) => d.id === selectedDelivery.id) || selectedDelivery} onClose={() => setSelectedDelivery(null)} orders={orders} onCancel={cancelDelivery} onRemove={removeDelivery} onReactivate={reactivateDelivery} onEdit={(d) => { setEditDelivery(d); setSelectedDelivery(null) }} onSelectOrder={setSelectedOrder} />}
+      {selectedOrder && (() => {
+        const _linkedDelivery = deliveriesState.find((d) => d.orderIds?.includes(selectedOrder.id))
+        const _canRemove = !_linkedDelivery || _linkedDelivery.status === 'Cancelada' || selectedOrder.status !== 'Rota'
+        return <OrderModal order={selectedOrder} onClose={() => setSelectedOrder(null)} updateOrderStatus={updateOrderStatus} createInvoice={createInvoice} onRemove={_canRemove ? () => setRemoveConfirmOrder(selectedOrder) : null} canRemove={_canRemove} onEdit={() => { setEditOrder(selectedOrder); setSelectedOrder(null) }} />
+      })()}
       {vehiclesOpen && <VehiclesModal
         onClose={() => setVehiclesOpen(false)}
         vehicles={vehiclesState}
@@ -617,7 +621,11 @@ function App() {
           }).catch(() => {})
         }}
       />}
-      {(newOrderOpen || editOrder) && <NewOrderModal onClose={() => { setNewOrderOpen(false); setEditOrder(null) }} onCreateOrder={createOrder} onUpdateOrder={updateOrder} editOrder={editOrder} clients={clientsState} />}
+      {(newOrderOpen || editOrder) && (() => {
+        const _linkedDelivery = editOrder ? deliveriesState.find((d) => d.orderIds?.includes(editOrder.id)) : null
+        const _lockedEdit = !!(editOrder && editOrder.status === 'Rota' && _linkedDelivery?.status === 'Em rota')
+        return <NewOrderModal onClose={() => { setNewOrderOpen(false); setEditOrder(null) }} onCreateOrder={createOrder} onUpdateOrder={updateOrder} editOrder={editOrder} clients={clientsState} lockedEdit={_lockedEdit} />
+      })()}
       {editProduct && <NewProductModal editProduct={editProduct} onClose={() => setEditProduct(null)} onCreated={() => {}} onUpdated={() => { setStockRefreshKey((k) => k + 1); notify('Produto atualizado com sucesso!') }} />}
       {removeConfirmOrder && (
         <div className="cancelSepOverlay" onClick={(e) => { if (e.target.classList.contains('cancelSepOverlay')) setRemoveConfirmOrder(null) }}>
@@ -3026,7 +3034,7 @@ function NewDeliveryModal({ onClose, onCreate, onUpdate, editDelivery, orders, v
   )
 }
 
-function DeliveryDetailModal({ delivery, onClose, orders, onCancel, onRemove, onReactivate, onEdit }) {
+function DeliveryDetailModal({ delivery, onClose, orders, onCancel, onRemove, onReactivate, onEdit, onSelectOrder }) {
   const [liveTemp, setLiveTemp] = useState(() => parseFloat(delivery.temperature) || -18.0)
   const [liveProgress, setLiveProgress] = useState(delivery.progress)
   const [elapsed, setElapsed] = useState(0)
@@ -3085,7 +3093,8 @@ function DeliveryDetailModal({ delivery, onClose, orders, onCancel, onRemove, on
             {isCancelled && <p style={{color:'var(--red)',fontWeight:700,marginTop:'10px'}}>Esta entrega foi cancelada.</p>}
           </div>
 
-          {/* Localização em tempo real */}
+          {/* Localização em tempo real - hidden, reserved for future use */}
+          {false && (
           <div className="deliveryDetailSection">
             <h4>Localização em tempo real</h4>
             <div className="deliveryTempCard">
@@ -3096,6 +3105,7 @@ function DeliveryDetailModal({ delivery, onClose, orders, onCancel, onRemove, on
               <span className="deliveryTempLive"><span className="liveDot"></span>Ao vivo</span>
             </div>
           </div>
+          )}
 
           {/* Informações */}
           <div className="deliveryDetailSection">
@@ -3119,7 +3129,7 @@ function DeliveryDetailModal({ delivery, onClose, orders, onCancel, onRemove, on
                   const o = orders.find((x) => x.id === oid)
                   if (!o) return <div key={oid} className="deliveryOrdersItem"><b>{oid}</b></div>
                   return (
-                    <div key={oid} className="deliveryOrdersItem">
+                    <div key={oid} className="deliveryOrdersItem deliveryOrdersItemClickable" onClick={() => onSelectOrder(o)}>
                       <div className="deliveryOrdersItemBody">
                         <b>{o.id}</b>
                         <span>{o.customer}</span>
@@ -3141,8 +3151,8 @@ function DeliveryDetailModal({ delivery, onClose, orders, onCancel, onRemove, on
             </div>
           )}
 
-          {/* Live log */}
-          {delivery.status === 'Em rota' && (
+          {/* Acompanhamento ao vivo - hidden, reserved for future use */}
+          {false && delivery.status === 'Em rota' && (
           <div className="deliveryDetailSection">
             <h4>Acompanhamento ao vivo</h4>
             <div className="deliveryLiveLog">
@@ -3655,7 +3665,7 @@ function Automation({ aiEnabled, setAiEnabled, notify }) {
   )
 }
 
-function NewOrderModal({ onClose, onCreateOrder, onUpdateOrder, editOrder, clients = [] }) {
+function NewOrderModal({ onClose, onCreateOrder, onUpdateOrder, editOrder, clients = [], lockedEdit = false }) {
   const [selectedClientId, setSelectedClientId] = useState(() => {
     if (editOrder) {
       const match = clients.find((c) => c.establishmentName === editOrder.customer)
@@ -3725,7 +3735,7 @@ function NewOrderModal({ onClose, onCreateOrder, onUpdateOrder, editOrder, clien
 
   const total = orderProducts.reduce((sum, p) => sum + p.price * p.qty, 0)
   const hasValidProducts = items.some((item) => item.productId && item.qty > 0)
-  const canSubmit = selectedClientId !== '' && form.delivery.trim() !== '' && hasValidProducts
+  const canSubmit = lockedEdit ? form.delivery.trim() !== '' : (selectedClientId !== '' && form.delivery.trim() !== '' && hasValidProducts)
 
   const submit = async (e) => {
     e.preventDefault()
@@ -3821,7 +3831,7 @@ function NewOrderModal({ onClose, onCreateOrder, onUpdateOrder, editOrder, clien
             <h3>Dados do cliente</h3>
             <div className="settingsForm">
               <label>Cliente *
-                <select value={selectedClientId} onChange={(e) => handleClientSelect(e.target.value)} required>
+                <select value={selectedClientId} onChange={(e) => handleClientSelect(e.target.value)} required disabled={lockedEdit}>
                   <option value="">{clients.length === 0 ? 'Carregando clientes...' : 'Selecione o cliente'}</option>
                   {clients.map((c) => <option key={c.id} value={c.id}>{c.establishmentName}{c.city ? ` — ${c.city}` : ''}</option>)}
                 </select>
@@ -3848,20 +3858,20 @@ function NewOrderModal({ onClose, onCreateOrder, onUpdateOrder, editOrder, clien
                     <select value={item.productId ?? ''} onChange={(e) => {
                       const val = e.target.value ? Number(e.target.value) : null
                       setItems((prev) => prev.map((it, j) => j === idx ? { ...it, productId: val, qty: val ? Math.max(1, it.qty) : 0 } : it))
-                    }}>
+                    }} disabled={lockedEdit}>
                       <option value="">Selecione o produto</option>
                       {products.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
                     </select>
-                    <input type="number" min={item.productId ? 1 : 0} value={item.qty} disabled={!item.productId} onChange={(e) => updateItem(idx, 'qty', Math.max(1, Number(e.target.value)))} />
+                    <input type="number" min={item.productId ? 1 : 0} value={item.qty} disabled={lockedEdit || !item.productId} onChange={(e) => updateItem(idx, 'qty', Math.max(1, Number(e.target.value)))} />
                     <span className="newOrderUnit">{product ? product.unit : ''}</span>
                     <span className="newOrderItemPrice">{product && item.qty > 0 ? money(product.price * item.qty) : ''}</span>
-                    {items.length > 1 && (
+                    {!lockedEdit && items.length > 1 && (
                       <button type="button" className="newOrderRemoveBtn" onClick={() => removeItem(idx)}><X size={14} /></button>
                     )}
                   </div>
                 )
               })}
-              <button type="button" className="newOrderAddBtn" onClick={addItem}>
+              <button type="button" className="newOrderAddBtn" onClick={addItem} style={lockedEdit ? {display:'none'} : {}}>
                 <Plus size={15} /> Adicionar produto
               </button>
             </div>
@@ -3909,7 +3919,7 @@ function NewOrderModal({ onClose, onCreateOrder, onUpdateOrder, editOrder, clien
   )
 }
 
-function OrderModal({ order, onClose, updateOrderStatus, createInvoice, onRemove, onEdit }) {
+function OrderModal({ order, onClose, updateOrderStatus, createInvoice, onRemove, onEdit, canRemove = true }) {
   return (
     <div className="modalBackdrop">
       <div className="detailModal orderModal">
@@ -3932,7 +3942,7 @@ function OrderModal({ order, onClose, updateOrderStatus, createInvoice, onRemove
           </div>
         </div>
         <div className="orderModalFooter">
-          <button className="orderModalBtn orderModalBtnDanger" onClick={onRemove}>Remover</button>
+          {canRemove && <button className="orderModalBtn orderModalBtnDanger" onClick={onRemove}>Remover</button>}
           <button className="orderModalBtn orderModalBtnPrimary" onClick={onEdit}>Editar</button>
         </div>
       </div>
