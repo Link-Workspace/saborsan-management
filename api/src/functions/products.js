@@ -19,7 +19,7 @@ app.http('products', {
       if (request.method === 'GET') {
         const result = await sql.query`
           SELECT id, name, category, price, badge, description, details,
-                 packaging, conservation, preparation, idealFor,
+                 packaging, unitQuantity, packagingWeight, conservation, preparation, idealFor,
                  availableQuantity, imageUrl, active, createdAt, updatedAt
           FROM Products
           WHERE active = 1
@@ -35,6 +35,8 @@ app.http('products', {
           description: p.description || null,
           details: p.details || null,
           packaging: p.packaging || null,
+          unitQuantity: p.unitQuantity != null ? p.unitQuantity : null,
+          packagingWeight: p.packagingWeight != null ? parseFloat(p.packagingWeight) : null,
           conservation: p.conservation || null,
           preparation: p.preparation || null,
           idealFor: p.idealFor || null,
@@ -63,7 +65,7 @@ app.http('products', {
 
         for (const item of items) {
           const { name, category, price, availableQuantity, badge, description,
-                  details, packaging, conservation, preparation, idealFor, imageUrl } = item;
+                  details, packaging, unitQuantity, packagingWeight, conservation, preparation, idealFor, imageUrl } = item;
 
           if (!name || !name.trim() || !category || !category.trim()) {
             errors.push({ name: name || '?', error: 'Nome e categoria são obrigatórios.' });
@@ -77,12 +79,14 @@ app.http('products', {
 
           await sql.query`
             INSERT INTO Products (id, name, category, price, badge, description, details,
-                                  packaging, conservation, preparation, idealFor,
+                                  packaging, unitQuantity, packagingWeight, conservation, preparation, idealFor,
                                   availableQuantity, imageUrl, active, createdAt, updatedAt)
             VALUES (${id}, ${name.trim()}, ${category.trim()}, ${priceStr},
                     ${badge || null}, ${description || null}, ${details || null},
-                    ${packaging || null}, ${conservation || null}, ${preparation || null},
-                    ${idealFor || null}, ${qty}, ${imageUrl || null},
+                    ${packaging || null}, ${unitQuantity != null ? parseInt(unitQuantity, 10) : null},
+                    ${packagingWeight != null ? parseFloat(packagingWeight) : null},
+                    ${conservation || null}, ${preparation || null}, ${idealFor || null},
+                    ${qty}, ${imageUrl || null},
                     1, GETUTCDATE(), GETUTCDATE())
           `;
 
@@ -94,7 +98,7 @@ app.http('products', {
 
       if (request.method === 'PUT') {
         const body = await request.json();
-        const { id, name, category, price, availableQuantity, packaging, conservation,
+        const { id, name, category, price, availableQuantity, packaging, unitQuantity, packagingWeight, conservation,
                 description, details, preparation, idealFor, badge, imageUrl } = body;
 
         if (!id || !name?.trim() || !category?.trim()) {
@@ -110,6 +114,8 @@ app.http('products', {
               description = ${description || null},
               details = ${details || null},
               packaging = ${packaging || null},
+              unitQuantity = ${unitQuantity != null ? parseInt(unitQuantity, 10) : null},
+              packagingWeight = ${packagingWeight != null ? parseFloat(packagingWeight) : null},
               conservation = ${conservation || null},
               preparation = ${preparation || null},
               idealFor = ${idealFor || null},

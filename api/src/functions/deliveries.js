@@ -33,25 +33,25 @@ async function notifyDeliveryConfirmation(sellerId, deliveryCode) {
     const tokens = tokensResult.recordset.map((r) => r.token).filter(Boolean);
     if (!tokens.length) return;
 
-    const messaging = getMessaging();
-    for (const token of tokens) {
-      try {
-        await messaging.send({
-          token,
-          notification: {
-            title: `Entrega ${deliveryCode} planejada`,
-            body: 'Confirme a data de saída para esta entrega.',
-          },
-          data: { type: 'delivery-confirmations', deliveryCode: String(deliveryCode) },
-          android: { priority: 'high' },
-          apns: { payload: { aps: { sound: 'default' } } },
-        });
-      } catch (err) {
-        if (err.code === 'messaging/invalid-registration-token' || err.code === 'messaging/registration-token-not-registered') {
-          await sql.query`DELETE FROM PushTokens WHERE token = ${token}`;
-        }
-      }
-    }
+    // const messaging = getMessaging();
+    // for (const token of tokens) {
+    //   try {
+    //     await messaging.send({
+    //       token,
+    //       notification: {
+    //         title: `Entrega ${deliveryCode} planejada`,
+    //         body: 'Confirme a data de saída para esta entrega.',
+    //       },
+    //       data: { type: 'delivery-confirmations', deliveryCode: String(deliveryCode) },
+    //       android: { priority: 'high' },
+    //       apns: { payload: { aps: { sound: 'default' } } },
+    //     });
+    //   } catch (err) {
+    //     if (err.code === 'messaging/invalid-registration-token' || err.code === 'messaging/registration-token-not-registered') {
+    //       await sql.query`DELETE FROM PushTokens WHERE token = ${token}`;
+    //     }
+    //   }
+    // }
   } catch {
     // Silenciar erros de notificação
   }

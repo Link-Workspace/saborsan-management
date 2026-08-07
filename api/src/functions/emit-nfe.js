@@ -90,7 +90,7 @@ async function notifyDriverNfeAuthorized(orderId, context) {
           token,
           notification: { title: msgTitle, body: msgBody },
           data: {
-            type: 'nfe_authorized',
+            type: 'nfe-confirmations',
             deliveryId: String(deliveryId),
             deliveryCode: String(deliveryCode),
             orderId: String(orderId),
@@ -798,7 +798,7 @@ app.http('emit-nfe', {
             `;
             await sql.query`
               UPDATE GestaoOrders
-              SET status = N'Nota emitida', updatedAt = GETUTCDATE()
+              SET status = N'Pronto', updatedAt = GETUTCDATE()
               WHERE id = ${doc.orderId}
             `;
             await notifyDriverNfeAuthorized(doc.orderId, context);
@@ -1169,7 +1169,7 @@ app.http('emit-nfe', {
             `;
             await sql.query`
               UPDATE GestaoOrders
-              SET status = N'Nota emitida', updatedAt = GETUTCDATE()
+              SET status = N'Pronto', updatedAt = GETUTCDATE()
               WHERE id = ${orderId}
             `;
             await notifyDriverNfeAuthorized(orderId, context);

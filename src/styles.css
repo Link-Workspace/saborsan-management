@@ -49,6 +49,19 @@ p{margin:0}.appShell{min-height:100vh;display:grid;grid-template-columns:300px 1
 .newOrderItem{display:grid;grid-template-columns:1fr 72px 60px auto 32px;gap:8px;align-items:center}
 .newOrderItem select,.newOrderItem input{border:1.5px solid var(--line);border-radius:12px;padding:9px 12px;background:#fff;color:var(--navy);font-weight:700;outline:none;transition:.18s}
 .newOrderItem select:focus,.newOrderItem input:focus{border-color:var(--orange)}
+.productSelectWrap{position:relative;width:100%}
+.productSelectBtn{width:100%;border:1.5px solid var(--line);border-radius:12px;padding:9px 12px;background:#fff;color:var(--navy);font-weight:700;font-size:.9rem;outline:none;transition:.18s;display:flex;align-items:center;justify-content:space-between;gap:8px;cursor:pointer;text-align:left}
+.productSelectBtn:hover:not(:disabled){border-color:var(--orange)}
+.productSelectBtn.open{border-color:var(--orange)}
+.productSelectBtn:disabled{opacity:.5;cursor:default}
+.productSelectPlaceholder{color:var(--muted);font-weight:600}
+.productSelectDropdown{position:absolute;top:calc(100% + 6px);left:0;right:0;background:#fff;border:1px solid var(--line);border-radius:16px;padding:6px;box-shadow:0 16px 40px rgba(6,54,111,.14);z-index:50;display:flex;flex-direction:column;gap:2px;max-height:240px;overflow-y:auto}
+.productSelectDropdown button{border:0;background:transparent;display:flex;align-items:center;justify-content:space-between;gap:10px;color:var(--text);font-weight:700;font-size:.88rem;padding:10px 14px;border-radius:10px;text-align:left;width:100%;transition:.12s;cursor:pointer}
+.productSelectDropdown button:hover{background:var(--orange-soft);color:var(--orange-strong)}
+.productSelectDropdown button.active{background:var(--orange-soft);color:var(--orange-strong);font-weight:900}
+.productSelectName{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.productSelectStock{font-size:.8rem;font-weight:700;color:var(--navy);opacity:.5;white-space:nowrap;flex-shrink:0}
+.productSelectEmpty{font-size:.85rem;color:var(--muted);padding:10px 14px;margin:0}
 .newOrderUnit{font-size:.82rem;font-weight:800;color:var(--muted);white-space:nowrap}
 .newOrderItemPrice{font-size:.9rem;font-weight:900;color:var(--navy);text-align:right;white-space:nowrap}
 .newOrderRemoveBtn{border:1.5px solid var(--line);background:#fff;border-radius:10px;width:30px;height:30px;display:grid;place-items:center;color:var(--muted);transition:.18s}

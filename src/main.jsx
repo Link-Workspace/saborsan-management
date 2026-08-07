@@ -345,6 +345,14 @@ function App() {
   const [selectedClient, setSelectedClient] = useState(null)
   const [editClient, setEditClient] = useState(null)
   const [removeConfirmClient, setRemoveConfirmClient] = useState(null)
+  const [apiProductsState, setApiProductsState] = useState([])
+
+  const fetchApiProducts = () => {
+    fetch(`${API_URL}/api/products`)
+      .then((r) => r.json())
+      .then((data) => { if (data.products) setApiProductsState(data.products) })
+      .catch(() => {})
+  }
 
   const fetchOrders = () => {
     setOrdersLoading(true)
@@ -382,6 +390,7 @@ function App() {
   useEffect(() => { fetchDeliveries() }, [])
   useEffect(() => { fetchVehicles() }, [])
   useEffect(() => { fetchClients() }, [])
+  useEffect(() => { fetchApiProducts() }, [stockRefreshKey])
   useEffect(() => { setTopbarSearch('') }, [active])
 
   const totals = useMemo(() => {
@@ -633,7 +642,7 @@ function App() {
       {(newOrderOpen || editOrder) && (() => {
         const _linkedDelivery = editOrder ? deliveriesState.find((d) => d.orderIds?.includes(editOrder.id)) : null
         const _lockedEdit = !!(editOrder && editOrder.status === 'Rota' && _linkedDelivery?.status === 'Em rota')
-        return <NewOrderModal onClose={() => { setNewOrderOpen(false); setEditOrder(null) }} onCreateOrder={createOrder} onUpdateOrder={updateOrder} editOrder={editOrder} clients={clientsState} lockedEdit={_lockedEdit} />
+        return <NewOrderModal onClose={() => { setNewOrderOpen(false); setEditOrder(null) }} onCreateOrder={createOrder} onUpdateOrder={updateOrder} editOrder={editOrder} clients={clientsState} lockedEdit={_lockedEdit} products={apiProductsState} />
       })()}
       {editProduct && <NewProductModal editProduct={editProduct} onClose={() => setEditProduct(null)} onCreated={() => {}} onUpdated={() => { setStockRefreshKey((k) => k + 1); notify('Produto atualizado com sucesso!') }} />}
       {removeConfirmOrder && (
@@ -921,6 +930,8 @@ function NewProductModal({ onClose, onCreated, editProduct, onUpdated }) {
     price: editProduct.price ? String(editProduct.price) : '',
     availableQuantity: editProduct.stock != null ? String(editProduct.stock) : '',
     packaging: editProduct.unit || editProduct.packaging || '',
+    unitQuantity: editProduct.unitQuantity != null ? String(editProduct.unitQuantity) : '',
+    packagingWeight: editProduct.packagingWeight != null ? String(editProduct.packagingWeight) : '',
     conservation: editProduct.temperature || editProduct.conservation || '',
     description: editProduct.description || '',
     details: editProduct.details || '',
@@ -930,7 +941,8 @@ function NewProductModal({ onClose, onCreated, editProduct, onUpdated }) {
     imageUrl: editProduct.image || editProduct.imageUrl || '',
   } : {
     name: '', category: '', price: '', availableQuantity: '',
-    packaging: '', conservation: '', description: '', details: '',
+    packaging: '', unitQuantity: '', packagingWeight: '',
+    conservation: '', description: '', details: '',
     preparation: '', idealFor: '', badge: '', imageUrl: '',
   })
   const [submitting, setSubmitting] = useState(false)
@@ -950,7 +962,7 @@ function NewProductModal({ onClose, onCreated, editProduct, onUpdated }) {
 
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }))
 
-  const canSubmit = form.name.trim() && form.category.trim() && form.price.trim()
+  const canSubmit = form.name.trim() && form.category.trim() && form.price.trim() && form.packaging && form.unitQuantity.trim() && form.packagingWeight.trim()
 
   const submitManual = async (e) => {
     e.preventDefault()
@@ -980,6 +992,8 @@ function NewProductModal({ onClose, onCreated, editProduct, onUpdated }) {
             price: form.price,
             availableQuantity: parseInt(form.availableQuantity || '0', 10),
             packaging: form.packaging || null,
+            unitQuantity: parseInt(form.unitQuantity || '0', 10),
+            packagingWeight: parseFloat(form.packagingWeight || '0'),
             conservation: form.conservation || null,
             description: form.description || null,
             details: form.details || null,
@@ -1004,6 +1018,8 @@ function NewProductModal({ onClose, onCreated, editProduct, onUpdated }) {
           price: form.price,
           availableQuantity: parseInt(form.availableQuantity || '0', 10),
           packaging: form.packaging || null,
+          unitQuantity: parseInt(form.unitQuantity || '0', 10),
+          packagingWeight: parseFloat(form.packagingWeight || '0'),
           conservation: form.conservation || null,
           description: form.description || null,
           details: form.details || null,
@@ -1127,8 +1143,18 @@ function NewProductModal({ onClose, onCreated, editProduct, onUpdated }) {
                 <label>Quantidade em estoque
                   <input type="number" min="0" placeholder="0" value={form.availableQuantity} onChange={(e) => set('availableQuantity', e.target.value)} />
                 </label>
-                <label>Embalagem / Unidade
-                  <input placeholder="Ex: cx 5kg, balde 10L" value={form.packaging} onChange={(e) => set('packaging', e.target.value)} />
+                <label>Embalagem / Unidade *
+                  <select value={form.packaging} onChange={(e) => set('packaging', e.target.value)}>
+                    <option value="">Selecionar...</option>
+                    <option value="Caixa">Caixa</option>
+                    <option value="Pacote">Pacote</option>
+                  </select>
+                </label>
+                <label>Qtd. na unidade *
+                  <input type="number" min="0" placeholder="Ex: 10" value={form.unitQuantity} onChange={(e) => set('unitQuantity', e.target.value)} />
+                </label>
+                <label>Peso da embalagem (kg) *
+                  <input type="number" step="0.001" min="0" placeholder="Ex: 5.000" value={form.packagingWeight} onChange={(e) => set('packagingWeight', e.target.value)} />
                 </label>
                 <label>Conservação / Temperatura
                   <input placeholder="Ex: -18°C, Refrigerado" value={form.conservation} onChange={(e) => set('conservation', e.target.value)} />
@@ -3661,7 +3687,40 @@ function Automation({ aiEnabled, setAiEnabled, notify }) {
   )
 }
 
-function NewOrderModal({ onClose, onCreateOrder, onUpdateOrder, editOrder, clients = [], lockedEdit = false }) {
+function ProductSelect({ value, onChange, disabled, products: productList = [] }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef(null)
+  const availableProducts = productList.filter((p) => p.stock > 0)
+  const selected = productList.find((p) => p.id === value)
+
+  useEffect(() => {
+    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false) }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
+
+  return (
+    <div className="productSelectWrap" ref={ref}>
+      <button type="button" className={`productSelectBtn${open ? ' open' : ''}`} onClick={() => !disabled && setOpen((v) => !v)} disabled={disabled}>
+        <span className={selected ? '' : 'productSelectPlaceholder'}>{selected ? selected.name : 'Selecione o produto'}</span>
+        <ChevronDown size={14} style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform .2s', flexShrink: 0 }} />
+      </button>
+      {open && (
+        <div className="productSelectDropdown">
+          {availableProducts.length === 0 && <p className="productSelectEmpty">Nenhum produto em estoque</p>}
+          {availableProducts.map((p) => (
+            <button key={p.id} type="button" className={value === p.id ? 'active' : ''} onClick={() => { onChange(p.id); setOpen(false) }}>
+              <span className="productSelectName">{p.name}</span>
+              <span className="productSelectStock">{p.stock} {p.unit}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function NewOrderModal({ onClose, onCreateOrder, onUpdateOrder, editOrder, clients = [], lockedEdit = false, products = [] }) {
   const [selectedClientId, setSelectedClientId] = useState(() => {
     if (editOrder) {
       const match = clients.find((c) => c.establishmentName === editOrder.customer)
@@ -3674,7 +3733,6 @@ function NewOrderModal({ onClose, onCreateOrder, onUpdateOrder, editOrder, clien
     cnpj: editOrder.cnpj || '',
     city: editOrder.city || '',
     whatsapp: editOrder.whatsapp || '',
-    source: editOrder.source || 'App Saborsan',
     priority: editOrder.priority || 'Normal',
     delivery: editOrder.delivery || '',
     notes: editOrder.notes || '',
@@ -3683,7 +3741,6 @@ function NewOrderModal({ onClose, onCreateOrder, onUpdateOrder, editOrder, clien
     cnpj: '',
     city: '',
     whatsapp: '',
-    source: 'App Saborsan',
     priority: 'Normal',
     delivery: '',
     notes: '',
@@ -3742,7 +3799,6 @@ function NewOrderModal({ onClose, onCreateOrder, onUpdateOrder, editOrder, clien
       if (editOrder) {
         const updatedOrder = {
           ...editOrder,
-          source: form.source,
           customer: form.customer,
           cnpj: form.cnpj,
           city: form.city,
@@ -3755,7 +3811,7 @@ function NewOrderModal({ onClose, onCreateOrder, onUpdateOrder, editOrder, clien
         }
         const payload = {
           orderId: editOrder.id,
-          source: form.source,
+          clientId: selectedClientId ? Number(selectedClientId) : null,
           clientName: form.customer,
           clientCnpj: form.cnpj || null,
           clientCity: form.city || null,
@@ -3781,7 +3837,7 @@ function NewOrderModal({ onClose, onCreateOrder, onUpdateOrder, editOrder, clien
         return
       }
       const payload = {
-        source: form.source,
+        clientId: selectedClientId ? Number(selectedClientId) : null,
         clientName: form.customer,
         clientCnpj: form.cnpj || null,
         clientCity: form.city || null,
@@ -3851,13 +3907,12 @@ function NewOrderModal({ onClose, onCreateOrder, onUpdateOrder, editOrder, clien
                 const product = item.productId ? products.find((p) => p.id === item.productId) : null
                 return (
                   <div className="newOrderItem" key={idx}>
-                    <select value={item.productId ?? ''} onChange={(e) => {
-                      const val = e.target.value ? Number(e.target.value) : null
-                      setItems((prev) => prev.map((it, j) => j === idx ? { ...it, productId: val, qty: val ? Math.max(1, it.qty) : 0 } : it))
-                    }} disabled={lockedEdit}>
-                      <option value="">Selecione o produto</option>
-                      {products.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-                    </select>
+                    <ProductSelect
+                      value={item.productId}
+                      disabled={lockedEdit}
+                      products={products}
+                      onChange={(val) => setItems((prev) => prev.map((it, j) => j === idx ? { ...it, productId: val, qty: Math.max(1, it.qty) } : it))}
+                    />
                     <input type="number" min={item.productId ? 1 : 0} value={item.qty} disabled={lockedEdit || !item.productId} onChange={(e) => updateItem(idx, 'qty', Math.max(1, Number(e.target.value)))} />
                     <span className="newOrderUnit">{product ? product.unit : ''}</span>
                     <span className="newOrderItemPrice">{product && item.qty > 0 ? money(product.price * item.qty) : ''}</span>
@@ -3874,14 +3929,6 @@ function NewOrderModal({ onClose, onCreateOrder, onUpdateOrder, editOrder, clien
 
             <h3 className="newOrderSectionTitle">Detalhes do pedido</h3>
             <div className="settingsForm">
-              <label>Origem
-                <select value={form.source} onChange={(e) => set('source', e.target.value)}>
-                  <option>App Saborsan</option>
-                  <option>WhatsApp</option>
-                  <option>Vendedor</option>
-                  <option>Telefone</option>
-                </select>
-              </label>
               <label>Prioridade
                 <select value={form.priority} onChange={(e) => set('priority', e.target.value)}>
                   <option>Normal</option>
@@ -3930,7 +3977,6 @@ function OrderModal({ order, onClose, updateOrderStatus, createInvoice, onRemove
             </div>
             <div className="summaryBox">
               <h3>Resumo</h3>
-              <p><b>Origem:</b> {order.source}</p>
               <p><b>WhatsApp:</b> {order.whatsapp}</p>
               <p><b>Entrega:</b> {order.delivery}</p>
               <p><b>Valor:</b> {money(order.value)}</p>

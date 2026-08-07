@@ -47,7 +47,7 @@ app.http('orders', {
 
         const [ordersResult, itemsResult, nfeResult] = await Promise.all([
           sql.query`
-            SELECT id, source, clientName, clientCnpj, clientCity, clientPhone,
+            SELECT id, clientName, clientCnpj, clientCity, clientPhone,
                    status, totalValue, deliveryAt, observations, purchasePurpose, createdAt, deletedAt
             FROM GestaoOrders
             WHERE deletedAt IS NULL
@@ -89,7 +89,6 @@ app.http('orders', {
 
         const orders = ordersResult.recordset.map((o) => ({
           id: o.id,
-          source: o.source,
           customer: o.clientName,
           cnpj: o.clientCnpj || '',
           city: o.clientCity || '',
@@ -157,7 +156,7 @@ app.http('orders', {
 
       if (request.method === 'PUT') {
         const body = await request.json();
-        const { orderId, source, clientName, clientCnpj, clientCity, clientPhone, totalValue, observations, items, purchasePurpose } = body;
+        const { orderId, clientId, clientName, clientCnpj, clientCity, clientPhone, totalValue, observations, items, purchasePurpose } = body;
 
         if (!orderId || !clientName || !items || items.length === 0) {
           return { status: 400, jsonBody: { error: 'orderId, clientName e items são obrigatórios' } };
@@ -165,7 +164,7 @@ app.http('orders', {
 
         await sql.query`
           UPDATE GestaoOrders
-          SET source = ${source || 'Manual'},
+          SET clientId = ${clientId || null},
               clientName = ${clientName},
               clientCnpj = ${clientCnpj || null},
               clientCity = ${clientCity || null},
@@ -191,7 +190,7 @@ app.http('orders', {
 
       if (request.method === 'POST') {
         const body = await request.json();
-        const { source, clientName, clientCnpj, clientCity, clientPhone, totalValue, observations, items, purchasePurpose } = body;
+        const { clientId, clientName, clientCnpj, clientCity, clientPhone, totalValue, observations, items, purchasePurpose } = body;
 
         if (!clientName || !items || items.length === 0) {
           return { status: 400, jsonBody: { error: 'clientName e items são obrigatórios' } };
@@ -205,11 +204,11 @@ app.http('orders', {
         const newId = `PED-${idResult.recordset[0].nextNum}`;
 
         const insertResult = await sql.query`
-          INSERT INTO GestaoOrders (id, source, clientName, clientCnpj, clientCity, clientPhone, status, totalValue, observations, purchasePurpose, createdAt, updatedAt)
+          INSERT INTO GestaoOrders (id, clientId, clientName, clientCnpj, clientCity, clientPhone, status, totalValue, observations, purchasePurpose, createdAt, updatedAt)
           OUTPUT INSERTED.createdAt
           VALUES (
             ${newId},
-            ${source || 'Manual'},
+            ${clientId || null},
             ${clientName},
             ${clientCnpj || null},
             ${clientCity || null},
@@ -237,7 +236,6 @@ app.http('orders', {
           jsonBody: {
             order: {
               id: orderId,
-              source: source || 'Manual',
               customer: clientName,
               cnpj: clientCnpj || '',
               city: clientCity || '',
