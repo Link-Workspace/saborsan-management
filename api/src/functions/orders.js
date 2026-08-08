@@ -176,6 +176,7 @@ app.http('orders', {
           WHERE id = ${orderId}
         `;
 
+        const oldItemsResult = await sql.query`SELECT productName, quantity FROM GestaoOrderItems WHERE orderId = ${orderId}`;
         await sql.query`DELETE FROM GestaoOrderItems WHERE orderId = ${orderId}`;
 
         for (const item of items) {
@@ -183,6 +184,22 @@ app.http('orders', {
             INSERT INTO GestaoOrderItems (orderId, productName, quantity, unit, unitPrice)
             VALUES (${orderId}, ${item.productName}, ${item.quantity}, ${item.unit || ''}, ${item.unitPrice || 0})
           `;
+        }
+
+        // Adjust stock: restore old quantities then deduct new quantities
+        const oldMap = {};
+        oldItemsResult.recordset.forEach((i) => { oldMap[i.productName] = (oldMap[i.productName] || 0) + i.quantity; });
+        const newMap = {};
+        items.forEach((i) => { newMap[i.productName] = (newMap[i.productName] || 0) + i.quantity; });
+        const allNames = new Set([...Object.keys(oldMap), ...Object.keys(newMap)]);
+        for (const name of allNames) {
+          const diff = (newMap[name] || 0) - (oldMap[name] || 0);
+          if (diff > 0) {
+            await sql.query`UPDATE Products SET availableQuantity = CASE WHEN availableQuantity >= ${diff} THEN availableQuantity - ${diff} ELSE 0 END, updatedAt = GETUTCDATE() WHERE name = ${name} AND active = 1`;
+          } else if (diff < 0) {
+            const restore = -diff;
+            await sql.query`UPDATE Products SET availableQuantity = availableQuantity + ${restore}, updatedAt = GETUTCDATE() WHERE name = ${name} AND active = 1`;
+          }
         }
 
         return { jsonBody: { success: true } };
@@ -229,6 +246,12 @@ app.http('orders', {
             INSERT INTO GestaoOrderItems (orderId, productName, quantity, unit, unitPrice)
             VALUES (${orderId}, ${item.productName}, ${item.quantity}, ${item.unit || ''}, ${item.unitPrice || 0})
           `;
+          await sql.query`
+            UPDATE Products
+            SET availableQuantity = CASE WHEN availableQuantity >= ${item.quantity} THEN availableQuantity - ${item.quantity} ELSE 0 END,
+                updatedAt = GETUTCDATE()
+            WHERE name = ${item.productName} AND active = 1
+          `;
         }
 
         return {
@@ -269,7 +292,15 @@ app.http('orders', {
         `;
         const hasAuthorizedNfe = nfeCheck.recordset.length > 0;
 
+        const deletedItemsResult = await sql.query`SELECT productName, quantity FROM GestaoOrderItems WHERE orderId = ${orderId}`;
         await sql.query`DELETE FROM GestaoOrderItems WHERE orderId = ${orderId}`;
+
+        // Restore stock only for orders not yet invoiced/delivered
+        if (!hasAuthorizedNfe) {
+          for (const item of deletedItemsResult.recordset) {
+            await sql.query`UPDATE Products SET availableQuantity = availableQuantity + ${item.quantity}, updatedAt = GETUTCDATE() WHERE name = ${item.productName} AND active = 1`;
+          }
+        }
 
         if (hasAuthorizedNfe) {
           // Soft delete: keep the order and its fiscal document for fiscal history

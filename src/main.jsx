@@ -470,6 +470,7 @@ function App() {
 
   const createOrder = (order) => {
     setOrders((prev) => [order, ...prev])
+    setStockRefreshKey((k) => k + 1)
     notify(`Pedido ${order.id} criado com sucesso!`)
   }
 
@@ -512,11 +513,13 @@ function App() {
     }
     setRemoveConfirmOrder(null)
     setSelectedOrder(null)
+    setStockRefreshKey((k) => k + 1)
     notify(`Pedido ${id} removido.`)
   }
 
   const updateOrder = (updatedOrder) => {
     setOrders((items) => items.map((item) => item.id === updatedOrder.id ? updatedOrder : item))
+    setStockRefreshKey((k) => k + 1)
     notify(`Pedido ${updatedOrder.id} atualizado com sucesso!`)
   }
 
@@ -3982,10 +3985,14 @@ function NewOrderModal({ onClose, onCreateOrder, onUpdateOrder, editOrder, clien
             <h3 className="newOrderSectionTitle">Detalhes do pedido</h3>
             <div className="settingsForm">
               <label>Prioridade
-                <select value={form.priority} onChange={(e) => set('priority', e.target.value)}>
-                  <option>Normal</option>
-                  <option>Alta</option>
-                </select>
+                <CustomSelect
+                  value={form.priority}
+                  onChange={(v) => set('priority', v)}
+                  options={[
+                    { value: 'Normal', label: 'Normal' },
+                    { value: 'Alta', label: 'Alta' },
+                  ]}
+                />
               </label>
               <label>Previsão de entrega
                 <input placeholder="Hoje, 15:00" value={form.delivery} onChange={(e) => set('delivery', e.target.value)} />
