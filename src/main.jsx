@@ -2562,9 +2562,27 @@ function Purchases({ notify }) {
 
 function Deliveries({ onNewDelivery, onSelect, deliveries: list, onOpenVehicles }) {
   const [view, setView] = useState('ativas')
+  const driversWithActiveDelivery = new Set(
+    list.filter((d) => !['Concluída', 'Cancelada'].includes(d.status)).map((d) => d.driver)
+  )
+  // Only the most recent completed delivery per driver (last in array) stays in "ativas"
+  const latestCompletedIdByDriver = new Map()
+  list.forEach((d) => {
+    if (d.status === 'Concluída' && !driversWithActiveDelivery.has(d.driver)) {
+      latestCompletedIdByDriver.set(d.driver, d.id)
+    }
+  })
   const filtered = view === 'ativas'
-    ? list.filter((d) => !['Concluída', 'Cancelada'].includes(d.status))
-    : list.filter((d) => ['Concluída', 'Cancelada'].includes(d.status))
+    ? list.filter((d) => {
+        if (d.status === 'Cancelada') return false
+        if (d.status === 'Concluída') return latestCompletedIdByDriver.get(d.driver) === d.id
+        return true
+      })
+    : list.filter((d) => {
+        if (d.status === 'Cancelada') return true
+        if (d.status === 'Concluída') return driversWithActiveDelivery.has(d.driver) || latestCompletedIdByDriver.get(d.driver) !== d.id
+        return false
+      })
   return (
     <section className="pageStack">
       <div className="sectionHeader stockSectionHeader"><div><p>Rotas, motoristas e temperatura</p></div><div className="viewFilterWrap"><div className="deliverySegmented"><button className={`deliverySegBtn${view === 'ativas' ? ' active' : ''}`} onClick={() => setView('ativas')}>Entregas ativas</button><button className={`deliverySegBtn${view === 'historico' ? ' active' : ''}`} onClick={() => setView('historico')}>Histórico de entregas</button></div></div><div style={{display:'flex',gap:'8px'}}><button className="btnSolid" onClick={onNewDelivery}><Plus size={18} /> Nova entrega</button><button className="btnSolid" onClick={onOpenVehicles}><Truck size={18} /> Veículos</button></div></div>
@@ -3687,6 +3705,37 @@ function Automation({ aiEnabled, setAiEnabled, notify }) {
   )
 }
 
+function CustomSelect({ value, onChange, options = [], placeholder = 'Selecione...', disabled = false }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef(null)
+  const selected = options.find((o) => String(o.value) === String(value))
+
+  useEffect(() => {
+    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false) }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
+
+  return (
+    <div className="productSelectWrap" ref={ref}>
+      <button type="button" className={`productSelectBtn${open ? ' open' : ''}`} onClick={() => !disabled && setOpen((v) => !v)} disabled={disabled}>
+        <span className={selected ? '' : 'productSelectPlaceholder'}>{selected ? selected.label : placeholder}</span>
+        <ChevronDown size={14} style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform .2s', flexShrink: 0 }} />
+      </button>
+      {open && (
+        <div className="productSelectDropdown">
+          {options.length === 0 && <p className="productSelectEmpty">Nenhuma opção disponível</p>}
+          {options.map((o) => (
+            <button key={o.value} type="button" className={String(value) === String(o.value) ? 'active' : ''} onClick={() => { onChange(o.value); setOpen(false) }}>
+              <span className="productSelectName">{o.label}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function ProductSelect({ value, onChange, disabled, products: productList = [] }) {
   const [open, setOpen] = useState(false)
   const ref = useRef(null)
@@ -3883,10 +3932,13 @@ function NewOrderModal({ onClose, onCreateOrder, onUpdateOrder, editOrder, clien
             <h3>Dados do cliente</h3>
             <div className="settingsForm">
               <label>Cliente *
-                <select value={selectedClientId} onChange={(e) => handleClientSelect(e.target.value)} required disabled={lockedEdit}>
-                  <option value="">{clients.length === 0 ? 'Carregando clientes...' : 'Selecione o cliente'}</option>
-                  {clients.map((c) => <option key={c.id} value={c.id}>{c.establishmentName}{c.city ? ` — ${c.city}` : ''}</option>)}
-                </select>
+                <CustomSelect
+                  value={selectedClientId}
+                  onChange={(v) => handleClientSelect(v)}
+                  disabled={lockedEdit}
+                  placeholder={clients.length === 0 ? 'Carregando clientes...' : 'Selecione o cliente'}
+                  options={clients.map((c) => ({ value: String(c.id), label: `${c.establishmentName}${c.city ? ` — ${c.city}` : ''}` }))}
+                />
               </label>
             </div>
             {selectedClientId && (() => {

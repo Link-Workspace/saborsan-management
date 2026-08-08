@@ -55,7 +55,10 @@ p{margin:0}.appShell{min-height:100vh;display:grid;grid-template-columns:300px 1
 .productSelectBtn.open{border-color:var(--orange)}
 .productSelectBtn:disabled{opacity:.5;cursor:default}
 .productSelectPlaceholder{color:var(--muted);font-weight:600}
-.productSelectDropdown{position:absolute;top:calc(100% + 6px);left:0;right:0;background:#fff;border:1px solid var(--line);border-radius:16px;padding:6px;box-shadow:0 16px 40px rgba(6,54,111,.14);z-index:50;display:flex;flex-direction:column;gap:2px;max-height:240px;overflow-y:auto}
+.productSelectDropdown{position:absolute;top:calc(100% + 6px);left:0;right:0;background:#fff;border:1px solid var(--line);border-radius:16px;padding:6px;box-shadow:0 16px 40px rgba(6,54,111,.14);z-index:50;display:flex;flex-direction:column;gap:2px;max-height:240px;overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--line) transparent}
+.productSelectDropdown::-webkit-scrollbar{width:4px}
+.productSelectDropdown::-webkit-scrollbar-track{background:transparent}
+.productSelectDropdown::-webkit-scrollbar-thumb{background:var(--line);border-radius:4px}
 .productSelectDropdown button{border:0;background:transparent;display:flex;align-items:center;justify-content:space-between;gap:10px;color:var(--text);font-weight:700;font-size:.88rem;padding:10px 14px;border-radius:10px;text-align:left;width:100%;transition:.12s;cursor:pointer}
 .productSelectDropdown button:hover{background:var(--orange-soft);color:var(--orange-strong)}
 .productSelectDropdown button.active{background:var(--orange-soft);color:var(--orange-strong);font-weight:900}
