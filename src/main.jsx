@@ -862,7 +862,7 @@ function Orders({ orders, ordersLoading, onSelect, updateOrderStatus, createInvo
             <div className="orderActions">
               <button onClick={() => onSelect(order)}>Detalhes</button>
               {order.status === 'Recebido' && <button style={{background:'var(--orange)',color:'#fff'}} onClick={() => updateOrderStatus(order.id, 'Separação')}>Separar</button>}
-              {order.status === 'Pronto' && <button onClick={() => onGerarNota(order)}>Gerar nota</button>}
+              {order.status === 'Pronto' && order.nfeData?.nfeStatus !== 'AUTHORIZED' && <button onClick={() => onGerarNota(order)}>Gerar nota</button>}
             </div>
           </article>
         ))}
