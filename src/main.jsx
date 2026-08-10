@@ -4718,181 +4718,231 @@ function Settings({ notify }) {
 
   const set = (key, value) => setForm((f) => ({ ...f, [key]: value }))
 
+  const saveSettings = () => {
+    try {
+      localStorage.setItem('saborsan_settings', JSON.stringify(form))
+      localStorage.setItem('saborsan_purchase_default_time', form.compraPadraoHora)
+    } catch {}
+    notify('Configurações salvas com sucesso.')
+  }
+
+  const settingsSections = [
+    { id: 'empresa',       label: 'Dados da empresa',      icon: Building2,},
+    { id: 'operacao',      label: 'Estoque e temperatura', icon: Boxes,},
+    { id: 'notificacoes',  label: 'Notificações',          icon: Bell,},
+    { id: 'aparencia',     label: 'Aparência',             icon: Settings2,},
+    { id: 'entregador',    label: 'Entregador',            icon: Truck,},
+    { id: 'relatorios',    label: 'Relatórios',            icon: BarChart3,},
+    { id: 'ia',            label: 'IA — Ligações',         icon: Bot,},
+    { id: 'fiscal',        label: 'Config. fiscal',        icon: ReceiptText,},
+    { id: 'ncm',           label: 'Sincronização NCM',     icon: Tag,},
+  ]
+
+  const [activeSection, setActiveSection] = useState('empresa')
+  const active = settingsSections.find((s) => s.id === activeSection)
+  const showSaveBtn = !['fiscal', 'ncm'].includes(activeSection)
+
   return (
-    <section className="pageStack">
-      <div className="sectionHeader"><div><p>Preferências e dados do sistema</p></div><button className="btnSolid" onClick={() => {
-        try {
-          localStorage.setItem('saborsan_settings', JSON.stringify(form))
-          localStorage.setItem('saborsan_purchase_default_time', form.compraPadraoHora)
-        } catch {}
-        notify('Configurações salvas com sucesso.')
-      }}><CheckCircle2 size={18} /> Salvar alterações</button></div>
+    <div className="settingsLayout">
+      <nav className="settingsSubNav">
+        {settingsSections.map(({ id, label, icon: Icon, subtitle }) => (
+          <button
+            key={id}
+            className={`settingsSubNavItem${activeSection === id ? ' active' : ''}`}
+            onClick={() => setActiveSection(id)}
+          >
+            <span className="settingsSubNavIcon"><Icon size={16} /></span>
+            <span className="settingsSubNavLabel">
+              <b>{label}</b>
+              <small>{subtitle}</small>
+            </span>
+          </button>
+        ))}
+      </nav>
 
-      <div className="settingsGrid">
-        {/* Dados da empresa */}
-        <div className="card settingsCard">
-          <div className="cardHeader"><div><p>Identidade</p><h3>Dados da empresa</h3></div><Building2 size={22} /></div>
-          <div className="settingsForm">
-            <label>Nome da empresa<input value={form.empresa} onChange={(e) => set('empresa', e.target.value)} /></label>
-            <label>CNPJ<input value={form.cnpj} onChange={(e) => set('cnpj', e.target.value)} /></label>
-            <label>E-mail corporativo<input value={form.email} onChange={(e) => set('email', e.target.value)} /></label>
-            <label>Telefone<input value={form.telefone} onChange={(e) => set('telefone', e.target.value)} /></label>
-            <label>Cidade / UF<input value={form.cidade} onChange={(e) => set('cidade', e.target.value)} /></label>
+      <div className="settingsSectionContent">
+        <div className="settingsSectionInner">
+          <div className="settingsSectionTopbar">
+            <div>
+              <span className="topKicker">{active?.subtitle}</span>
+              <h2 className="settingsSectionH2">{active?.label}</h2>
+            </div>
+            {showSaveBtn && (
+              <button className="btnSolid" onClick={saveSettings}><CheckCircle2 size={18} /> Salvar alterações</button>
+            )}
           </div>
-        </div>
 
-        {/* Estoque */}
-        <div className="card settingsCard">
-          <div className="cardHeader"><div><p>Operação</p><h3>Estoque e temperatura</h3></div><Boxes size={22} /></div>
-          <div className="settingsForm">
-            <label>Temperatura mínima (°C)<input type="number" value={form.tempMin} onChange={(e) => set('tempMin', e.target.value)} /></label>
-            <label>Temperatura máxima (°C)<input type="number" value={form.tempMax} onChange={(e) => set('tempMax', e.target.value)} /></label>
-            <label>Alertar estoque quando abaixo de (%)<input type="number" value={form.estoqueAlerta} onChange={(e) => set('estoqueAlerta', e.target.value)} /></label>
-            <label>Horário padrão de compras<input type="time" value={form.compraPadraoHora} onChange={(e) => set('compraPadraoHora', e.target.value)} /></label>
-          </div>
-        </div>
+          {activeSection === 'empresa' && (
+            <div className="card settingsCard">
+              <div className="cardHeader"><div><p>Identidade</p><h3>Dados da empresa</h3></div><Building2 size={22} /></div>
+              <div className="settingsForm">
+                <label>Nome da empresa<input value={form.empresa} onChange={(e) => set('empresa', e.target.value)} /></label>
+                <label>CNPJ<input value={form.cnpj} onChange={(e) => set('cnpj', e.target.value)} /></label>
+                <label>E-mail corporativo<input value={form.email} onChange={(e) => set('email', e.target.value)} /></label>
+                <label>Telefone<input value={form.telefone} onChange={(e) => set('telefone', e.target.value)} /></label>
+                <label>Cidade / UF<input value={form.cidade} onChange={(e) => set('cidade', e.target.value)} /></label>
+              </div>
+            </div>
+          )}
 
-        {/* Notificações */}
-        <div className="card settingsCard">
-          <div className="cardHeader"><div><p>Alertas</p><h3>Notificações</h3></div><Bell size={22} /></div>
-          <div className="settingsToggles">
-            {[
-              ['notifEmail', 'Notificações por e-mail'],
-              ['notifApp', 'Notificações no painel'],
-              ['notifEstoque', 'Alertas de estoque crítico'],
-              ['notifEntregas', 'Atualizações de entregas'],
-            ].map(([key, label]) => (
-              <div className="settingsToggleRow" key={key}>
-                <span>{label}</span>
-                <label className="switch">
-                  <input type="checkbox" checked={form[key]} onChange={() => set(key, !form[key])} />
-                  <span></span>
+          {activeSection === 'operacao' && (
+            <div className="card settingsCard">
+              <div className="cardHeader"><div><p>Operação</p><h3>Estoque e temperatura</h3></div><Boxes size={22} /></div>
+              <div className="settingsForm">
+                <label>Temperatura mínima (°C)<input type="number" value={form.tempMin} onChange={(e) => set('tempMin', e.target.value)} /></label>
+                <label>Temperatura máxima (°C)<input type="number" value={form.tempMax} onChange={(e) => set('tempMax', e.target.value)} /></label>
+                <label>Alertar estoque quando abaixo de (%)<input type="number" value={form.estoqueAlerta} onChange={(e) => set('estoqueAlerta', e.target.value)} /></label>
+                <label>Horário padrão de compras<input type="time" value={form.compraPadraoHora} onChange={(e) => set('compraPadraoHora', e.target.value)} /></label>
+              </div>
+            </div>
+          )}
+
+          {activeSection === 'notificacoes' && (
+            <div className="card settingsCard">
+              <div className="cardHeader"><div><p>Alertas</p><h3>Notificações</h3></div><Bell size={22} /></div>
+              <div className="settingsToggles">
+                {[
+                  ['notifEmail', 'Notificações por e-mail'],
+                  ['notifApp', 'Notificações no painel'],
+                  ['notifEstoque', 'Alertas de estoque crítico'],
+                  ['notifEntregas', 'Atualizações de entregas'],
+                ].map(([key, label]) => (
+                  <div className="settingsToggleRow" key={key}>
+                    <span>{label}</span>
+                    <label className="switch">
+                      <input type="checkbox" checked={form[key]} onChange={() => set(key, !form[key])} />
+                      <span></span>
+                    </label>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {activeSection === 'aparencia' && (
+            <div className="card settingsCard">
+              <div className="cardHeader"><div><p>Interface</p><h3>Aparência e sistema</h3></div><Settings2 size={22} /></div>
+              <div className="settingsForm">
+                <label>Tema
+                  <select value={form.tema} onChange={(e) => set('tema', e.target.value)}>
+                    <option value="claro">Claro</option>
+                    <option value="escuro">Escuro (em breve)</option>
+                  </select>
+                </label>
+                <label>Idioma
+                  <select value={form.idioma} onChange={(e) => set('idioma', e.target.value)}>
+                    <option value="pt-BR">Português (Brasil)</option>
+                    <option value="en">English (em breve)</option>
+                  </select>
                 </label>
               </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Aparência */}
-        <div className="card settingsCard">
-          <div className="cardHeader"><div><p>Interface</p><h3>Aparência e sistema</h3></div><Settings2 size={22} /></div>
-          <div className="settingsForm">
-            <label>Tema
-              <select value={form.tema} onChange={(e) => set('tema', e.target.value)}>
-                <option value="claro">Claro</option>
-                <option value="escuro">Escuro (em breve)</option>
-              </select>
-            </label>
-            <label>Idioma
-              <select value={form.idioma} onChange={(e) => set('idioma', e.target.value)}>
-                <option value="pt-BR">Português (Brasil)</option>
-                <option value="en">English (em breve)</option>
-              </select>
-            </label>
-          </div>
-          <div className="settingsVersion"><ShieldCheck size={15} /><span>Versão {form.versao} • Sistema estável</span></div>
-        </div>
-
-        {/* Entregador */}
-        <div className="card settingsCard">
-          <div className="cardHeader"><div><p>Logística</p><h3>Contato do entregador</h3></div><Truck size={22} /></div>
-          <div className="settingsForm">
-            <label>Nome do entregador<input value={form.entregadorNome} onChange={(e) => set('entregadorNome', e.target.value)} /></label>
-            <label>WhatsApp / Telefone<input value={form.entregadorTelefone} onChange={(e) => set('entregadorTelefone', e.target.value)} /></label>
-          </div>
-          <div className="settingsToggles" style={{marginTop: '12px'}}>
-            <div className="settingsToggleRow">
-              <span>Notificar ao receber pedido</span>
-              <label className="switch"><input type="checkbox" checked={form.entregadorNotifPedido} onChange={() => set('entregadorNotifPedido', !form.entregadorNotifPedido)} /><span></span></label>
+              <div className="settingsVersion"><ShieldCheck size={15} /><span>Versão {form.versao} • Sistema estável</span></div>
             </div>
-            <div className="settingsToggleRow">
-              <span>Notificar ao entrar em rota</span>
-              <label className="switch"><input type="checkbox" checked={form.entregadorNotifRota} onChange={() => set('entregadorNotifRota', !form.entregadorNotifRota)} /><span></span></label>
-            </div>
-          </div>
-          <div className="settingsInfo"><Smartphone size={14} /><span>As notificações são enviadas via WhatsApp com os dados do pedido automaticamente.</span></div>
-        </div>
+          )}
 
-        {/* Relatório por e-mail */}
-        <div className="card settingsCard">
-          <div className="cardHeader"><div><p>Relatórios</p><h3>Envio por e-mail</h3></div><BarChart3 size={22} /></div>
-          <div className="settingsForm">
-            <label>E-mail de destino<input type="email" value={form.relatorioEmail} onChange={(e) => set('relatorioEmail', e.target.value)} /></label>
-            <label>Frequência de envio
-              <select value={form.relatorioFreq} onChange={(e) => set('relatorioFreq', e.target.value)}>
-                <option value="diario">Diário</option>
-                <option value="semanal">Semanal</option>
-                <option value="mensal">Mensal</option>
-              </select>
-            </label>
-            <div className="settingsTwoCols">
-              <label>Dia do envio
-                <select value={form.relatorioDia} onChange={(e) => set('relatorioDia', e.target.value)}>
-                  {Array.from({length: 28}, (_, i) => <option key={i+1} value={String(i+1)}>Dia {i+1}</option>)}
-                </select>
-              </label>
-              <label>Horário<input type="time" value={form.relatorioHora} onChange={(e) => set('relatorioHora', e.target.value)} /></label>
-            </div>
-          </div>
-          <div className="settingsToggles" style={{marginTop:'12px'}}>
-            <p className="settingsSub">Incluir no relatório:</p>
-            {[['relatorioVendas','Resumo de vendas'],['relatorioEstoque','Movimentação de estoque'],['relatorioFinanceiro','Visão financeira'],['relatorioEntregas','Desempenho de entregas']].map(([key, label]) => (
-              <div className="settingsToggleRow" key={key}>
-                <span>{label}</span>
-                <label className="switch"><input type="checkbox" checked={form[key]} onChange={() => set(key, !form[key])} /><span></span></label>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* IA — Ligação de estoque */}
-        <div className="card settingsCard settingsCardFull">
-          <div className="cardHeader"><div><p>Inteligência artificial</p><h3>Ligação automática de alerta de estoque</h3></div><Bot size={22} /></div>
-          <div className="settingsToggleRow" style={{marginBottom:'16px'}}>
-            <span>Ativar ligação automática da IA</span>
-            <label className="switch"><input type="checkbox" checked={form.iaLigarAtivo} onChange={() => set('iaLigarAtivo', !form.iaLigarAtivo)} /><span></span></label>
-          </div>
-          {form.iaLigarAtivo && (
-            <>
+          {activeSection === 'entregador' && (
+            <div className="card settingsCard">
+              <div className="cardHeader"><div><p>Logística</p><h3>Contato do entregador</h3></div><Truck size={22} /></div>
               <div className="settingsForm">
-                <label>Número a ser contatado (WhatsApp / telefone)<input value={form.iaLigarContato} onChange={(e) => set('iaLigarContato', e.target.value)} /></label>
+                <label>Nome do entregador<input value={form.entregadorNome} onChange={(e) => set('entregadorNome', e.target.value)} /></label>
+                <label>WhatsApp / Telefone<input value={form.entregadorTelefone} onChange={(e) => set('entregadorTelefone', e.target.value)} /></label>
               </div>
-              <div className="iaModeSelector">
-                <button className={`iaModeBtn${form.iaLigarModo === 'ia' ? ' active' : ''}`} onClick={() => set('iaLigarModo', 'ia')}>
-                  <Sparkles size={18} />
-                  <div><b>Modo inteligente</b><small>A IA liga assim que detectar que o estoque está chegando ao limite crítico, sem horário fixo.</small></div>
-                </button>
-                <button className={`iaModeBtn${form.iaLigarModo === 'agendado' ? ' active' : ''}`} onClick={() => set('iaLigarModo', 'agendado')}>
-                  <CalendarDays size={18} />
-                  <div><b>Horário fixo</b><small>A IA liga em um dia e horário específico para verificar o estoque e alertar se necessário.</small></div>
-                </button>
+              <div className="settingsToggles" style={{marginTop:'12px'}}>
+                <div className="settingsToggleRow">
+                  <span>Notificar ao receber pedido</span>
+                  <label className="switch"><input type="checkbox" checked={form.entregadorNotifPedido} onChange={() => set('entregadorNotifPedido', !form.entregadorNotifPedido)} /><span></span></label>
+                </div>
+                <div className="settingsToggleRow">
+                  <span>Notificar ao entrar em rota</span>
+                  <label className="switch"><input type="checkbox" checked={form.entregadorNotifRota} onChange={() => set('entregadorNotifRota', !form.entregadorNotifRota)} /><span></span></label>
+                </div>
               </div>
-              {form.iaLigarModo === 'agendado' && (
-                <div className="settingsForm settingsTwoCols" style={{marginTop:'14px'}}>
-                  <label>Dia da semana
-                    <select value={form.iaLigarDia} onChange={(e) => set('iaLigarDia', e.target.value)}>
-                      {['segunda','terça','quarta','quinta','sexta','sábado'].map(d => <option key={d} value={d}>{d.charAt(0).toUpperCase()+d.slice(1)}-feira</option>)}
+              <div className="settingsInfo"><Smartphone size={14} /><span>As notificações são enviadas via WhatsApp com os dados do pedido automaticamente.</span></div>
+            </div>
+          )}
+
+          {activeSection === 'relatorios' && (
+            <div className="card settingsCard">
+              <div className="cardHeader"><div><p>Relatórios</p><h3>Envio por e-mail</h3></div><BarChart3 size={22} /></div>
+              <div className="settingsForm">
+                <label>E-mail de destino<input type="email" value={form.relatorioEmail} onChange={(e) => set('relatorioEmail', e.target.value)} /></label>
+                <label>Frequência de envio
+                  <select value={form.relatorioFreq} onChange={(e) => set('relatorioFreq', e.target.value)}>
+                    <option value="diario">Diário</option>
+                    <option value="semanal">Semanal</option>
+                    <option value="mensal">Mensal</option>
+                  </select>
+                </label>
+                <div className="settingsTwoCols">
+                  <label>Dia do envio
+                    <select value={form.relatorioDia} onChange={(e) => set('relatorioDia', e.target.value)}>
+                      {Array.from({length: 28}, (_, i) => <option key={i+1} value={String(i+1)}>Dia {i+1}</option>)}
                     </select>
                   </label>
-                  <label>Horário<input type="time" value={form.iaLigarHora} onChange={(e) => set('iaLigarHora', e.target.value)} /></label>
+                  <label>Horário<input type="time" value={form.relatorioHora} onChange={(e) => set('relatorioHora', e.target.value)} /></label>
                 </div>
-              )}
-              <div className="settingsInfo" style={{marginTop:'14px'}}>
-                <Bot size={14} />
-                <span>{form.iaLigarModo === 'ia'
-                  ? 'A IA monitora o estoque em tempo real e aciona o contato assim que identificar risco de falta de produto.'
-                  : `A IA ligará toda ${form.iaLigarDia}-feira às ${form.iaLigarHora} para verificar o estoque e alertar o contato configurado.`}
-                </span>
               </div>
-            </>
+              <div className="settingsToggles" style={{marginTop:'12px'}}>
+                <p className="settingsSub">Incluir no relatório:</p>
+                {[['relatorioVendas','Resumo de vendas'],['relatorioEstoque','Movimentação de estoque'],['relatorioFinanceiro','Visão financeira'],['relatorioEntregas','Desempenho de entregas']].map(([key, label]) => (
+                  <div className="settingsToggleRow" key={key}>
+                    <span>{label}</span>
+                    <label className="switch"><input type="checkbox" checked={form[key]} onChange={() => set(key, !form[key])} /><span></span></label>
+                  </div>
+                ))}
+              </div>
+            </div>
           )}
+
+          {activeSection === 'ia' && (
+            <div className="card settingsCard">
+              <div className="cardHeader"><div><p>Inteligência artificial</p><h3>Ligação automática de alerta de estoque</h3></div><Bot size={22} /></div>
+              <div className="settingsToggleRow" style={{marginBottom:'16px'}}>
+                <span>Ativar ligação automática da IA</span>
+                <label className="switch"><input type="checkbox" checked={form.iaLigarAtivo} onChange={() => set('iaLigarAtivo', !form.iaLigarAtivo)} /><span></span></label>
+              </div>
+              {form.iaLigarAtivo && (
+                <>
+                  <div className="settingsForm">
+                    <label>Número a ser contatado (WhatsApp / telefone)<input value={form.iaLigarContato} onChange={(e) => set('iaLigarContato', e.target.value)} /></label>
+                  </div>
+                  <div className="iaModeSelector">
+                    <button className={`iaModeBtn${form.iaLigarModo === 'ia' ? ' active' : ''}`} onClick={() => set('iaLigarModo', 'ia')}>
+                      <Sparkles size={18} />
+                      <div><b>Modo inteligente</b><small>A IA liga assim que detectar que o estoque está chegando ao limite crítico, sem horário fixo.</small></div>
+                    </button>
+                    <button className={`iaModeBtn${form.iaLigarModo === 'agendado' ? ' active' : ''}`} onClick={() => set('iaLigarModo', 'agendado')}>
+                      <CalendarDays size={18} />
+                      <div><b>Horário fixo</b><small>A IA liga em um dia e horário específico para verificar o estoque e alertar se necessário.</small></div>
+                    </button>
+                  </div>
+                  {form.iaLigarModo === 'agendado' && (
+                    <div className="settingsForm settingsTwoCols" style={{marginTop:'14px'}}>
+                      <label>Dia da semana
+                        <select value={form.iaLigarDia} onChange={(e) => set('iaLigarDia', e.target.value)}>
+                          {['segunda','terça','quarta','quinta','sexta','sábado'].map(d => <option key={d} value={d}>{d.charAt(0).toUpperCase()+d.slice(1)}-feira</option>)}
+                        </select>
+                      </label>
+                      <label>Horário<input type="time" value={form.iaLigarHora} onChange={(e) => set('iaLigarHora', e.target.value)} /></label>
+                    </div>
+                  )}
+                  <div className="settingsInfo" style={{marginTop:'14px'}}>
+                    <Bot size={14} />
+                    <span>{form.iaLigarModo === 'ia'
+                      ? 'A IA monitora o estoque em tempo real e aciona o contato assim que identificar risco de falta de produto.'
+                      : `A IA ligará toda ${form.iaLigarDia}-feira às ${form.iaLigarHora} para verificar o estoque e alertar o contato configurado.`}
+                    </span>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
+          {activeSection === 'fiscal' && <FiscalConfigSection notify={notify} />}
+          {activeSection === 'ncm' && <NcmManagementSection notify={notify} />}
         </div>
-
-        <FiscalConfigSection notify={notify} />
-        <NcmManagementSection notify={notify} />
-
       </div>
-    </section>
+    </div>
   )
 }
 

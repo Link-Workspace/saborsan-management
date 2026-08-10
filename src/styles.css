@@ -407,3 +407,19 @@ p{margin:0}.appShell{min-height:100vh;display:grid;grid-template-columns:300px 1
 .dtpConfirmBtn{display:inline-flex;align-items:center;gap:6px;padding:7px 16px;border-radius:999px;border:none;background:var(--orange);color:#fff;font-size:.82rem;font-weight:900;cursor:pointer;transition:.15s}
 .dtpConfirmBtn:hover{background:#ea580c}
 .nfeSubStatus.error{background:#fee2e2;color:#dc2626}
+/* Settings sub-navigation layout */
+.settingsLayout{display:flex;gap:16px;min-height:0;flex:1}
+.settingsSubNav{width:220px;flex-shrink:0;background:#fff;border:1.5px solid var(--line);border-radius:24px;box-shadow:0 4px 14px rgba(6,54,111,.05);display:flex;flex-direction:column;overflow-y:auto;padding:8px 0 16px;align-self:start}
+.settingsSubNavTitle{display:flex;align-items:center;gap:7px;margin:10px 16px 12px;font-size:.72rem;font-weight:900;text-transform:uppercase;letter-spacing:.1em;color:var(--muted)}
+.settingsSubNavItem{display:flex;align-items:center;gap:11px;width:100%;padding:10px 14px;text-align:left;background:none;border:none;border-radius:14px;margin:1px 8px;width:calc(100% - 16px);cursor:pointer;transition:background .14s,color .14s;color:var(--text)}
+.settingsSubNavItem:hover{background:var(--orange-soft)}
+.settingsSubNavItem.active{background:var(--orange-soft);color:var(--orange-strong)}
+.settingsSubNavItem.active .settingsSubNavIcon{background:var(--orange);color:#fff}
+.settingsSubNavIcon{flex-shrink:0;width:32px;height:32px;border-radius:10px;background:#f1f5fb;display:flex;align-items:center;justify-content:center;color:var(--navy);transition:background .14s,color .14s}
+.settingsSubNavLabel b{display:block;font-size:.83rem;font-weight:800;line-height:1.25}
+.settingsSubNavLabel small{font-size:.71rem;color:var(--muted);font-weight:600}
+.settingsSubNavItem.active .settingsSubNavLabel small{color:var(--orange)}
+.settingsSectionContent{flex:1;overflow-y:auto;min-width:0}
+.settingsSectionInner{padding:4px 24px 32px}
+.settingsSectionTopbar{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:20px;padding-top:4px}
+.settingsSectionH2{font-size:1.5rem;letter-spacing:-.03em;margin-top:2px}
