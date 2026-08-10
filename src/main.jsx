@@ -4494,7 +4494,7 @@ function FiscalConfigSection({ notify }) {
             )}
             <div className="fiscalConfigTable">
               <div className="fiscalConfigHead">
-                <span>Produto</span><span>NCM</span><span>Origem NCM</span><span>CST IBS/CBS</span><span>cClassTrib</span><span>Status fiscal</span><span></span>
+                <span>Produto</span><span>NCM</span><span>Origem NCM</span><span>CST IBS/CBS</span><span>cClassTrib</span><span>Status fiscal</span>
               </div>
               {rows.length === 0 && <div style={{ padding: '12px 0', color: 'var(--text-light)', fontSize: '.88rem' }}>Nenhum produto cadastrado.</div>}
               {rows.map(({ product, config, ncmData }) => {
@@ -4509,13 +4509,13 @@ function FiscalConfigSection({ notify }) {
                     <span><NcmSourceBadge source={effectiveNcmSource} confidence={effectiveNcmConfidence} /></span>
                     <span className="fiscalCode">{config?.ibsCbsCst || '—'}</span>
                     <span className="fiscalCode">{config?.ibsCbsClassTrib || '—'}</span>
-                    <span>
+                    <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
                       {fiscalOk
                         ? <span className="fiscalBadgeOk"><CheckCircle2 size={12} /> Configurado</span>
                         : <span className="fiscalBadgeWarn"><AlertTriangle size={12} /> IBS/CBS pendente</span>
                       }
+                      <button style={{ border: 0, background: 'var(--orange)', color: '#fff', borderRadius: '999px', padding: '8px 12px', fontWeight: 900, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap' }} onClick={() => openEdit(product)}><ClipboardEdit size={13} /> Editar</button>
                     </span>
-                    <span><button className="btnOutline" style={{ padding: '5px 12px', fontSize: '.78rem', display: 'inline-flex', alignItems: 'center', gap: 5 }} onClick={() => openEdit(product)}><ClipboardEdit size={13} /> Editar</button></span>
                   </div>
                 )
               })}
