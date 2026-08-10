@@ -1147,11 +1147,15 @@ function NewProductModal({ onClose, onCreated, editProduct, onUpdated }) {
                   <input type="number" min="0" placeholder="0" value={form.availableQuantity} onChange={(e) => set('availableQuantity', e.target.value)} />
                 </label>
                 <label>Embalagem / Unidade *
-                  <select value={form.packaging} onChange={(e) => set('packaging', e.target.value)}>
-                    <option value="">Selecionar...</option>
-                    <option value="Caixa">Caixa</option>
-                    <option value="Pacote">Pacote</option>
-                  </select>
+                  <CustomSelect
+                    value={form.packaging}
+                    onChange={(v) => set('packaging', v)}
+                    placeholder="Selecionar..."
+                    options={[
+                      { value: 'Caixa', label: 'Caixa' },
+                      { value: 'Pacote', label: 'Pacote' },
+                    ]}
+                  />
                 </label>
                 <label>Qtd. na unidade *
                   <input type="number" min="0" placeholder="Ex: 10" value={form.unitQuantity} onChange={(e) => set('unitQuantity', e.target.value)} />
@@ -2208,12 +2212,12 @@ function NewPurchaseModal({ suppliers, onClose, notify, onConfirmed, editItem = 
           <h3 className="newOrderSectionTitle">Fornecedor *</h3>
           <div className="settingsForm">
             <label>Selecionar fornecedor
-              <select value={form.supplierId} onChange={(e) => set('supplierId', e.target.value)}>
-                <option value="">Selecione...</option>
-                {suppliers.map((s) => (
-                  <option key={s.id} value={s.id}>{s.name}</option>
-                ))}
-              </select>
+              <CustomSelect
+                value={form.supplierId}
+                onChange={(v) => set('supplierId', v)}
+                placeholder="Selecione..."
+                options={suppliers.map((s) => ({ value: String(s.id), label: s.name }))}
+              />
             </label>
           </div>
 
@@ -2998,18 +3002,20 @@ function NewDeliveryModal({ onClose, onCreate, onUpdate, editDelivery, orders, v
                 </div>
               </label>
               <label>Entregador *
-                <select value={form.sellerId} onChange={(e) => set('sellerId', e.target.value)} required>
-                  <option value="">{sellersLoading ? 'Carregando entregadores...' : 'Selecione o entregador'}</option>
-                  {sellersData.map((s) => <option key={s.id} value={s.id}>{s.name} • {s.phone}</option>)}
-                </select>
+                <CustomSelect
+                  value={form.sellerId}
+                  onChange={(v) => set('sellerId', v)}
+                  placeholder={sellersLoading ? 'Carregando entregadores...' : 'Selecione o entregador'}
+                  options={sellersData.map((s) => ({ value: String(s.id), label: `${s.name} • ${s.phone}` }))}
+                />
               </label>
               <label>Veículo / Câmara fria
-                <select value={form.vehicle} onChange={(e) => set('vehicle', e.target.value)}>
-                  {vehicles.length === 0
-                    ? <option value="">Nenhum veículo cadastrado</option>
-                    : vehicles.map((v) => <option key={v.id} value={v.name}>{v.name}{v.plate ? ` • ${v.plate}` : ''}</option>)
-                  }
-                </select>
+                <CustomSelect
+                  value={form.vehicle}
+                  onChange={(v) => set('vehicle', v)}
+                  placeholder={vehicles.length === 0 ? 'Nenhum veículo cadastrado' : 'Selecione o veículo'}
+                  options={vehicles.map((v) => ({ value: v.name, label: `${v.name}${v.plate ? ` • ${v.plate}` : ''}` }))}
+                />
               </label>
             </div>
 
@@ -3450,8 +3456,8 @@ function NewClientModal({ onClose, onCreated, editClient, onUpdated }) {
     establishmentName: editClient.establishmentName || '',
     clientName: editClient.clientName || '',
     email: editClient.email || '',
-    password: '',
     cnpj: editClient.cnpj || '',
+    contactNumber: editClient.contactNumber || '',
     contactNumber: editClient.contactNumber || '',
     address: editClient.address || '',
     city: editClient.city || '',
@@ -3465,9 +3471,9 @@ function NewClientModal({ onClose, onCreated, editClient, onUpdated }) {
     establishmentName: '',
     clientName: '',
     email: '',
-    password: '',
     cnpj: '',
     contactNumber: '',
+    address: '',
     address: '',
     city: '',
     segment: '',
@@ -3486,7 +3492,6 @@ function NewClientModal({ onClose, onCreated, editClient, onUpdated }) {
     form.establishmentName !== (editClient.establishmentName || '') ||
     form.clientName !== (editClient.clientName || '') ||
     form.email !== (editClient.email || '') ||
-    form.password !== '' ||
     form.cnpj !== (editClient.cnpj || '') ||
     form.contactNumber !== (editClient.contactNumber || '') ||
     form.address !== (editClient.address || '') ||
@@ -3511,7 +3516,6 @@ function NewClientModal({ onClose, onCreated, editClient, onUpdated }) {
         establishmentName: form.establishmentName.trim(),
         clientName: form.clientName.trim(),
         email: form.email.trim() || null,
-        password: form.password || null,
         cnpj: form.cnpj.trim() || null,
         contactNumber: form.contactNumber.trim() || null,
         address: form.address.trim() || null,
@@ -3583,6 +3587,9 @@ function NewClientModal({ onClose, onCreated, editClient, onUpdated }) {
               <label>WhatsApp / Contato
                 <input placeholder="(49) 99910-1111" value={form.contactNumber} onChange={(e) => set('contactNumber', e.target.value)} />
               </label>
+              <label>E-mail de contato
+                <input type="email" placeholder="cliente@email.com" value={form.email} onChange={(e) => set('email', e.target.value)} />
+              </label>
               <label>Cidade
                 <input placeholder="Ex: Lages - SC" value={form.city} onChange={(e) => set('city', e.target.value)} />
               </label>
@@ -3598,24 +3605,17 @@ function NewClientModal({ onClose, onCreated, editClient, onUpdated }) {
                 <input placeholder="Ex: CNPJ, CPF, Sem nota" value={form.invoicePreference} onChange={(e) => set('invoicePreference', e.target.value)} />
               </label>
 
-              <p style={sectionTitle}>Acesso ao app Saborsan</p>
-              <label>E-mail de acesso
-                <input type="email" placeholder="cliente@email.com" value={form.email} onChange={(e) => set('email', e.target.value)} />
-              </label>
-              <label>{editClient ? 'Nova senha (deixe em branco para manter)' : 'Senha inicial'}
-                <input type="password" placeholder="Mín. 6 caracteres" value={form.password} onChange={(e) => set('password', e.target.value)} />
-              </label>
-              <p style={{ ...sectionTitle, textTransform: 'none', letterSpacing: 0, fontWeight: 400, fontSize: '.8rem', marginTop: 0 }}>
-                Preencha e-mail e senha para liberar o acesso do cliente ao app Saborsan.
-              </p>
-
               <p style={sectionTitle}>Classificação comercial</p>
               <label>Prioridade
-                <select value={form.priority} onChange={(e) => set('priority', e.target.value)}>
-                  <option value="Alta">Alta</option>
-                  <option value="Media">Média</option>
-                  <option value="Baixa">Baixa</option>
-                </select>
+                <CustomSelect
+                  value={form.priority}
+                  onChange={(v) => set('priority', v)}
+                  options={[
+                    { value: 'Alta', label: 'Alta' },
+                    { value: 'Media', label: 'Média' },
+                    { value: 'Baixa', label: 'Baixa' },
+                  ]}
+                />
               </label>
               <label>Melhor dia para visita
                 <input placeholder="Ex: Terça-feira" value={form.bestDay} onChange={(e) => set('bestDay', e.target.value)} />

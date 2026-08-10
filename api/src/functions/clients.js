@@ -182,7 +182,8 @@ app.http('clients', {
           cnpj, contactNumber, address, city,
           segment, priority, priorityReason, tag,
           invoicePreference, bestDay, purchasePurpose,
-        } = body; {
+        } = body;
+        if (!establishmentName?.trim()) {
           return { status: 400, jsonBody: { error: 'Nome do estabelecimento é obrigatório.' } };
         }
         if (!clientName?.trim()) {
@@ -191,12 +192,8 @@ app.http('clients', {
 
         let userId = null;
 
-        // Create User account if email is provided
-        if (email?.trim()) {
-          if (!password || password.length < 6) {
-            return { status: 400, jsonBody: { error: 'Senha deve ter no mínimo 6 caracteres para acesso ao app.' } };
-          }
-
+        // Create User account only when both email and password are provided
+        if (email?.trim() && password && password.length >= 6) {
           const existing = await pool.request().query`
             SELECT id FROM Users WHERE email = ${email.trim().toLowerCase()}
           `;
