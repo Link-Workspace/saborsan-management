@@ -4276,8 +4276,14 @@ function FiscalConfigSection({ notify }) {
     fiscalApproved: false, approvedBy: '', notes: ''
   }
   const [form, setForm] = useState(defaultForm)
+  const [initialForm, setInitialForm] = useState(null)
 
   useEffect(() => { loadData() }, [])
+
+  // Capture form snapshot after modal opens; null ensures button is disabled on open
+  useEffect(() => {
+    if (editProduct) setInitialForm({ ...form })
+  }, [editProduct])
 
   async function loadData() {
     setLoading(true)
@@ -4334,7 +4340,7 @@ function FiscalConfigSection({ notify }) {
     const cfg = configs.find(c => c.productId === product.id || c.productName === product.name)
     const ncmData = classifyProducts.find(cp => cp.id === product.id || cp.name === product.name)
     const suggestedNcm = ncmData?.ncm || '21069090'
-    setForm(cfg ? {
+    const nextForm = cfg ? {
       ncm: cfg.ncm || suggestedNcm, cfop: cfg.cfop || '5102',
       icmsOrigin: String(cfg.icmsOrigin ?? 0), icmsCst: cfg.icmsCst || '400',
       icmsAliq: String(cfg.icmsAliq ?? 0), pisCST: cfg.pisCST || '07',
@@ -4347,7 +4353,9 @@ function FiscalConfigSection({ notify }) {
       ibsCbsAliqCbs: String(Number(cfg.ibsCbsAliqCbs) || (cfg.ibsCbsCst ? 0.9 : 0)),
       ibsCbsReducaoAliq: String(cfg.ibsCbsReducaoAliq ?? 0),
       fiscalApproved: !!cfg.fiscalApproved, approvedBy: cfg.approvedBy || '', notes: cfg.notes || '',
-    } : { ...defaultForm, ncm: suggestedNcm })
+    } : { ...defaultForm, ncm: suggestedNcm }
+    setForm(nextForm)
+    setInitialForm(null)
     setEditProduct(product)
   }
 
@@ -4383,6 +4391,10 @@ function FiscalConfigSection({ notify }) {
   }
 
   const setF = (k, v) => setForm(f => ({ ...f, [k]: v }))
+
+  const isFormDirty = !!initialForm && Object.keys(form).some(
+    k => String(form[k]) !== String(initialForm[k])
+  )
 
   const rows = products.map(p => ({
     product: p,
@@ -4575,7 +4587,7 @@ function FiscalConfigSection({ notify }) {
               </div>
             </div>
             <div className="orderModalFooter">
-              <button className="btnSolid" onClick={save} disabled={saving} style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
+              <button className="btnSolid" onClick={save} disabled={saving || !isFormDirty} style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
                 {saving ? <><Loader2 size={16} style={{ animation: 'spin 1s linear infinite' }} /> Salvando...</> : <><CheckCircle2 size={16} /> Salvar configuração</>}
               </button>
             </div>
