@@ -25,8 +25,8 @@ async function ensureClientColumns() {
   if (_columnsEnsured) return;
   const pool = await getPool();
   await pool.request().query`
-    IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Clients') AND name = 'cnpj')
-      ALTER TABLE Clients ADD cnpj NVARCHAR(20) NULL
+    IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Clients') AND name = 'documentType')
+      ALTER TABLE Clients ADD documentType NVARCHAR(20) NULL
   `;
   await pool.request().query`
     IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Clients') AND name = 'city')
@@ -114,7 +114,7 @@ app.http('clients', {
             c.clientName,
             c.address          AS clientAddress,
             c.contactNumber,
-            c.cnpj             AS clientCnpj,
+            c.documentType     AS clientCnpj,
             c.city             AS clientCity,
             c.invoicePreference AS clientInvoicePreference,
             c.purchasePurpose   AS clientPurchasePurpose,
@@ -231,7 +231,7 @@ app.http('clients', {
         const clientResult = await pool.request().query`
           INSERT INTO Clients (
             cityId, establishmentName, segment, priority, priorityReason,
-            tag, clientName, address, contactNumber, invoicePreference, bestDay, cnpj, city, purchasePurpose
+            tag, clientName, address, contactNumber, invoicePreference, bestDay, documentType, city, purchasePurpose
           )
           OUTPUT INSERTED.id
           VALUES (
@@ -314,7 +314,7 @@ app.http('clients', {
             contactNumber     = ${contactNumber || null},
             invoicePreference = ${invoicePreference || null},
             bestDay           = ${bestDay || null},
-            cnpj              = ${cnpj || null},
+            documentType      = ${cnpj || null},
             city              = ${city || null},
             purchasePurpose   = ${purchasePurpose || null}
           WHERE id = ${id}

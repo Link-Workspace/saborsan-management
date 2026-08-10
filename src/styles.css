@@ -376,4 +376,34 @@ p{margin:0}.appShell{min-height:100vh;display:grid;grid-template-columns:300px 1
 .fiscalBadgeWarn{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:999px;background:#fff3cd;color:#b45309;font-size:.75rem;font-weight:900}
 .nfeSubStatus{display:inline-flex;align-items:center;padding:4px 10px;border-radius:999px;font-size:.72rem;font-weight:900;white-space:nowrap}
 .nfeSubStatus.success{background:#dcfce7;color:#15803d}
+/* DateTimePicker */
+.dtpWrapper{position:relative;width:100%}
+.dtpTrigger{width:100%;display:flex;align-items:center;gap:8px;padding:10px 14px;border-radius:12px;border:1.5px solid var(--line);background:#fff;cursor:pointer;font-size:.88rem;font-weight:700;color:var(--text);text-align:left;transition:.15s;min-height:44px}
+.dtpTrigger:hover{border-color:var(--orange)}
+.dtpTrigger.open{border-color:var(--orange);box-shadow:0 0 0 3px rgba(249,115,22,.12)}
+.dtpPlaceholder{color:var(--muted);font-weight:500}
+.dtpClearBtn{flex-shrink:0;width:20px;height:20px;border-radius:999px;border:none;background:var(--bg);cursor:pointer;display:flex;align-items:center;justify-content:center;color:var(--muted);transition:.15s;padding:0}
+.dtpClearBtn:hover{background:#fee2e2;color:var(--red)}
+.dtpDropdown{position:absolute;top:calc(100% + 6px);left:0;z-index:300;width:310px;background:#fff;border-radius:16px;border:1.5px solid var(--line);box-shadow:0 8px 32px rgba(0,0,0,.13);padding:16px;animation:dtpIn .15s ease}
+@keyframes dtpIn{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:translateY(0)}}
+.dtpCalHeader{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+.dtpMonthLabel{font-size:.95rem;font-weight:900;color:var(--navy-dark)}
+.dtpNavBtn{width:32px;height:32px;border-radius:8px;border:1.5px solid var(--line);background:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;color:var(--text);transition:.15s;flex-shrink:0}
+.dtpNavBtn:hover{border-color:var(--orange);color:var(--orange);background:#fff8f0}
+.dtpDayNames{display:grid;grid-template-columns:repeat(7,1fr);margin-bottom:2px}
+.dtpDayNames span{text-align:center;font-size:.68rem;font-weight:900;color:var(--muted);text-transform:uppercase;padding:3px 0}
+.dtpCalGrid{display:grid;grid-template-columns:repeat(7,1fr);gap:2px;margin-bottom:12px}
+.dtpDay{width:100%;aspect-ratio:1;border:none;background:transparent;border-radius:8px;font-size:.82rem;font-weight:700;color:var(--text);cursor:pointer;transition:.12s;display:flex;align-items:center;justify-content:center;padding:0}
+.dtpDay:hover:not(:disabled){background:#fff3e0;color:var(--orange)}
+.dtpDay.today{font-weight:900;color:var(--orange);border:1.5px solid var(--orange)}
+.dtpDay.selected{background:var(--orange);color:#fff;font-weight:900;border:none}
+.dtpDay.selected:hover{background:#ea580c}
+.dtpDay.past,.dtpDay:disabled{color:var(--line);cursor:not-allowed;background:transparent}
+.dtpTimePicker{display:flex;align-items:center;gap:8px;padding:10px 12px;border-radius:10px;background:var(--bg);border:1.5px solid var(--line);margin-bottom:10px}
+.dtpTimePicker span{font-size:.83rem;font-weight:800;color:var(--text);flex:1}
+.dtpTimeInput{border:none;background:transparent;font-size:.9rem;font-weight:800;color:var(--navy-dark);outline:none;cursor:pointer;width:90px;text-align:right}
+.dtpConfirmRow{display:flex;align-items:center;justify-content:space-between;gap:8px;padding-top:10px;border-top:1.5px solid var(--line)}
+.dtpConfirmRow>span{font-size:.8rem;font-weight:700;color:var(--muted)}
+.dtpConfirmBtn{display:inline-flex;align-items:center;gap:6px;padding:7px 16px;border-radius:999px;border:none;background:var(--orange);color:#fff;font-size:.82rem;font-weight:900;cursor:pointer;transition:.15s}
+.dtpConfirmBtn:hover{background:#ea580c}
 .nfeSubStatus.error{background:#fee2e2;color:#dc2626}

@@ -3052,10 +3052,10 @@ function NewDeliveryModal({ onClose, onCreate, onUpdate, editDelivery, orders, v
             <h3 className="newOrderSectionTitle">Datas <span style={{fontWeight:400,fontSize:'.8rem',color:'var(--muted)'}}>— opcionais</span></h3>
             <div className="settingsForm">
               <label>Data de saída
-                <input type="datetime-local" value={form.departureDate} onChange={(e) => set('departureDate', e.target.value)} />
+                <DateTimePicker value={form.departureDate} onChange={(v) => set('departureDate', v)} placeholder="Selecionar data e hora" />
               </label>
               <label>Data de chegada prevista
-                <input type="datetime-local" value={form.arrivalDate} onChange={(e) => set('arrivalDate', e.target.value)} />
+                <DateTimePicker value={form.arrivalDate} onChange={(v) => set('arrivalDate', v)} placeholder="Selecionar data e hora" />
               </label>
             </div>
 
@@ -3412,7 +3412,10 @@ function ClientDetailModal({ client, onClose, onEdit, onRemove }) {
 
           <h3>Dados fiscais</h3>
           <div className="supplierDetailGrid">
-            <div className="supplierDetailItem"><span>CNPJ</span><b>{client.cnpj || '—'}</b></div>
+            <div className="supplierDetailItem">
+              <span>{client.documentType === 'cpf' ? 'CPF' : 'CNPJ'}</span>
+              <b>{client.document || client.cnpj || '—'}</b>
+            </div>
             <div className="supplierDetailItem"><span>Preferência de nota fiscal</span><b>{client.invoicePreference || '—'}</b></div>
           </div>
 
@@ -3456,8 +3459,8 @@ function NewClientModal({ onClose, onCreated, editClient, onUpdated }) {
     establishmentName: editClient.establishmentName || '',
     clientName: editClient.clientName || '',
     email: editClient.email || '',
-    cnpj: editClient.cnpj || '',
-    contactNumber: editClient.contactNumber || '',
+    documentType: editClient.documentType || 'cnpj',
+    cnpj: editClient.document || editClient.cnpj || '',
     contactNumber: editClient.contactNumber || '',
     address: editClient.address || '',
     city: editClient.city || '',
@@ -3471,9 +3474,9 @@ function NewClientModal({ onClose, onCreated, editClient, onUpdated }) {
     establishmentName: '',
     clientName: '',
     email: '',
+    documentType: 'cnpj',
     cnpj: '',
     contactNumber: '',
-    address: '',
     address: '',
     city: '',
     segment: '',
@@ -3492,7 +3495,8 @@ function NewClientModal({ onClose, onCreated, editClient, onUpdated }) {
     form.establishmentName !== (editClient.establishmentName || '') ||
     form.clientName !== (editClient.clientName || '') ||
     form.email !== (editClient.email || '') ||
-    form.cnpj !== (editClient.cnpj || '') ||
+    form.documentType !== (editClient.documentType || 'cnpj') ||
+    form.cnpj !== (editClient.document || editClient.cnpj || '') ||
     form.contactNumber !== (editClient.contactNumber || '') ||
     form.address !== (editClient.address || '') ||
     form.city !== (editClient.city || '') ||
@@ -3516,6 +3520,7 @@ function NewClientModal({ onClose, onCreated, editClient, onUpdated }) {
         establishmentName: form.establishmentName.trim(),
         clientName: form.clientName.trim(),
         email: form.email.trim() || null,
+        documentType: form.documentType,
         cnpj: form.cnpj.trim() || null,
         contactNumber: form.contactNumber.trim() || null,
         address: form.address.trim() || null,
@@ -3598,8 +3603,19 @@ function NewClientModal({ onClose, onCreated, editClient, onUpdated }) {
               </label>
 
               <p style={sectionTitle}>Dados fiscais</p>
-              <label>CNPJ
-                <input placeholder="00.000.000/0001-00" value={form.cnpj} onChange={(e) => set('cnpj', e.target.value)} />
+              <label className="full">
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                  <span>Documento fiscal</span>
+                  <div className="deliverySegmented">
+                    <button type="button" className={`deliverySegBtn${form.documentType === 'cnpj' ? ' active' : ''}`} onClick={() => set('documentType', 'cnpj')}>CNPJ</button>
+                    <button type="button" className={`deliverySegBtn${form.documentType === 'cpf' ? ' active' : ''}`} onClick={() => set('documentType', 'cpf')}>CPF</button>
+                  </div>
+                </div>
+                <input
+                  placeholder={form.documentType === 'cnpj' ? '00.000.000/0001-00' : '000.000.000-00'}
+                  value={form.cnpj}
+                  onChange={(e) => set('cnpj', e.target.value)}
+                />
               </label>
               <label>Preferência de nota fiscal
                 <input placeholder="Ex: CNPJ, CPF, Sem nota" value={form.invoicePreference} onChange={(e) => set('invoicePreference', e.target.value)} />
@@ -3705,6 +3721,138 @@ function Automation({ aiEnabled, setAiEnabled, notify }) {
         {automations.map(([title, text, active]) => <article key={title} className={active && aiEnabled ? 'on' : ''}><Settings2 size={22} /><div><h3>{title}</h3><p>{text}</p></div><span>{active && aiEnabled ? 'Ativo' : 'Manual'}</span></article>)}
       </div>
     </section>
+  )
+}
+
+function DateTimePicker({ value, onChange, placeholder = 'Selecionar data e hora', minDate = '' }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef(null)
+
+  const parsedDate = value ? value.slice(0, 10) : ''
+  const parsedTime = value ? value.slice(11, 16) : '08:00'
+
+  const [viewYear, setViewYear] = useState(() => parsedDate ? parseInt(parsedDate.slice(0, 4)) : new Date().getFullYear())
+  const [viewMonth, setViewMonth] = useState(() => parsedDate ? parseInt(parsedDate.slice(5, 7)) - 1 : new Date().getMonth())
+  const [selDate, setSelDate] = useState(parsedDate)
+  const [selTime, setSelTime] = useState(parsedTime)
+
+  useEffect(() => {
+    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false) }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
+
+  const prevMonth = () => {
+    if (viewMonth === 0) { setViewMonth(11); setViewYear((y) => y - 1) }
+    else setViewMonth((m) => m - 1)
+  }
+  const nextMonth = () => {
+    if (viewMonth === 11) { setViewMonth(0); setViewYear((y) => y + 1) }
+    else setViewMonth((m) => m + 1)
+  }
+
+  const handleDayClick = (day) => {
+    const d = `${viewYear}-${String(viewMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+    setSelDate(d)
+    onChange(`${d}T${selTime}`)
+  }
+
+  const handleTimeChange = (t) => {
+    setSelTime(t)
+    if (selDate) onChange(`${selDate}T${t}`)
+  }
+
+  const MONTHS = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro']
+  const DAYS_SHORT = ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb']
+  const today = new Date().toISOString().slice(0, 10)
+  const firstDayOfMonth = new Date(viewYear, viewMonth, 1).getDay()
+  const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate()
+  const cells = Array(firstDayOfMonth).fill(null).concat(Array.from({ length: daysInMonth }, (_, i) => i + 1))
+
+  const formatDisplay = (val) => {
+    if (!val) return ''
+    const [datePart, timePart] = val.split('T')
+    if (!datePart) return ''
+    const [y, m, d] = datePart.split('-')
+    return `${d}/${m}/${y}${timePart ? ` às ${timePart}` : ''}`
+  }
+
+  return (
+    <div className="dtpWrapper" ref={ref}>
+      <button
+        type="button"
+        className={`dtpTrigger${open ? ' open' : ''}`}
+        onClick={(e) => { e.preventDefault(); setOpen((v) => !v) }}
+      >
+        <CalendarDays size={16} style={{ color: 'var(--orange)', flexShrink: 0 }} />
+        <span className={!value ? 'dtpPlaceholder' : ''}>{value ? formatDisplay(value) : placeholder}</span>
+        {value && (
+          <button type="button" className="dtpClearBtn" onClick={(e) => { e.stopPropagation(); onChange(''); setSelDate('') }}>
+            <X size={13} />
+          </button>
+        )}
+        <ChevronDown size={14} style={{ marginLeft: 'auto', flexShrink: 0, transform: open ? 'rotate(180deg)' : 'none', transition: 'transform .2s' }} />
+      </button>
+
+      {open && (
+        <div className="dtpDropdown">
+          <div className="dtpCalHeader">
+            <button type="button" className="dtpNavBtn" onClick={prevMonth}>
+              <ChevronRight size={16} style={{ transform: 'rotate(180deg)' }} />
+            </button>
+            <span className="dtpMonthLabel">{MONTHS[viewMonth]} {viewYear}</span>
+            <button type="button" className="dtpNavBtn" onClick={nextMonth}>
+              <ChevronRight size={16} />
+            </button>
+          </div>
+
+          <div className="dtpDayNames">
+            {DAYS_SHORT.map((d) => <span key={d}>{d}</span>)}
+          </div>
+
+          <div className="dtpCalGrid">
+            {cells.map((day, i) => {
+              if (!day) return <span key={`e${i}`} />
+              const dateStr = `${viewYear}-${String(viewMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+              const isSelected = dateStr === selDate
+              const isToday = dateStr === today
+              const isPast = !!minDate && dateStr < minDate
+              return (
+                <button
+                  key={dateStr}
+                  type="button"
+                  className={`dtpDay${isSelected ? ' selected' : ''}${isToday && !isSelected ? ' today' : ''}${isPast ? ' past' : ''}`}
+                  onClick={() => !isPast && handleDayClick(day)}
+                  disabled={isPast}
+                >
+                  {day}
+                </button>
+              )
+            })}
+          </div>
+
+          <div className="dtpTimePicker">
+            <Clock3 size={14} style={{ color: 'var(--orange)', flexShrink: 0 }} />
+            <span>Horário</span>
+            <input
+              type="time"
+              value={selTime}
+              onChange={(e) => handleTimeChange(e.target.value)}
+              className="dtpTimeInput"
+            />
+          </div>
+
+          {selDate && (
+            <div className="dtpConfirmRow">
+              <span>{formatDisplay(`${selDate}T${selTime}`)}</span>
+              <button type="button" className="dtpConfirmBtn" onClick={() => setOpen(false)}>
+                <CheckCircle2 size={14} /> Confirmar
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -3949,7 +4097,7 @@ function NewOrderModal({ onClose, onCreateOrder, onUpdateOrder, editOrder, clien
               if (!c) return null
               return (
                 <div className="supplierDetailGrid" style={{ marginTop: 10, marginBottom: 4 }}>
-                  {c.cnpj && <div className="supplierDetailItem"><span>CNPJ</span><b>{c.cnpj}</b></div>}
+                  {(c.cnpj || c.document) && <div className="supplierDetailItem"><span>{c.documentType === 'cpf' ? 'CPF' : 'CNPJ'}</span><b>{c.document || c.cnpj}</b></div>}
                   {c.city && <div className="supplierDetailItem"><span>Cidade</span><b>{c.city}</b></div>}
                   {c.contactNumber && <div className="supplierDetailItem"><span>WhatsApp</span><b>{c.contactNumber}</b></div>}
                 </div>
