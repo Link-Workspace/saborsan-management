@@ -4258,199 +4258,15 @@ function ReportCard({ icon: Icon, title, value, text }) {
   return <article className="reportCard"><Icon size={28} /><span>{title}</span><h3>{value}</h3><p>{text}</p></article>
 }
 
-function NcmManagementSection({ notify }) {
-  const [syncStatus, setSyncStatus] = useState(null)
-  const [syncing, setSyncing] = useState(false)
-  const [classifyProducts, setClassifyProducts] = useState([])
-  const [classifying, setClassifying] = useState(false)
-  const [classifyResults, setClassifyResults] = useState(null)
-  const [loadingStatus, setLoadingStatus] = useState(true)
-
-  useEffect(() => { loadStatus() }, [])
-
-  async function loadStatus() {
-    setLoadingStatus(true)
-    try {
-      const [sr, pr] = await Promise.all([
-        fetch(`${API_URL}/api/ncm/sync`),
-        fetch(`${API_URL}/api/ncm/classify`),
-      ])
-      const sd = sr.ok ? await sr.json() : null
-      const pd = pr.ok ? await pr.json() : null
-      setSyncStatus(sd)
-      setClassifyProducts(pd?.products || [])
-    } catch (_) {}
-    finally { setLoadingStatus(false) }
-  }
-
-  async function handleSync() {
-    if (syncing) return
-    setSyncing(true)
-    setClassifyResults(null)
-    try {
-      const res = await fetch(`${API_URL}/api/ncm/sync`, { method: 'POST' })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error || 'Erro na sincronização')
-      setSyncStatus(data)
-      notify(`Tabela NCM sincronizada: ${data.activeCount?.toLocaleString('pt-BR')} códigos ativos.`)
-      await loadStatus()
-    } catch (err) { notify(`Erro: ${err.message}`) }
-    finally { setSyncing(false) }
-  }
-
-  async function handleClassify() {
-    if (classifying) return
-    setClassifying(true)
-    setClassifyResults(null)
-    try {
-      const res = await fetch(`${API_URL}/api/ncm/classify`, { method: 'POST' })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error || 'Erro na classificação')
-      setClassifyResults(data)
-      notify(`Classificação concluída: ${data.classified} classificados, ${data.pending} pendentes.`)
-      await loadStatus()
-    } catch (err) { notify(`Erro: ${err.message}`) }
-    finally { setClassifying(false) }
-  }
-
-  const pendingCount = classifyProducts.filter(
-    (p) => !p.ncmSource || !['manual', 'ai'].includes(p.ncmSource)
-  ).length
-
-  function NcmSourceBadge({ source, confidence }) {
-    if (source === 'manual') return <span className="fiscalBadgeOk"><CheckCircle2 size={12} /> Manual</span>
-    if (source === 'ai') return (
-      <span className="fiscalBadgeOk" style={{ background: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe' }}>
-        <Sparkles size={12} /> IA {confidence ? `${Math.round(confidence)}%` : ''}
-      </span>
-    )
-    return <span className="fiscalBadgeWarn"><AlertTriangle size={12} /> Pendente</span>
-  }
-
-  return (
-    <div className="card settingsCard settingsCardFull">
-      <div className="cardHeader">
-        <div><p>Fiscal / NCM</p><h3>Sincronização e classificação automática</h3></div>
-        <Tag size={22} />
-      </div>
-
-      <div className="settingsInfo" style={{ marginBottom: 16 }}>
-        <Database size={14} />
-        <span>
-          A tabela NCM é obtida do Siscomex e sincronizada automaticamente toda segunda-feira às 3h (UTC).
-          Após a sincronização, a IA classifica os produtos sem NCM usando os dados reais do cadastro.
-        </span>
-      </div>
-
-      {loadingStatus ? (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-light)', padding: '8px 0' }}>
-          <Loader2 size={16} style={{ animation: 'spin 1s linear infinite' }} /><span>Carregando status...</span>
-        </div>
-      ) : (
-        <>
-          {/* Status row */}
-          <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: 20 }}>
-            <div style={{ flex: 1, minWidth: 140, background: 'var(--bg)', borderRadius: 12, padding: '14px 18px', border: '1.5px solid var(--line)' }}>
-              <div style={{ fontSize: '.72rem', color: 'var(--text-light)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 4 }}>Códigos ativos</div>
-              <div style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--text)' }}>
-                {syncStatus?.activeCount != null ? Number(syncStatus.activeCount).toLocaleString('pt-BR') : '—'}
-              </div>
-            </div>
-            <div style={{ flex: 1, minWidth: 140, background: 'var(--bg)', borderRadius: 12, padding: '14px 18px', border: '1.5px solid var(--line)' }}>
-              <div style={{ fontSize: '.72rem', color: 'var(--text-light)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 4 }}>Última sincronização</div>
-              <div style={{ fontSize: '.9rem', fontWeight: 700, color: 'var(--text)' }}>
-                {syncStatus?.lastSyncedAt
-                  ? new Date(syncStatus.lastSyncedAt).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
-                  : 'Nunca sincronizado'}
-              </div>
-            </div>
-            <div style={{ flex: 1, minWidth: 140, background: pendingCount > 0 ? '#fff8f0' : 'var(--bg)', borderRadius: 12, padding: '14px 18px', border: `1.5px solid ${pendingCount > 0 ? '#fcd34d' : 'var(--line)'}` }}>
-              <div style={{ fontSize: '.72rem', color: 'var(--text-light)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 4 }}>Produtos sem NCM</div>
-              <div style={{ fontSize: '1.5rem', fontWeight: 800, color: pendingCount > 0 ? '#b45309' : 'var(--text)' }}>{pendingCount}</div>
-            </div>
-          </div>
-
-          {/* Action buttons */}
-          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 20 }}>
-            <button className="btnSolid" onClick={handleSync} disabled={syncing} style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
-              {syncing
-                ? <><Loader2 size={16} style={{ animation: 'spin 1s linear infinite' }} /> Sincronizando...</>
-                : <><RefreshCw size={16} /> Sincronizar tabela NCM</>}
-            </button>
-            <button
-              className={pendingCount === 0 ? 'btnOutline' : 'btnSolid'}
-              onClick={handleClassify}
-              disabled={classifying || !syncStatus?.activeCount}
-              style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: pendingCount > 0 && !classifying ? undefined : undefined }}
-            >
-              {classifying
-                ? <><Loader2 size={16} style={{ animation: 'spin 1s linear infinite' }} /> Classificando...</>
-                : <><Wand2 size={16} /> Classificar produtos com IA</>}
-            </button>
-          </div>
-
-          {!syncStatus?.activeCount && (
-            <div className="settingsInfo" style={{ marginBottom: 16, background: '#fff8f0', border: '1px solid #fcd34d' }}>
-              <AlertTriangle size={14} color="#b45309" />
-              <span>A tabela NCM está vazia. Execute a sincronização antes de classificar produtos.</span>
-            </div>
-          )}
-
-          {/* Classification results */}
-          {classifyResults && (
-            <div style={{ marginBottom: 20, padding: '14px 16px', borderRadius: 12, background: '#f0fdf4', border: '1.5px solid #86efac' }}>
-              <div style={{ fontWeight: 700, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
-                <CheckCircle2 size={15} color="#16a34a" /> Resultado da classificação
-              </div>
-              <div style={{ display: 'flex', gap: 20, fontSize: '.85rem' }}>
-                <span><b style={{ color: '#16a34a' }}>{classifyResults.classified}</b> classificados</span>
-                <span><b style={{ color: '#b45309' }}>{classifyResults.pending}</b> pendentes (baixa confiança)</span>
-                <span><b style={{ color: '#dc2626' }}>{classifyResults.failed}</b> falhas</span>
-              </div>
-              {classifyResults.results?.filter(r => r.status === 'pending' || r.status === 'failed').length > 0 && (
-                <div style={{ marginTop: 10 }}>
-                  <div style={{ fontSize: '.78rem', fontWeight: 600, color: 'var(--text-light)', marginBottom: 6 }}>Produtos que precisam de revisão manual:</div>
-                  {classifyResults.results.filter(r => r.status !== 'classified').map(r => (
-                    <div key={r.productId} style={{ fontSize: '.8rem', padding: '4px 0', borderBottom: '1px solid #dcfce7', display: 'flex', gap: 8, alignItems: 'center' }}>
-                      <AlertTriangle size={12} color="#b45309" />
-                      <span><b>{r.productName}</b> — {r.status === 'failed' ? (r.reason || 'Falha') : `Confiança ${r.confidence}% — ${r.justification || ''}`}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Products table */}
-          {classifyProducts.length > 0 && (
-            <div className="fiscalConfigTable">
-              <div className="fiscalConfigHead">
-                <span>Produto</span><span>Código NCM</span><span>Origem</span><span>Classificado em</span>
-              </div>
-              {classifyProducts.map((p) => (
-                <div key={p.id} className="fiscalConfigRow">
-                  <span className="fiscalProdName">{p.name}</span>
-                  <span className="fiscalCode">{p.ncm || '—'}</span>
-                  <span><NcmSourceBadge source={p.ncmSource} confidence={p.ncmConfidence} /></span>
-                  <span style={{ fontSize: '.78rem', color: 'var(--text-light)' }}>
-                    {p.ncmClassifiedAt
-                      ? new Date(p.ncmClassifiedAt).toLocaleDateString('pt-BR')
-                      : '—'}
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
-        </>
-      )}
-    </div>
-  )
-}
-
 function FiscalConfigSection({ notify }) {
   const [loading, setLoading] = useState(false)
   const [configs, setConfigs] = useState([])
   const [products, setProducts] = useState([])
+  const [syncStatus, setSyncStatus] = useState(null)
+  const [classifyProducts, setClassifyProducts] = useState([])
+  const [syncing, setSyncing] = useState(false)
+  const [classifying, setClassifying] = useState(false)
+  const [classifyResults, setClassifyResults] = useState(null)
   const [editProduct, setEditProduct] = useState(null)
   const [saving, setSaving] = useState(false)
   const defaultForm = {
@@ -4466,22 +4282,60 @@ function FiscalConfigSection({ notify }) {
   async function loadData() {
     setLoading(true)
     try {
-      const [pr, cr] = await Promise.all([
+      const [pr, cr, sr, nr] = await Promise.all([
         fetch(`${API_URL}/api/products`),
         fetch(`${API_URL}/api/fiscal-config`),
+        fetch(`${API_URL}/api/ncm/sync`),
+        fetch(`${API_URL}/api/ncm/classify`),
       ])
       const pd = pr.ok ? await pr.json() : {}
       const cd = cr.ok ? await cr.json() : {}
+      const sd = sr.ok ? await sr.json() : null
+      const nd = nr.ok ? await nr.json() : null
       setProducts(pd.products || [])
       setConfigs(cd.configs || [])
+      setSyncStatus(sd)
+      setClassifyProducts(nd?.products || [])
     } catch (_) {}
     finally { setLoading(false) }
   }
 
+  async function handleSync() {
+    if (syncing) return
+    setSyncing(true)
+    setClassifyResults(null)
+    try {
+      const res = await fetch(`${API_URL}/api/ncm/sync`, { method: 'POST' })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Erro na sincronização')
+      setSyncStatus(data)
+      notify(`Tabela NCM sincronizada: ${data.activeCount?.toLocaleString('pt-BR')} códigos ativos.`)
+      await loadData()
+    } catch (err) { notify(`Erro: ${err.message}`) }
+    finally { setSyncing(false) }
+  }
+
+  async function handleClassify() {
+    if (classifying) return
+    setClassifying(true)
+    setClassifyResults(null)
+    try {
+      const res = await fetch(`${API_URL}/api/ncm/classify`, { method: 'POST' })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Erro na classificação')
+      setClassifyResults(data)
+      notify(`Classificação concluída: ${data.classified} classificados, ${data.pending} pendentes.`)
+      await loadData()
+    } catch (err) { notify(`Erro: ${err.message}`) }
+    finally { setClassifying(false) }
+  }
+
   function openEdit(product) {
     const cfg = configs.find(c => c.productId === product.id || c.productName === product.name)
+    const ncmData = classifyProducts.find(cp => cp.id === product.id || cp.name === product.name)
+    const suggestedNcm = ncmData?.ncm || '21069090'
     setForm(cfg ? {
-      ncm: cfg.ncm || '21069090', cfop: cfg.cfop || '5102',
+      ncm: cfg.ncm || suggestedNcm, cfop: cfg.cfop || '5102',
       icmsOrigin: String(cfg.icmsOrigin ?? 0), icmsCst: cfg.icmsCst || '400',
       icmsAliq: String(cfg.icmsAliq ?? 0), pisCST: cfg.pisCST || '07',
       pisAliq: String(cfg.pisAliq ?? 0), cofinsCST: cfg.cofinsCST || '07',
@@ -4493,7 +4347,7 @@ function FiscalConfigSection({ notify }) {
       ibsCbsAliqCbs: String(Number(cfg.ibsCbsAliqCbs) || (cfg.ibsCbsCst ? 0.9 : 0)),
       ibsCbsReducaoAliq: String(cfg.ibsCbsReducaoAliq ?? 0),
       fiscalApproved: !!cfg.fiscalApproved, approvedBy: cfg.approvedBy || '', notes: cfg.notes || '',
-    } : { ...defaultForm })
+    } : { ...defaultForm, ncm: suggestedNcm })
     setEditProduct(product)
   }
 
@@ -4529,48 +4383,144 @@ function FiscalConfigSection({ notify }) {
   }
 
   const setF = (k, v) => setForm(f => ({ ...f, [k]: v }))
-  const rows = products.map(p => ({ product: p, config: configs.find(c => c.productId === p.id || c.productName === p.name) }))
+
+  const rows = products.map(p => ({
+    product: p,
+    config: configs.find(c => c.productId === p.id || c.productName === p.name),
+    ncmData: classifyProducts.find(cp => cp.id === p.id || cp.name === p.name),
+  }))
+
+  const pendingNcmCount = rows.filter(({ config, ncmData }) => {
+    const src = config?.ncmSource || ncmData?.ncmSource
+    return !src || !['manual', 'ai'].includes(src)
+  }).length
+
+  function NcmSourceBadge({ source, confidence }) {
+    if (source === 'manual') return <span className="fiscalBadgeOk"><CheckCircle2 size={12} /> Manual</span>
+    if (source === 'ai') return (
+      <span className="fiscalBadgeOk" style={{ background: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe' }}>
+        <Sparkles size={12} /> IA {confidence ? `${Math.round(confidence)}%` : ''}
+      </span>
+    )
+    return <span className="fiscalBadgeWarn"><AlertTriangle size={12} /> Pendente</span>
+  }
 
   return (
     <>
       <div className="card settingsCard settingsCardFull">
-        <div className="cardHeader"><div><p>Reforma Tributária</p><h3>Classificação fiscal por produto</h3></div><ReceiptText size={22} /></div>
-        <div className="settingsInfo" style={{ marginBottom: 16 }}>
+        <div className="cardHeader">
+          <div><p>Reforma Tributária · NCM</p><h3>Classificação fiscal e sincronização NCM</h3></div>
+          <ReceiptText size={22} />
+        </div>
+        <div className="settingsInfo" style={{ marginBottom: 12 }}>
           <AlertTriangle size={14} />
           <span>Configure o <b>CST</b> e a <b>Classificação Tributária (cClassTrib)</b> do IBS/CBS para cada produto. Campos obrigatórios para emissão de NF-e conforme LC 214/2024.</span>
+        </div>
+        <div className="settingsInfo" style={{ marginBottom: 16 }}>
+          <Database size={14} />
+          <span>A tabela NCM é obtida do Siscomex e sincronizada automaticamente toda segunda-feira às 3h (UTC). Após a sincronização, a IA classifica os produtos sem NCM.</span>
         </div>
         {loading ? (
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-light)', padding: '8px 0' }}>
             <Loader2 size={16} style={{ animation: 'spin 1s linear infinite' }} /><span>Carregando...</span>
           </div>
         ) : (
-          <div className="fiscalConfigTable">
-            <div className="fiscalConfigHead">
-              <span>Produto</span><span>NCM</span><span>CST IBS/CBS</span><span>cClassTrib</span><span>Status</span><span></span>
-            </div>
-            {rows.length === 0 && <div style={{ padding: '12px 0', color: 'var(--text-light)', fontSize: '.88rem' }}>Nenhum produto cadastrado.</div>}
-            {rows.map(({ product, config }) => {
-              const ok = config && config.ibsCbsCst
-              return (
-                <div key={product.id} className="fiscalConfigRow">
-                  <span className="fiscalProdName">{product.name}</span>
-                  <span className="fiscalCode" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    {config?.ncm || '—'}
-                    {config?.ncmSource === 'ai' && <Sparkles size={11} color="#2563eb" title="Classificado por IA" />}
-                  </span>
-                  <span className="fiscalCode">{config?.ibsCbsCst || '—'}</span>
-                  <span className="fiscalCode">{config?.ibsCbsClassTrib || '—'}</span>
-                  <span>
-                    {ok
-                      ? <span className="fiscalBadgeOk"><CheckCircle2 size={12} /> Configurado</span>
-                      : <span className="fiscalBadgeWarn"><AlertTriangle size={12} /> IBS/CBS pendente</span>
-                    }
-                  </span>
-                  <span><button className="btnOutline" style={{ padding: '5px 12px', fontSize: '.78rem', display: 'inline-flex', alignItems: 'center', gap: 5 }} onClick={() => openEdit(product)}><ClipboardEdit size={13} /> Editar</button></span>
+          <>
+            <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: 20 }}>
+              <div style={{ flex: 1, minWidth: 140, background: 'var(--bg)', borderRadius: 12, padding: '14px 18px', border: '1.5px solid var(--line)' }}>
+                <div style={{ fontSize: '.72rem', color: 'var(--text-light)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 4 }}>Códigos ativos</div>
+                <div style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--text)' }}>
+                  {syncStatus?.activeCount != null ? Number(syncStatus.activeCount).toLocaleString('pt-BR') : '—'}
                 </div>
-              )
-            })}
-          </div>
+              </div>
+              <div style={{ flex: 1, minWidth: 140, background: 'var(--bg)', borderRadius: 12, padding: '14px 18px', border: '1.5px solid var(--line)' }}>
+                <div style={{ fontSize: '.72rem', color: 'var(--text-light)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 4 }}>Última sincronização</div>
+                <div style={{ fontSize: '.9rem', fontWeight: 700, color: 'var(--text)' }}>
+                  {syncStatus?.lastSyncedAt
+                    ? new Date(syncStatus.lastSyncedAt).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+                    : 'Nunca sincronizado'}
+                </div>
+              </div>
+              <div style={{ flex: 1, minWidth: 140, background: pendingNcmCount > 0 ? '#fff8f0' : 'var(--bg)', borderRadius: 12, padding: '14px 18px', border: `1.5px solid ${pendingNcmCount > 0 ? '#fcd34d' : 'var(--line)'}` }}>
+                <div style={{ fontSize: '.72rem', color: 'var(--text-light)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 4 }}>Produtos sem NCM</div>
+                <div style={{ fontSize: '1.5rem', fontWeight: 800, color: pendingNcmCount > 0 ? '#b45309' : 'var(--text)' }}>{pendingNcmCount}</div>
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 20 }}>
+              <button className="btnSolid" onClick={handleSync} disabled={syncing} style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
+                {syncing
+                  ? <><Loader2 size={16} style={{ animation: 'spin 1s linear infinite' }} /> Sincronizando...</>
+                  : <><RefreshCw size={16} /> Sincronizar tabela NCM</>}
+              </button>
+              <button
+                className={pendingNcmCount === 0 ? 'btnOutline' : 'btnSolid'}
+                onClick={handleClassify}
+                disabled={classifying || !syncStatus?.activeCount}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}
+              >
+                {classifying
+                  ? <><Loader2 size={16} style={{ animation: 'spin 1s linear infinite' }} /> Classificando...</>
+                  : <><Wand2 size={16} /> Classificar produtos com IA</>}
+              </button>
+            </div>
+            {!syncStatus?.activeCount && (
+              <div className="settingsInfo" style={{ marginBottom: 16, background: '#fff8f0', border: '1px solid #fcd34d' }}>
+                <AlertTriangle size={14} color="#b45309" />
+                <span>A tabela NCM está vazia. Execute a sincronização antes de classificar produtos.</span>
+              </div>
+            )}
+            {classifyResults && (
+              <div style={{ marginBottom: 20, padding: '14px 16px', borderRadius: 12, background: '#f0fdf4', border: '1.5px solid #86efac' }}>
+                <div style={{ fontWeight: 700, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <CheckCircle2 size={15} color="#16a34a" /> Resultado da classificação
+                </div>
+                <div style={{ display: 'flex', gap: 20, fontSize: '.85rem' }}>
+                  <span><b style={{ color: '#16a34a' }}>{classifyResults.classified}</b> classificados</span>
+                  <span><b style={{ color: '#b45309' }}>{classifyResults.pending}</b> pendentes (baixa confiança)</span>
+                  <span><b style={{ color: '#dc2626' }}>{classifyResults.failed}</b> falhas</span>
+                </div>
+                {classifyResults.results?.filter(r => r.status === 'pending' || r.status === 'failed').length > 0 && (
+                  <div style={{ marginTop: 10 }}>
+                    <div style={{ fontSize: '.78rem', fontWeight: 600, color: 'var(--text-light)', marginBottom: 6 }}>Produtos que precisam de revisão manual:</div>
+                    {classifyResults.results.filter(r => r.status !== 'classified').map(r => (
+                      <div key={r.productId} style={{ fontSize: '.8rem', padding: '4px 0', borderBottom: '1px solid #dcfce7', display: 'flex', gap: 8, alignItems: 'center' }}>
+                        <AlertTriangle size={12} color="#b45309" />
+                        <span><b>{r.productName}</b> — {r.status === 'failed' ? (r.reason || 'Falha') : `Confiança ${r.confidence}% — ${r.justification || ''}`}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+            <div className="fiscalConfigTable">
+              <div className="fiscalConfigHead">
+                <span>Produto</span><span>NCM</span><span>Origem NCM</span><span>CST IBS/CBS</span><span>cClassTrib</span><span>Status fiscal</span><span></span>
+              </div>
+              {rows.length === 0 && <div style={{ padding: '12px 0', color: 'var(--text-light)', fontSize: '.88rem' }}>Nenhum produto cadastrado.</div>}
+              {rows.map(({ product, config, ncmData }) => {
+                const fiscalOk = config && config.ibsCbsCst
+                const effectiveNcm = config?.ncm || ncmData?.ncm
+                const effectiveNcmSource = config?.ncmSource || ncmData?.ncmSource
+                const effectiveNcmConfidence = config?.ncmConfidence || ncmData?.ncmConfidence
+                return (
+                  <div key={product.id} className="fiscalConfigRow">
+                    <span className="fiscalProdName">{product.name}</span>
+                    <span className="fiscalCode">{effectiveNcm || '—'}</span>
+                    <span><NcmSourceBadge source={effectiveNcmSource} confidence={effectiveNcmConfidence} /></span>
+                    <span className="fiscalCode">{config?.ibsCbsCst || '—'}</span>
+                    <span className="fiscalCode">{config?.ibsCbsClassTrib || '—'}</span>
+                    <span>
+                      {fiscalOk
+                        ? <span className="fiscalBadgeOk"><CheckCircle2 size={12} /> Configurado</span>
+                        : <span className="fiscalBadgeWarn"><AlertTriangle size={12} /> IBS/CBS pendente</span>
+                      }
+                    </span>
+                    <span><button className="btnOutline" style={{ padding: '5px 12px', fontSize: '.78rem', display: 'inline-flex', alignItems: 'center', gap: 5 }} onClick={() => openEdit(product)}><ClipboardEdit size={13} /> Editar</button></span>
+                  </div>
+                )
+              })}
+            </div>
+          </>
         )}
       </div>
 
@@ -4734,17 +4684,16 @@ function Settings({ notify }) {
     { id: 'entregador',    label: 'Entregador',            icon: Truck      },
     { id: 'relatorios',    label: 'Relatórios',            icon: BarChart3  },
     { id: 'ia',            label: 'IA — Ligações',         icon: Bot        },
-    { id: 'fiscal',        label: 'Config. fiscal',        icon: ReceiptText },
-    { id: 'ncm',           label: 'Sincronização NCM',     icon: Tag        },
+    { id: 'fiscal',        label: 'Fiscal e NCM',          icon: ReceiptText },
   ]
 
   const [activeSection, setActiveSection] = useState('empresa')
   const active = settingsSections.find((s) => s.id === activeSection)
-  const showSaveBtn = !['fiscal', 'ncm'].includes(activeSection)
+  const showSaveBtn = activeSection !== 'fiscal'
 
   return (
     <>
-      <div className="sectionHeader">
+      <div className="sectionHeader" style={{ marginBottom: '20px' }}>
         <div><p>Preferências e configurações do sistema</p></div>
       </div>
       <div className="settingsLayout">
@@ -4931,7 +4880,6 @@ function Settings({ notify }) {
           )}
 
           {activeSection === 'fiscal' && <FiscalConfigSection notify={notify} />}
-          {activeSection === 'ncm' && <NcmManagementSection notify={notify} />}
           {showSaveBtn && (
             <div style={{display:'flex', justifyContent:'flex-end', marginTop:'16px'}}>
               <button className="btnSolid" onClick={saveSettings}><CheckCircle2 size={18} /> Salvar alterações</button>
