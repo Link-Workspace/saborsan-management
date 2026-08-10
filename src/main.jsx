@@ -4701,7 +4701,7 @@ function Settings({ notify }) {
 
   const [activeSection, setActiveSection] = useState('empresa')
   const active = settingsSections.find((s) => s.id === activeSection)
-  const showSaveBtn = activeSection !== 'fiscal'
+  const showSaveBtn = activeSection !== 'fiscal' && activeSection !== 'empresa'
 
   return (
     <>
@@ -4729,11 +4729,11 @@ function Settings({ notify }) {
             <div className="card settingsCard">
               <div className="cardHeader"><div><p>Identidade</p><h3>Dados da empresa</h3></div><Building2 size={22} /></div>
               <div className="settingsForm">
-                <label>Nome da empresa<input value={form.empresa} onChange={(e) => set('empresa', e.target.value)} /></label>
-                <label>CNPJ<input value={form.cnpj} onChange={(e) => set('cnpj', e.target.value)} /></label>
-                <label>E-mail corporativo<input value={form.email} onChange={(e) => set('email', e.target.value)} /></label>
-                <label>Telefone<input value={form.telefone} onChange={(e) => set('telefone', e.target.value)} /></label>
-                <label>Cidade / UF<input value={form.cidade} onChange={(e) => set('cidade', e.target.value)} /></label>
+                <label>Nome da empresa<input value={form.empresa} readOnly /></label>
+                <label>CNPJ<input value={form.cnpj} readOnly /></label>
+                <label>E-mail corporativo<input value={form.email} readOnly /></label>
+                <label>Telefone<input value={form.telefone} readOnly /></label>
+                <label>Cidade / UF<input value={form.cidade} readOnly /></label>
               </div>
             </div>
           )}
@@ -4742,10 +4742,7 @@ function Settings({ notify }) {
             <div className="card settingsCard">
               <div className="cardHeader"><div><p>Operação</p><h3>Estoque e temperatura</h3></div><Boxes size={22} /></div>
               <div className="settingsForm">
-                <label>Temperatura mínima (°C)<input type="number" value={form.tempMin} onChange={(e) => set('tempMin', e.target.value)} /></label>
-                <label>Temperatura máxima (°C)<input type="number" value={form.tempMax} onChange={(e) => set('tempMax', e.target.value)} /></label>
                 <label>Alertar estoque quando abaixo de (%)<input type="number" value={form.estoqueAlerta} onChange={(e) => set('estoqueAlerta', e.target.value)} /></label>
-                <label>Horário padrão de compras<input type="time" value={form.compraPadraoHora} onChange={(e) => set('compraPadraoHora', e.target.value)} /></label>
               </div>
             </div>
           )}
