@@ -4727,15 +4727,15 @@ function Settings({ notify }) {
   }
 
   const settingsSections = [
-    { id: 'empresa',       label: 'Dados da empresa',      icon: Building2,},
-    { id: 'operacao',      label: 'Estoque e temperatura', icon: Boxes,},
-    { id: 'notificacoes',  label: 'Notificações',          icon: Bell,},
-    { id: 'aparencia',     label: 'Aparência',             icon: Settings2,},
-    { id: 'entregador',    label: 'Entregador',            icon: Truck,},
-    { id: 'relatorios',    label: 'Relatórios',            icon: BarChart3,},
-    { id: 'ia',            label: 'IA — Ligações',         icon: Bot,},
-    { id: 'fiscal',        label: 'Config. fiscal',        icon: ReceiptText,},
-    { id: 'ncm',           label: 'Sincronização NCM',     icon: Tag,},
+    { id: 'empresa',       label: 'Dados da empresa',      icon: Building2  },
+    { id: 'operacao',      label: 'Estoque e temperatura', icon: Boxes      },
+    { id: 'notificacoes',  label: 'Notificações',          icon: Bell       },
+    { id: 'aparencia',     label: 'Aparência',             icon: Settings2  },
+    { id: 'entregador',    label: 'Entregador',            icon: Truck      },
+    { id: 'relatorios',    label: 'Relatórios',            icon: BarChart3  },
+    { id: 'ia',            label: 'IA — Ligações',         icon: Bot        },
+    { id: 'fiscal',        label: 'Config. fiscal',        icon: ReceiptText },
+    { id: 'ncm',           label: 'Sincronização NCM',     icon: Tag        },
   ]
 
   const [activeSection, setActiveSection] = useState('empresa')
@@ -4743,34 +4743,26 @@ function Settings({ notify }) {
   const showSaveBtn = !['fiscal', 'ncm'].includes(activeSection)
 
   return (
-    <div className="settingsLayout">
-      <nav className="settingsSubNav">
-        {settingsSections.map(({ id, label, icon: Icon, subtitle }) => (
-          <button
-            key={id}
-            className={`settingsSubNavItem${activeSection === id ? ' active' : ''}`}
-            onClick={() => setActiveSection(id)}
-          >
-            <span className="settingsSubNavIcon"><Icon size={16} /></span>
-            <span className="settingsSubNavLabel">
-              <b>{label}</b>
-              <small>{subtitle}</small>
-            </span>
-          </button>
-        ))}
-      </nav>
+    <>
+      <div className="sectionHeader">
+        <div><p>Preferências e configurações do sistema</p></div>
+      </div>
+      <div className="settingsLayout">
+        <nav className="settingsSubNav">
+          {settingsSections.map(({ id, label, icon: Icon }) => (
+            <button
+              key={id}
+              className={`settingsSubNavItem${activeSection === id ? ' active' : ''}`}
+              onClick={() => setActiveSection(id)}
+            >
+              <span className="settingsSubNavIcon"><Icon size={16} /></span>
+              <span className="settingsSubNavLabel"><b>{label}</b></span>
+            </button>
+          ))}
+        </nav>
 
       <div className="settingsSectionContent">
         <div className="settingsSectionInner">
-          <div className="settingsSectionTopbar">
-            <div>
-              <span className="topKicker">{active?.subtitle}</span>
-              <h2 className="settingsSectionH2">{active?.label}</h2>
-            </div>
-            {showSaveBtn && (
-              <button className="btnSolid" onClick={saveSettings}><CheckCircle2 size={18} /> Salvar alterações</button>
-            )}
-          </div>
 
           {activeSection === 'empresa' && (
             <div className="card settingsCard">
@@ -4940,9 +4932,15 @@ function Settings({ notify }) {
 
           {activeSection === 'fiscal' && <FiscalConfigSection notify={notify} />}
           {activeSection === 'ncm' && <NcmManagementSection notify={notify} />}
+          {showSaveBtn && (
+            <div style={{display:'flex', justifyContent:'flex-end', marginTop:'16px'}}>
+              <button className="btnSolid" onClick={saveSettings}><CheckCircle2 size={18} /> Salvar alterações</button>
+            </div>
+          )}
         </div>
       </div>
     </div>
+    </>
   )
 }
 
