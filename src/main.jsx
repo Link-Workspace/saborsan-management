@@ -4941,7 +4941,7 @@ function Settings({ notify }) {
         </nav>
 
       <div className="settingsSectionContent">
-        <div className="settingsSectionInner">
+        <div className="settingsSectionInner" style={showSaveBtn ? { paddingBottom: '80px' } : undefined}>
 
           {activeSection === 'empresa' && (
             <div className="card settingsCard">
@@ -5141,14 +5141,14 @@ function Settings({ notify }) {
           )}
 
           {activeSection === 'fiscal' && <FiscalConfigSection notify={notify} />}
-          {showSaveBtn && (
-            <div style={{display:'flex', justifyContent:'flex-end', marginTop:'16px'}}>
-              <button className="btnSolid" onClick={saveSettings} disabled={!operacaoDirty || !relatoriosDirty} style={{ opacity: (!operacaoDirty || !relatoriosDirty) ? 0.45 : 1, cursor: (!operacaoDirty || !relatoriosDirty) ? 'not-allowed' : 'pointer' }}><CheckCircle2 size={18} /> Salvar alterações</button>
-            </div>
-          )}
         </div>
       </div>
     </div>
+    {showSaveBtn && (
+      <div className="settingsSaveFooter">
+        <button className="btnSolid" onClick={saveSettings} disabled={!operacaoDirty || !relatoriosDirty} style={{ opacity: (!operacaoDirty || !relatoriosDirty) ? 0.45 : 1, cursor: (!operacaoDirty || !relatoriosDirty) ? 'not-allowed' : 'pointer' }}><CheckCircle2 size={18} /> Salvar alterações</button>
+      </div>
+    )}
     </>
   )
 }

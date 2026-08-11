@@ -431,5 +431,6 @@ p{margin:0}.appShell{min-height:100vh;display:grid;grid-template-columns:300px 1
 .settingsSubNavItem.active .settingsSubNavLabel small{color:var(--orange)}
 .settingsSectionContent{flex:1;overflow-y:auto;min-width:0}
 .settingsSectionInner{padding:4px 24px 32px}
+.settingsSaveFooter{position:fixed;bottom:0;left:300px;right:0;background:#fff;border-top:1.5px solid var(--line);padding:14px 28px;display:flex;justify-content:flex-end;z-index:10;box-shadow:0 -6px 20px rgba(6,54,111,.06)}
 .settingsSectionTopbar{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:20px;padding-top:4px}
 .settingsSectionH2{font-size:1.5rem;letter-spacing:-.03em;margin-top:2px}
