@@ -48,6 +48,7 @@ import {
   LayoutGrid,
   List,
   ChevronDown,
+  ChevronUp,
   ArrowLeft,
   Loader2,
   Package,
@@ -3856,6 +3857,57 @@ function DateTimePicker({ value, onChange, placeholder = 'Selecionar data e hora
   )
 }
 
+function TimePickerInput({ value = '08:00', onChange }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef(null)
+  const parts = (value || '08:00').split(':')
+  const h = parseInt(parts[0]) || 0
+  const m = parseInt(parts[1]) || 0
+
+  useEffect(() => {
+    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false) }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
+
+  const update = (newH, newM) => onChange(`${String(newH).padStart(2,'0')}:${String(newM).padStart(2,'0')}`)
+
+  return (
+    <div className="dtpWrapper" ref={ref}>
+      <button
+        type="button"
+        className={`dtpTrigger${open ? ' open' : ''}`}
+        onClick={(e) => { e.preventDefault(); setOpen((v) => !v) }}
+      >
+        <Clock3 size={16} style={{ color: 'var(--orange)', flexShrink: 0 }} />
+        <span>{value || '08:00'}</span>
+        <ChevronDown size={14} style={{ marginLeft: 'auto', flexShrink: 0, transform: open ? 'rotate(180deg)' : 'none', transition: 'transform .2s' }} />
+      </button>
+      {open && (
+        <div className="dtpDropdown tpDropdown">
+          <p className="tpLabel">Selecionar horário</p>
+          <div className="tpWheels">
+            <div className="tpWheel">
+              <button type="button" className="tpArrow" onClick={() => update((h + 1) % 24, m)}><ChevronUp size={18} /></button>
+              <span className="tpVal">{String(h).padStart(2,'0')}</span>
+              <button type="button" className="tpArrow" onClick={() => update((h - 1 + 24) % 24, m)}><ChevronDown size={18} /></button>
+            </div>
+            <span className="tpColon">:</span>
+            <div className="tpWheel">
+              <button type="button" className="tpArrow" onClick={() => update(h, (m + 5) % 60)}><ChevronUp size={18} /></button>
+              <span className="tpVal">{String(m).padStart(2,'0')}</span>
+              <button type="button" className="tpArrow" onClick={() => update(h, (m - 5 + 60) % 60)}><ChevronDown size={18} /></button>
+            </div>
+          </div>
+          <button type="button" className="dtpConfirmBtn tpConfirmBtn" onClick={() => setOpen(false)}>
+            <CheckCircle2 size={14} /> Confirmar
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function CustomSelect({ value, onChange, options = [], placeholder = 'Selecione...', disabled = false }) {
   const [open, setOpen] = useState(false)
   const ref = useRef(null)
@@ -4713,6 +4765,18 @@ function Settings({ notify }) {
   })
   const [savedOperacaoSnap, setSavedOperacaoSnap] = useState(() => snapOperacao(form))
 
+  const snapRelatorios = (f) => JSON.stringify({
+    relatorioEmail:      f.relatorioEmail      || '',
+    relatorioFreq:       f.relatorioFreq       || 'desativado',
+    relatorioDia:        f.relatorioDia        || '1',
+    relatorioHora:       f.relatorioHora       || '08:00',
+    relatorioVendas:     !!f.relatorioVendas,
+    relatorioEstoque:    !!f.relatorioEstoque,
+    relatorioFinanceiro: !!f.relatorioFinanceiro,
+    relatorioEntregas:   !!f.relatorioEntregas,
+  })
+  const [savedRelatoriosSnap, setSavedRelatoriosSnap] = useState(() => snapRelatorios(form))
+
   useEffect(() => {
     fetch(`${API_URL}/api/stock-purchase-config`)
       .then((r) => r.ok ? r.json() : null)
@@ -4753,6 +4817,34 @@ function Settings({ notify }) {
         }));
       })
       .catch(() => {});
+
+    fetch(`${API_URL}/api/report-settings`)
+      .then((r) => r.ok ? r.json() : null)
+      .then((data) => {
+        if (!data) return;
+        setForm((f) => ({
+          ...f,
+          relatorioEmail:      data.relatorioEmail      ?? f.relatorioEmail,
+          relatorioFreq:       data.relatorioFreq       ?? f.relatorioFreq,
+          relatorioDia:        data.relatorioDia        ?? f.relatorioDia,
+          relatorioHora:       data.relatorioHora       ?? f.relatorioHora,
+          relatorioVendas:     data.relatorioVendas     ?? f.relatorioVendas,
+          relatorioEstoque:    data.relatorioEstoque    ?? f.relatorioEstoque,
+          relatorioFinanceiro: data.relatorioFinanceiro ?? f.relatorioFinanceiro,
+          relatorioEntregas:   data.relatorioEntregas   ?? f.relatorioEntregas,
+        }));
+        setSavedRelatoriosSnap(JSON.stringify({
+          relatorioEmail:      data.relatorioEmail      || '',
+          relatorioFreq:       data.relatorioFreq       || 'desativado',
+          relatorioDia:        data.relatorioDia        || '1',
+          relatorioHora:       data.relatorioHora       || '08:00',
+          relatorioVendas:     !!data.relatorioVendas,
+          relatorioEstoque:    !!data.relatorioEstoque,
+          relatorioFinanceiro: !!data.relatorioFinanceiro,
+          relatorioEntregas:   !!data.relatorioEntregas,
+        }));
+      })
+      .catch(() => {});
   }, []);
 
   const saveSettings = async () => {
@@ -4783,6 +4875,29 @@ function Settings({ notify }) {
           })
         }
         setSavedOperacaoSnap(snapOperacao(form));
+      } catch {}
+    }
+
+    if (activeSection === 'relatorios') {
+      try {
+        const saved = JSON.parse(savedRelatoriosSnap)
+        const patch = {}
+        if (form.relatorioEmail      !== saved.relatorioEmail)      patch.relatorioEmail      = form.relatorioEmail
+        if (form.relatorioFreq       !== saved.relatorioFreq)       patch.relatorioFreq       = form.relatorioFreq
+        if (form.relatorioDia        !== saved.relatorioDia)        patch.relatorioDia        = form.relatorioDia
+        if (form.relatorioHora       !== saved.relatorioHora)       patch.relatorioHora       = form.relatorioHora
+        if (!!form.relatorioVendas     !== !!saved.relatorioVendas)     patch.relatorioVendas     = !!form.relatorioVendas
+        if (!!form.relatorioEstoque    !== !!saved.relatorioEstoque)    patch.relatorioEstoque    = !!form.relatorioEstoque
+        if (!!form.relatorioFinanceiro !== !!saved.relatorioFinanceiro) patch.relatorioFinanceiro = !!form.relatorioFinanceiro
+        if (!!form.relatorioEntregas   !== !!saved.relatorioEntregas)   patch.relatorioEntregas   = !!form.relatorioEntregas
+        if (Object.keys(patch).length > 0) {
+          await fetch(`${API_URL}/api/report-settings`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(patch),
+          })
+        }
+        setSavedRelatoriosSnap(snapRelatorios(form));
       } catch {}
     }
 
@@ -4975,20 +5090,38 @@ function Settings({ notify }) {
               <div className="settingsForm">
                 <label>E-mail de destino<input type="email" value={form.relatorioEmail} onChange={(e) => set('relatorioEmail', e.target.value)} /></label>
                 <label>Frequência de envio
-                  <select value={form.relatorioFreq} onChange={(e) => set('relatorioFreq', e.target.value)}>
-                    <option value="diario">Diário</option>
-                    <option value="semanal">Semanal</option>
-                    <option value="mensal">Mensal</option>
-                  </select>
+                  <CustomSelect
+                    value={form.relatorioFreq}
+                    onChange={(v) => set('relatorioFreq', v)}
+                    options={[
+                      { value: 'desativado', label: 'Desativado' },
+                      { value: 'diario',     label: 'Diário'     },
+                      { value: 'semanal',    label: 'Semanal'    },
+                      { value: 'mensal',     label: 'Mensal'     },
+                    ]}
+                  />
                 </label>
-                <div className="settingsTwoCols">
-                  <label>Dia do envio
-                    <select value={form.relatorioDia} onChange={(e) => set('relatorioDia', e.target.value)}>
-                      {Array.from({length: 28}, (_, i) => <option key={i+1} value={String(i+1)}>Dia {i+1}</option>)}
-                    </select>
-                  </label>
-                  <label>Horário<input type="time" value={form.relatorioHora} onChange={(e) => set('relatorioHora', e.target.value)} /></label>
-                </div>
+                {form.relatorioFreq !== 'desativado' && (
+                  form.relatorioFreq === 'mensal' ? (
+                    <div className="settingsTwoCols">
+                      <label>Dia do envio
+                        <CustomSelect
+                          value={form.relatorioDia}
+                          onChange={(v) => set('relatorioDia', v)}
+                          placeholder="Selecione o dia"
+                          options={Array.from({length: 28}, (_, i) => ({ value: String(i + 1), label: `Dia ${i + 1}` }))}
+                        />
+                      </label>
+                      <label>Horário
+                        <TimePickerInput value={form.relatorioHora} onChange={(v) => set('relatorioHora', v)} />
+                      </label>
+                    </div>
+                  ) : (
+                    <label>Horário
+                      <TimePickerInput value={form.relatorioHora} onChange={(v) => set('relatorioHora', v)} />
+                    </label>
+                  )
+                )}
               </div>
               <div className="settingsToggles" style={{marginTop:'12px'}}>
                 <p className="settingsSub">Incluir no relatório:</p>
