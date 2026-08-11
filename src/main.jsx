@@ -4637,6 +4637,10 @@ function Settings({ notify }) {
         iaLigarHora: '09:00',
         iaLigarContato: '(49) 99821-4410',
         iaLigarAtivo: true,
+        estoqueIaWhatsapp: false,
+        estoqueWhatsappNumeros: [],
+        compraDatas: [],
+        iaFornecedorPrompt: 'Você é um assistente de compras da Saborsan Distribuidora. Ao contatar fornecedores, seja cordial, objetivo e profissional. Solicite cotações de preço, prazo de entrega e condições de pagamento. Priorize fornecedores com melhor custo-benefício e histórico de pontualidade. Confirme disponibilidade de estoque antes de fechar pedido.',
         ...saved,
       }
     } catch {
@@ -4674,23 +4678,86 @@ function Settings({ notify }) {
         iaLigarHora: '09:00',
         iaLigarContato: '(49) 99821-4410',
         iaLigarAtivo: true,
+        estoqueIaWhatsapp: false,
+        estoqueWhatsappNumeros: [],
+        compraDatas: [],
+        iaFornecedorPrompt: 'Você é um assistente de compras da Saborsan Distribuidora. Ao contatar fornecedores, seja cordial, objetivo e profissional. Solicite cotações de preço, prazo de entrega e condições de pagamento. Priorize fornecedores com melhor custo-benefício e histórico de pontualidade. Confirme disponibilidade de estoque antes de fechar pedido.',
       }
     }
   })
 
   const set = (key, value) => setForm((f) => ({ ...f, [key]: value }))
 
-  const saveSettings = () => {
+  const snapOperacao = (f) => JSON.stringify({
+    estoqueAlerta:          String(f.estoqueAlerta),
+    estoqueIaWhatsapp:      !!f.estoqueIaWhatsapp,
+    compraDatas:            f.compraDatas            || [],
+    estoqueWhatsappNumeros: f.estoqueWhatsappNumeros || [],
+    iaFornecedorPrompt:     f.iaFornecedorPrompt,
+  })
+  const [savedOperacaoSnap, setSavedOperacaoSnap] = useState(() => snapOperacao(form))
+
+  useEffect(() => {
+    fetch(`${API_URL}/api/stock-purchase-config`)
+      .then((r) => r.ok ? r.json() : null)
+      .then((data) => {
+        if (!data) return;
+        setForm((f) => ({
+          ...f,
+          estoqueAlerta:          String(data.stockAlertPct ?? f.estoqueAlerta),
+          estoqueIaWhatsapp:      !!data.iaWhatsapp,
+          iaFornecedorPrompt:     data.iaPrompt || f.iaFornecedorPrompt,
+          compraDatas:            data.purchaseSchedules ?? f.compraDatas,
+          estoqueWhatsappNumeros: data.whatsappNumbers   ?? f.estoqueWhatsappNumeros,
+        }));
+        setSavedOperacaoSnap(JSON.stringify({
+          estoqueAlerta:          String(data.stockAlertPct),
+          estoqueIaWhatsapp:      !!data.iaWhatsapp,
+          compraDatas:            data.purchaseSchedules || [],
+          estoqueWhatsappNumeros: data.whatsappNumbers   || [],
+          iaFornecedorPrompt:     data.iaPrompt          || '',
+        }));
+      })
+      .catch(() => {});
+  }, []);
+
+  const saveSettings = async () => {
     try {
       localStorage.setItem('saborsan_settings', JSON.stringify(form))
       localStorage.setItem('saborsan_purchase_default_time', form.compraPadraoHora)
     } catch {}
+
+    if (activeSection === 'operacao') {
+      try {
+        const saved = JSON.parse(savedOperacaoSnap)
+        const patch = {}
+        if (String(form.estoqueAlerta) !== String(saved.estoqueAlerta))
+          patch.stockAlertPct = parseFloat(form.estoqueAlerta) || 10
+        if (!!form.estoqueIaWhatsapp !== !!saved.estoqueIaWhatsapp)
+          patch.iaWhatsapp = !!form.estoqueIaWhatsapp
+        if (form.iaFornecedorPrompt !== saved.iaFornecedorPrompt)
+          patch.iaPrompt = form.iaFornecedorPrompt
+        if (JSON.stringify(form.compraDatas || []) !== JSON.stringify(saved.compraDatas || []))
+          patch.purchaseSchedules = form.compraDatas || []
+        if (JSON.stringify(form.estoqueWhatsappNumeros || []) !== JSON.stringify(saved.estoqueWhatsappNumeros || []))
+          patch.whatsappNumbers = form.estoqueWhatsappNumeros || []
+        if (Object.keys(patch).length > 0) {
+          await fetch(`${API_URL}/api/stock-purchase-config`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(patch),
+          })
+        }
+        setSavedOperacaoSnap(snapOperacao(form));
+      } catch {}
+    }
+
     notify('Configurações salvas com sucesso.')
   }
 
   const settingsSections = [
     { id: 'empresa',       label: 'Dados da empresa',      icon: Building2  },
-    { id: 'operacao',      label: 'Estoque e temperatura', icon: Boxes      },
+    { id: 'operacao',      label: 'Estoque e compras',     icon: Boxes      },
     { id: 'notificacoes',  label: 'Notificações',          icon: Bell       },
     { id: 'aparencia',     label: 'Aparência',             icon: Settings2  },
     { id: 'entregador',    label: 'Entregador',            icon: Truck      },
@@ -4702,6 +4769,7 @@ function Settings({ notify }) {
   const [activeSection, setActiveSection] = useState('empresa')
   const active = settingsSections.find((s) => s.id === activeSection)
   const showSaveBtn = activeSection !== 'fiscal' && activeSection !== 'empresa'
+  const operacaoDirty = activeSection !== 'operacao' || snapOperacao(form) !== savedOperacaoSnap
 
   return (
     <>
@@ -4740,9 +4808,48 @@ function Settings({ notify }) {
 
           {activeSection === 'operacao' && (
             <div className="card settingsCard">
-              <div className="cardHeader"><div><p>Operação</p><h3>Estoque e temperatura</h3></div><Boxes size={22} /></div>
+              <div className="cardHeader"><div><p>Operação</p><h3>Estoque e compras</h3></div><Boxes size={22} /></div>
               <div className="settingsForm">
                 <label>Alertar estoque quando abaixo de (%)<input type="number" value={form.estoqueAlerta} onChange={(e) => set('estoqueAlerta', e.target.value)} /></label>
+                <div className="settingsToggleRow" style={{ borderBottom: form.estoqueIaWhatsapp ? 'none' : undefined }}>
+                  <span style={{ color: 'var(--navy)', fontWeight: 800 }}>IA notifica via WhatsApp quando estoque abaixo do limite</span>
+                  <label className="switch"><input type="checkbox" checked={form.estoqueIaWhatsapp} onChange={() => set('estoqueIaWhatsapp', !form.estoqueIaWhatsapp)} /><span></span></label>
+                </div>
+                {form.estoqueIaWhatsapp && (
+                  <label style={{ borderBottom: '1px solid var(--line)', paddingBottom: '12px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span>Números a notificar</span>
+                      <button type="button" style={{ border: 0, background: 'var(--orange)', color: '#fff', borderRadius: '999px', padding: '8px 12px', fontWeight: 900, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap' }} onClick={() => set('estoqueWhatsappNumeros', [...(form.estoqueWhatsappNumeros || []), ''])}><Plus size={14} /> Adicionar</button>
+                    </div>
+                    {(form.estoqueWhatsappNumeros || []).length === 0 && (
+                      <span style={{ fontWeight: 400, color: 'var(--muted)', fontSize: '.82rem' }}>Nenhum número configurado.</span>
+                    )}
+                    {(form.estoqueWhatsappNumeros || []).map((num, i) => (
+                      <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                        <input style={{ flex: 1 }} type="tel" placeholder="(XX) XXXXX-XXXX" value={num} onChange={(e) => { const arr = [...form.estoqueWhatsappNumeros]; arr[i] = e.target.value; set('estoqueWhatsappNumeros', arr) }} />
+                        <button type="button" onClick={() => set('estoqueWhatsappNumeros', form.estoqueWhatsappNumeros.filter((_, j) => j !== i))} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--danger, #e53935)', lineHeight: 1 }}><X size={16} /></button>
+                      </div>
+                    ))}
+                  </label>
+                )}
+                <label>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span>Horários padrão de compra com fornecedores</span>
+                    <button type="button" style={{ border: 0, background: 'var(--orange)', color: '#fff', borderRadius: '999px', padding: '8px 12px', fontWeight: 900, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap' }} onClick={() => set('compraDatas', [...(form.compraDatas || []), ''])}><Plus size={14} /> Adicionar</button>
+                  </div>
+                  {(form.compraDatas || []).length === 0 && (
+                    <span style={{ fontWeight: 400, color: 'var(--muted)', fontSize: '.82rem' }}>Nenhum horário configurado.</span>
+                  )}
+                  {(form.compraDatas || []).map((dt, i) => (
+                    <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                      <div style={{ flex: 1 }}><DateTimePicker value={dt} onChange={(v) => { const arr = [...form.compraDatas]; arr[i] = v; set('compraDatas', arr) }} /></div>
+                      <button type="button" onClick={() => set('compraDatas', form.compraDatas.filter((_, j) => j !== i))} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--danger, #e53935)', lineHeight: 1 }}><X size={16} /></button>
+                    </div>
+                  ))}
+                </label>
+                <label>Prompt de comportamento da IA com fornecedores
+                  <textarea rows={6} value={form.iaFornecedorPrompt} onChange={(e) => set('iaFornecedorPrompt', e.target.value)} onFocus={(e) => { e.target.style.borderColor = 'var(--orange)'; e.target.style.background = '#fff' }} onBlur={(e) => { e.target.style.borderColor = 'var(--line)'; e.target.style.background = '#f9fbff' }} style={{ resize: 'vertical', width: '100%', padding: '11px 14px', borderRadius: 14, border: '1.5px solid var(--line)', font: 'inherit', color: 'var(--text)', fontWeight: 700, outline: 0, background: '#f9fbff', boxSizing: 'border-box' }} />
+                </label>
               </div>
             </div>
           )}
@@ -4891,7 +4998,7 @@ function Settings({ notify }) {
           {activeSection === 'fiscal' && <FiscalConfigSection notify={notify} />}
           {showSaveBtn && (
             <div style={{display:'flex', justifyContent:'flex-end', marginTop:'16px'}}>
-              <button className="btnSolid" onClick={saveSettings}><CheckCircle2 size={18} /> Salvar alterações</button>
+              <button className="btnSolid" onClick={saveSettings} disabled={!operacaoDirty} style={{ opacity: !operacaoDirty ? 0.45 : 1, cursor: !operacaoDirty ? 'not-allowed' : 'pointer' }}><CheckCircle2 size={18} /> Salvar alterações</button>
             </div>
           )}
         </div>
