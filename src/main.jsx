@@ -152,6 +152,75 @@ const initialOrders = [
   },
 ]
 
+const initialPayments = [
+  {
+    id: 'PAG-001',
+    clientName: 'Padaria Bela Vista',
+    orderId: 'PED-2049',
+    sellerName: 'Carlos Oliveira',
+    paymentDate: '11/08/2025',
+    paymentMethod: 'PIX',
+    paymentValue: 1984.60,
+    totalPaid: 1984.60,
+    status: 'Pago',
+  },
+  {
+    id: 'PAG-002',
+    clientName: 'Café Avenida',
+    orderId: 'PED-2048',
+    sellerName: 'Carlos Oliveira',
+    paymentDate: '10/08/2025',
+    paymentMethod: 'Cartão de débito',
+    paymentValue: 1297.20,
+    totalPaid: 1297.20,
+    status: 'Pago',
+  },
+  {
+    id: 'PAG-003',
+    clientName: 'Mercado Santa Clara',
+    orderId: 'PED-2047',
+    sellerName: 'Ana Paula Ramos',
+    paymentDate: '11/08/2025',
+    paymentMethod: 'Boleto',
+    paymentValue: 2880.30,
+    totalPaid: 0,
+    status: 'Pendente',
+  },
+  {
+    id: 'PAG-004',
+    clientName: 'Restaurante Dom Sabor',
+    orderId: 'PED-2046',
+    sellerName: 'Ana Paula Ramos',
+    paymentDate: '09/08/2025',
+    paymentMethod: 'PIX',
+    paymentValue: 953.80,
+    totalPaid: 953.80,
+    status: 'Pago',
+  },
+  {
+    id: 'PAG-005',
+    clientName: 'Padaria Serrana',
+    orderId: 'PED-2044',
+    sellerName: 'Rafael Menezes',
+    paymentDate: '07/08/2025',
+    paymentMethod: 'Boleto',
+    paymentValue: 1780.00,
+    totalPaid: 890.00,
+    status: 'Parcial',
+  },
+  {
+    id: 'PAG-006',
+    clientName: 'Conveniência Central',
+    orderId: 'PED-2040',
+    sellerName: 'Rafael Menezes',
+    paymentDate: '02/08/2025',
+    paymentMethod: 'Cartão de crédito',
+    paymentValue: 620.00,
+    totalPaid: 0,
+    status: 'Atrasado',
+  },
+]
+
 const suppliers = [
   { id: 1, name: 'Queijos Serra Alta', type: 'Laticínios e massas', contact: 'Marcos', phone: '(49) 99910-1111', status: 'Ativo', lead: '2 dias', contactNumber: 9654564 },
   { id: 2, name: 'Forno Sul Alimentos', type: 'Assados e pizzas', contact: 'Carolina', phone: '(48) 99122-4400', status: 'Ativo', lead: '3 dias', contactNumber: 9154564 },
@@ -262,6 +331,7 @@ const navItems = [
   { id: 'compras', label: 'Compras', icon: ClipboardList },
   { id: 'entregas', label: 'Entregas', icon: Truck },
   { id: 'clientes', label: 'Clientes', icon: Users },
+  { id: 'pagamentos', label: 'Pagamentos', icon: CreditCard },
   { id: 'financeiro', label: 'Financeiro', icon: Wallet },
   { id: 'relatorios', label: 'Relatórios', icon: BarChart3 },
   { id: 'automacao', label: 'Automação', icon: Bot },
@@ -270,10 +340,10 @@ const navItems = [
 
 const statusClass = (status) => {
   const s = status.toLowerCase()
-  if (s.includes('recebido') || s.includes('aguardando') || s.includes('preparo')) return 'warning'
-  if (s.includes('separação') || s.includes('rota') || s.includes('carregando')) return 'info'
-  if (s.includes('entregue') || s.includes('emitida') || s.includes('ativo') || s.includes('vip') || s.includes('pronto')) return 'success'
-  if (s.includes('inativo') || s.includes('atenção') || s.includes('reativar') || s.includes('baixo') || s.includes('erro') || s.includes('rejeitad')) return 'danger'
+  if (s.includes('recebido') || s.includes('aguardando') || s.includes('preparo') || s.includes('pendente')) return 'warning'
+  if (s.includes('separação') || s.includes('rota') || s.includes('carregando') || s.includes('parcial')) return 'info'
+  if (s.includes('entregue') || s.includes('emitida') || s.includes('ativo') || s.includes('vip') || s.includes('pronto') || s.includes('pago')) return 'success'
+  if (s.includes('inativo') || s.includes('atenção') || s.includes('reativar') || s.includes('baixo') || s.includes('erro') || s.includes('rejeitad') || s.includes('atrasado') || s.includes('cancelado')) return 'danger'
   return 'neutral'
 }
 
@@ -346,6 +416,10 @@ function App() {
   const [selectedClient, setSelectedClient] = useState(null)
   const [editClient, setEditClient] = useState(null)
   const [removeConfirmClient, setRemoveConfirmClient] = useState(null)
+  const [paymentsState, setPaymentsState] = useState(initialPayments)
+  const [paymentsLoading, setPaymentsLoading] = useState(false)
+  const [selectedPayment, setSelectedPayment] = useState(null)
+  const [newPaymentOpen, setNewPaymentOpen] = useState(false)
   const [apiProductsState, setApiProductsState] = useState([])
 
   const fetchApiProducts = () => {
@@ -387,10 +461,20 @@ function App() {
       .finally(() => setClientsLoading(false))
   }
 
+  const fetchPayments = () => {
+    setPaymentsLoading(true)
+    fetch(`${API_URL}/api/payments`)
+      .then((r) => r.json())
+      .then((data) => { if (data.payments) setPaymentsState(data.payments) })
+      .catch(() => {})
+      .finally(() => setPaymentsLoading(false))
+  }
+
   useEffect(() => { fetchOrders() }, [])
   useEffect(() => { fetchDeliveries() }, [])
   useEffect(() => { fetchVehicles() }, [])
   useEffect(() => { fetchClients() }, [])
+  useEffect(() => { fetchPayments() }, [])
   useEffect(() => { fetchApiProducts() }, [stockRefreshKey])
   useEffect(() => { setTopbarSearch('') }, [active])
 
@@ -573,7 +657,7 @@ function App() {
             <span className="topKicker">Saborsan Distribuidora</span>
             <h1>{title}</h1>
           </div>
-          <div className="searchBox topbarSearch"><Search size={17} /><input placeholder={{ pedidos: 'Buscar pedidos, clientes...', estoque: 'Buscar produtos', notas: 'Buscar notas fiscais...', vendedores: 'Buscar vendedores...', fornecedores: 'Buscar fornecedores...', clientes: 'Buscar clientes...' }[active] || 'Buscar no painel...'} value={topbarSearch} onChange={(e) => setTopbarSearch(e.target.value)} /></div>
+          <div className="searchBox topbarSearch"><Search size={17} /><input placeholder={{ pedidos: 'Buscar pedidos, clientes...', estoque: 'Buscar produtos', notas: 'Buscar notas fiscais...', vendedores: 'Buscar vendedores...', fornecedores: 'Buscar fornecedores...', clientes: 'Buscar clientes...', pagamentos: 'Buscar pagamentos...' }[active] || 'Buscar no painel...'} value={topbarSearch} onChange={(e) => setTopbarSearch(e.target.value)} /></div>
           <div className="topActions">
             <button className="iconButton" onClick={() => setNotifOpen(!notifOpen)}><Bell size={19} /><span>4</span></button>
           </div>
@@ -594,12 +678,15 @@ function App() {
         {active === 'compras' && <Purchases notify={notify} />}
         {active === 'entregas' && <Deliveries deliveries={deliveriesState} onNewDelivery={() => setNewDeliveryOpen(true)} onSelect={(d) => { setSelectedDelivery(d); fetchDeliveries() }} onOpenVehicles={() => setVehiclesOpen(true)} />}
         {active === 'clientes' && <Clients clientsData={clientsState} clientsLoading={clientsLoading} onNewClient={() => setNewClientOpen(true)} onSelectClient={setSelectedClient} search={topbarSearch} />}
+        {active === 'pagamentos' && <Payments paymentsData={paymentsState} paymentsLoading={paymentsLoading} onSelectPayment={setSelectedPayment} onNewPayment={() => setNewPaymentOpen(true)} search={topbarSearch} />}
         {active === 'financeiro' && <Finance />}
         {active === 'relatorios' && <Reports />}
         {active === 'automacao' && <Automation aiEnabled={aiEnabled} setAiEnabled={setAiEnabled} notify={notify} />}
         {active === 'configuracoes' && <Settings notify={notify} />}
       </main>
 
+      {selectedPayment && <PaymentDetailModal payment={selectedPayment} onClose={() => setSelectedPayment(null)} />}
+      {newPaymentOpen && <NewPaymentModal onClose={() => setNewPaymentOpen(false)} onCreated={(p) => { setPaymentsState((prev) => [p, ...prev]); notify(`Pagamento ${p.id} registrado com sucesso!`) }} />}
       {selectedProduct && <ProductModal product={selectedProduct} onClose={() => setSelectedProduct(null)} onRemove={() => setRemoveConfirmProduct(selectedProduct)} onEdit={() => { setEditProduct(selectedProduct); setSelectedProduct(null) }} />}
       {supplierModal && <SupplierModal supplier={supplierModal} onClose={() => setSupplierModal(null)} notify={notify} />}
       {notaFiscalOrder && <NotaFiscalModal order={notaFiscalOrder} onClose={() => setNotaFiscalOrder(null)} updateOrderStatus={updateOrderStatus} notify={notify} />}
@@ -6198,6 +6285,291 @@ function SupplierTranscriptModal({ supplier, onClose }) {
               <Smartphone size={15} /> Ligar agora
             </a>
           </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function NewPaymentModal({ onClose, onCreated }) {
+  const [form, setForm] = useState({
+    clientName: '',
+    orderId: '',
+    sellerName: '',
+    paymentDate: new Date().toLocaleDateString('pt-BR'),
+    paymentMethod: '',
+    paymentValue: '',
+    totalPaid: '',
+    status: 'Pendente',
+  })
+  const [submitError, setSubmitError] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+
+  const set = (k, v) => setForm((f) => ({ ...f, [k]: v }))
+
+  const canSubmit =
+    form.clientName.trim() !== '' &&
+    form.sellerName.trim() !== '' &&
+    form.paymentMethod !== '' &&
+    form.paymentValue !== '' &&
+    !isNaN(parseFloat(form.paymentValue))
+
+  const submit = async (e) => {
+    e.preventDefault()
+    if (!canSubmit || submitting) return
+    setSubmitError('')
+    setSubmitting(true)
+    try {
+      const payload = {
+        clientName: form.clientName.trim(),
+        orderId: form.orderId.trim() || null,
+        sellerName: form.sellerName.trim(),
+        paymentDate: form.paymentDate.trim(),
+        paymentMethod: form.paymentMethod,
+        paymentValue: parseFloat(form.paymentValue),
+        totalPaid: parseFloat(form.totalPaid) || 0,
+        status: form.status,
+      }
+      const res = await fetch(`${API_URL}/api/payments`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Erro ao registrar pagamento')
+      onCreated(data.payment)
+      onClose()
+    } catch (err) {
+      setSubmitError(err.message || 'Erro ao salvar pagamento. Tente novamente.')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const sectionTitle = { gridColumn: '1 / -1', fontWeight: 600, fontSize: '.82rem', textTransform: 'uppercase', letterSpacing: '.06em', color: 'var(--muted)', marginTop: 8, marginBottom: 0 }
+
+  return (
+    <div className="modalBackdrop">
+      <div className="detailModal newProductModal">
+        <button className="closeBtn" onClick={onClose}><X /></button>
+        <div className="modalHeader">
+          <div>
+            <span>Pagamentos</span>
+            <h2>Novo pagamento</h2>
+            <p>Preencha os dados para registrar o pagamento no sistema</p>
+          </div>
+        </div>
+        <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden', minHeight: 0 }}>
+          <div className="newProductScrollArea">
+            <div className="newProductForm">
+
+              <p style={sectionTitle}>Vinculação</p>
+              <label className="full">Cliente *
+                <input placeholder="Ex: Padaria Bela Vista" value={form.clientName} onChange={(e) => set('clientName', e.target.value)} required />
+              </label>
+              <label>Vendedor *
+                <input placeholder="Ex: Carlos Oliveira" value={form.sellerName} onChange={(e) => set('sellerName', e.target.value)} required />
+              </label>
+              <label>Pedido vinculado
+                <input placeholder="Ex: PED-2049" value={form.orderId} onChange={(e) => set('orderId', e.target.value)} />
+              </label>
+
+              <p style={sectionTitle}>Dados do pagamento</p>
+              <label>Data do pagamento
+                <input placeholder="DD/MM/AAAA" value={form.paymentDate} onChange={(e) => set('paymentDate', e.target.value)} />
+              </label>
+              <label>Forma de pagamento *
+                <CustomSelect
+                  value={form.paymentMethod}
+                  onChange={(v) => set('paymentMethod', v)}
+                  placeholder="Selecione a forma..."
+                  options={[
+                    { value: 'PIX', label: 'PIX' },
+                    { value: 'Boleto', label: 'Boleto' },
+                    { value: 'Cartão de débito', label: 'Cartão de débito' },
+                    { value: 'Cartão de crédito', label: 'Cartão de crédito' },
+                    { value: 'Dinheiro', label: 'Dinheiro' },
+                  ]}
+                />
+              </label>
+              <label>Valor do pagamento (R$) *
+                <input type="number" min="0" step="0.01" placeholder="0,00" value={form.paymentValue} onChange={(e) => set('paymentValue', e.target.value)} required />
+              </label>
+              <label>Total pago (R$)
+                <input type="number" min="0" step="0.01" placeholder="0,00" value={form.totalPaid} onChange={(e) => set('totalPaid', e.target.value)} />
+              </label>
+
+              <p style={sectionTitle}>Status</p>
+              <label className="full">Status do pagamento *
+                <CustomSelect
+                  value={form.status}
+                  onChange={(v) => set('status', v)}
+                  options={[
+                    { value: 'Pago', label: 'Pago' },
+                    { value: 'Pendente', label: 'Pendente' },
+                    { value: 'Parcial', label: 'Parcial' },
+                    { value: 'Atrasado', label: 'Atrasado' },
+                  ]}
+                />
+              </label>
+
+            </div>
+            {submitError && <small className="errorText" style={{ marginTop: 12, display: 'block' }}>{submitError}</small>}
+          </div>
+          <div className="newProductFooter">
+            <button type="submit" className="btnPrimary" disabled={!canSubmit || submitting}>
+              <CheckCircle2 size={17} /> {submitting ? 'Registrando...' : 'Registrar pagamento'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
+function Payments({ paymentsData = [], paymentsLoading = false, onSelectPayment, onNewPayment, search = '' }) {
+  const [viewMode, setViewMode] = useState('grid')
+  const [viewMenuOpen, setViewMenuOpen] = useState(false)
+  const viewMenuRef = useRef(null)
+
+  const filtered = !search
+    ? paymentsData
+    : paymentsData.filter((p) =>
+        (p.clientName || '').toLowerCase().includes(search.toLowerCase()) ||
+        (p.sellerName || '').toLowerCase().includes(search.toLowerCase()) ||
+        (p.id || '').toLowerCase().includes(search.toLowerCase()) ||
+        (p.paymentMethod || '').toLowerCase().includes(search.toLowerCase())
+      )
+
+  useEffect(() => {
+    if (!viewMenuOpen) return
+    const handleClick = (e) => {
+      if (viewMenuRef.current && !viewMenuRef.current.contains(e.target)) setViewMenuOpen(false)
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [viewMenuOpen])
+
+  const viewOptions = [
+    { key: 'grid', icon: LayoutGrid, label: 'Cards' },
+    { key: 'list', icon: List, label: 'Lista' },
+  ]
+
+  return (
+    <section className="pageStack">
+      <div className="sectionHeader stockSectionHeader">
+        <div><p>Registro de pagamentos</p></div>
+        <div className="viewFilterWrap" ref={viewMenuRef}>
+          <button className="viewFilterBtn" onClick={() => setViewMenuOpen(!viewMenuOpen)}>
+            <LayoutGrid size={16} /> Visualização <ChevronDown size={14} style={{ transform: viewMenuOpen ? 'rotate(180deg)' : 'none', transition: 'transform .2s' }} />
+          </button>
+          {viewMenuOpen && (
+            <div className="viewFilterDropdown">
+              {viewOptions.map(({ key, icon: Icon, label }) => (
+                <button key={key} className={viewMode === key ? 'active' : ''} onClick={() => { setViewMode(key); setViewMenuOpen(false) }}>
+                  <Icon size={16} /> {label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+        <button className="btnSolid" onClick={onNewPayment}><Plus size={18} /> Novo pagamento</button>
+      </div>
+      {paymentsLoading && <p className="loadingText">Carregando pagamentos...</p>}
+      {!paymentsLoading && filtered.length === 0 && <p className="emptyText">Nenhum pagamento encontrado.</p>}
+      {viewMode === 'grid' ? (
+        <div className="clientGrid">
+          {filtered.map((payment) => (
+            <article className="clientCard" key={payment.id}>
+              <div className="avatar"><CreditCard size={22} /></div>
+              <div>
+                <h3>{payment.clientName}</h3>
+                <p>{payment.id} • {payment.orderId}</p>
+              </div>
+              <Status status={payment.status} />
+              <div className="clientStats">
+                <span>Vendedor <b>{payment.sellerName}</b></span>
+                <span>Data <b>{payment.paymentDate}</b></span>
+                <span>Forma <b>{payment.paymentMethod}</b></span>
+                <span>Valor <b>{money(payment.paymentValue)}</b></span>
+              </div>
+              <div className="orderActions">
+                <button onClick={() => onSelectPayment && onSelectPayment(payment)}>Ver detalhes</button>
+              </div>
+            </article>
+          ))}
+        </div>
+      ) : (
+        <div className="clientListView">
+          {filtered.map((payment) => (
+            <article className="clientListItem" key={payment.id}>
+              <div className="clientListAvatar"><CreditCard size={18} /></div>
+              <div className="clientListInfo">
+                <h3>{payment.clientName}</h3>
+                <p>{payment.sellerName} • {payment.paymentMethod}</p>
+              </div>
+              <div className="clientListMeta">
+                <span>Valor <b>{money(payment.paymentValue)}</b></span>
+              </div>
+              <Status status={payment.status} />
+              <div className="clientListActions">
+                <button onClick={() => onSelectPayment && onSelectPayment(payment)}>Ver detalhes</button>
+              </div>
+            </article>
+          ))}
+        </div>
+      )}
+    </section>
+  )
+}
+
+function PaymentDetailModal({ payment, onClose }) {
+  return (
+    <div className="modalBackdrop">
+      <div className="detailModal newOrderModal supplierDetailModal">
+        <button className="closeBtn" onClick={onClose}><X /></button>
+        <div className="modalHeader">
+          <div>
+            <span>Pagamento</span>
+            <h2>{payment.id}</h2>
+            <p>Detalhes do pagamento vinculado ao pedido {payment.orderId}</p>
+          </div>
+        </div>
+        <div className="newOrderScrollArea">
+          <h3>Cliente e vendedor</h3>
+          <div className="supplierDetailGrid">
+            <div className="supplierDetailItem"><span>Cliente</span><b>{payment.clientName}</b></div>
+            <div className="supplierDetailItem"><span>Vendedor</span><b>{payment.sellerName}</b></div>
+          </div>
+
+          <div className="supplierDetailDivider" />
+
+          <h3>Informações do pagamento</h3>
+          <div className="supplierDetailGrid">
+            <div className="supplierDetailItem">
+              <span>Data do pagamento</span>
+              <b>{payment.paymentDate}</b>
+            </div>
+            <div className="supplierDetailItem">
+              <span>Forma de pagamento</span>
+              <b>{payment.paymentMethod}</b>
+            </div>
+            <div className="supplierDetailItem">
+              <span>Valor do pagamento</span>
+              <b>{money(payment.paymentValue)}</b>
+            </div>
+            <div className="supplierDetailItem">
+              <span>Total pago</span>
+              <b>{money(payment.totalPaid)}</b>
+            </div>
+            <div className="supplierDetailItem">
+              <span>Status do pagamento</span>
+              <b><Status status={payment.status} /></b>
+            </div>
+          </div>
+        </div>
+        <div className="modalFooter">
+          <button className="nfBtnGhost" onClick={onClose}>Fechar</button>
         </div>
       </div>
     </div>
