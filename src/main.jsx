@@ -4641,6 +4641,14 @@ function Settings({ notify }) {
         estoqueWhatsappNumeros: [],
         compraDatas: [],
         iaFornecedorPrompt: 'Você é um assistente de compras da Saborsan Distribuidora. Ao contatar fornecedores, seja cordial, objetivo e profissional. Solicite cotações de preço, prazo de entrega e condições de pagamento. Priorize fornecedores com melhor custo-benefício e histórico de pontualidade. Confirme disponibilidade de estoque antes de fechar pedido.',
+        notifOrders: true,
+        notifSellers: true,
+        notifFiscalDocuments: true,
+        notifStock: true,
+        notifSuppliers: true,
+        notifPurchases: true,
+        notifDeliveries: true,
+        notifClients: true,
         ...saved,
       }
     } catch {
@@ -4682,6 +4690,14 @@ function Settings({ notify }) {
         estoqueWhatsappNumeros: [],
         compraDatas: [],
         iaFornecedorPrompt: 'Você é um assistente de compras da Saborsan Distribuidora. Ao contatar fornecedores, seja cordial, objetivo e profissional. Solicite cotações de preço, prazo de entrega e condições de pagamento. Priorize fornecedores com melhor custo-benefício e histórico de pontualidade. Confirme disponibilidade de estoque antes de fechar pedido.',
+        notifOrders: true,
+        notifSellers: true,
+        notifFiscalDocuments: true,
+        notifStock: true,
+        notifSuppliers: true,
+        notifPurchases: true,
+        notifDeliveries: true,
+        notifClients: true,
       }
     }
   })
@@ -4716,6 +4732,24 @@ function Settings({ notify }) {
           compraDatas:            data.purchaseSchedules || [],
           estoqueWhatsappNumeros: data.whatsappNumbers   || [],
           iaFornecedorPrompt:     data.iaPrompt          || '',
+        }));
+      })
+      .catch(() => {});
+
+    fetch(`${API_URL}/api/notification-settings`)
+      .then((r) => r.ok ? r.json() : null)
+      .then((data) => {
+        if (!data) return;
+        setForm((f) => ({
+          ...f,
+          notifOrders:          data.notifOrders          ?? f.notifOrders,
+          notifSellers:         data.notifSellers         ?? f.notifSellers,
+          notifFiscalDocuments: data.notifFiscalDocuments ?? f.notifFiscalDocuments,
+          notifStock:           data.notifStock           ?? f.notifStock,
+          notifSuppliers:       data.notifSuppliers       ?? f.notifSuppliers,
+          notifPurchases:       data.notifPurchases       ?? f.notifPurchases,
+          notifDeliveries:      data.notifDeliveries      ?? f.notifDeliveries,
+          notifClients:         data.notifClients         ?? f.notifClients,
         }));
       })
       .catch(() => {});
@@ -4768,7 +4802,7 @@ function Settings({ notify }) {
 
   const [activeSection, setActiveSection] = useState('empresa')
   const active = settingsSections.find((s) => s.id === activeSection)
-  const showSaveBtn = activeSection !== 'fiscal' && activeSection !== 'empresa'
+  const showSaveBtn = activeSection !== 'fiscal' && activeSection !== 'empresa' && activeSection !== 'notificacoes'
   const operacaoDirty = activeSection !== 'operacao' || snapOperacao(form) !== savedOperacaoSnap
 
   return (
@@ -4859,15 +4893,32 @@ function Settings({ notify }) {
               <div className="cardHeader"><div><p>Alertas</p><h3>Notificações</h3></div><Bell size={22} /></div>
               <div className="settingsToggles">
                 {[
-                  ['notifEmail', 'Notificações por e-mail'],
-                  ['notifApp', 'Notificações no painel'],
-                  ['notifEstoque', 'Alertas de estoque crítico'],
-                  ['notifEntregas', 'Atualizações de entregas'],
-                ].map(([key, label]) => (
+                  ['notifOrders',         'Notificações de pedidos',      'Alertas ao receber ou atualizar um novo pedido'],
+                  ['notifSellers',        'Notificações de vendedores',   'Alertas sobre atividades e ações dos vendedores'],
+                  ['notifFiscalDocuments','Notificações de notas',        'Alertas sobre emissão e status de notas fiscais'],
+                  ['notifStock',          'Notificações de estoque',      'Alertas quando produtos atingirem nível crítico de estoque'],
+                  ['notifSuppliers',      'Notificações de fornecedores', 'Alertas sobre atualizações e cadastros de fornecedores'],
+                  ['notifPurchases',      'Notificações de compras',      'Alertas sobre pedidos de compra e reposição de estoque'],
+                  ['notifDeliveries',     'Notificações de entregas',     'Alertas sobre saída, rota e conclusão de entregas'],
+                  ['notifClients',        'Notificações de clientes',     'Alertas sobre novos cadastros e atividades de clientes'],
+                ].map(([key, label, subtitle]) => (
                   <div className="settingsToggleRow" key={key}>
-                    <span>{label}</span>
+                    <div>
+                      <span>{label}</span>
+                      <small style={{display:'block', color:'var(--text-muted, #888)', fontSize:'12px', marginTop:'2px'}}>{subtitle}</small>
+                    </div>
                     <label className="switch">
-                      <input type="checkbox" checked={form[key]} onChange={() => set(key, !form[key])} />
+                      <input type="checkbox" checked={form[key]} onChange={async () => {
+                        const next = !form[key]
+                        set(key, next)
+                        try {
+                          await fetch(`${API_URL}/api/notification-settings`, {
+                            method: 'PATCH',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ [key.toLowerCase()]: next }),
+                          })
+                        } catch {}
+                      }} />
                       <span></span>
                     </label>
                   </div>
