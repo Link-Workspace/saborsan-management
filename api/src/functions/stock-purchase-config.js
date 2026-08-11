@@ -22,8 +22,10 @@ app.http('stock-purchase-config', {
         const result = await sql.query`
           SELECT TOP 1
             stockAlertPct, iaWhatsapp, iaPrompt,
-            purchaseSchedules, whatsappNumbers, updatedAt
-          FROM StockPurchaseConfig
+            purchaseSchedules, whatsappNumbers,
+            iaLigarModo, iaLigarDia, iaLigarHora,
+            updatedAt
+          FROM StockSupplierConfig
           ORDER BY id ASC
         `;
 
@@ -39,6 +41,9 @@ app.http('stock-purchase-config', {
             iaPrompt:          row.iaPrompt || '',
             purchaseSchedules: row.purchaseSchedules ? JSON.parse(row.purchaseSchedules) : [],
             whatsappNumbers:   row.whatsappNumbers   ? JSON.parse(row.whatsappNumbers)   : [],
+            iaLigarModo:       row.iaLigarModo || 'ia',
+            iaLigarDia:        row.iaLigarDia  || 'segunda',
+            iaLigarHora:       row.iaLigarHora || '09:00',
             updatedAt:         row.updatedAt,
           },
         };
@@ -52,32 +57,41 @@ app.http('stock-purchase-config', {
           iaPrompt,
           purchaseSchedules,
           whatsappNumbers,
+          iaLigarModo,
+          iaLigarDia,
+          iaLigarHora,
         } = body;
 
         const schedJson = JSON.stringify(Array.isArray(purchaseSchedules) ? purchaseSchedules : []);
         const numsJson  = JSON.stringify(Array.isArray(whatsappNumbers)   ? whatsappNumbers   : []);
 
         const exists = await sql.query`
-          SELECT TOP 1 id FROM StockPurchaseConfig ORDER BY id ASC
+          SELECT TOP 1 id FROM StockSupplierConfig ORDER BY id ASC
         `;
 
         if (exists.recordset.length === 0) {
           await sql.query`
-            INSERT INTO StockPurchaseConfig
-              (stockAlertPct, iaWhatsapp, iaPrompt, purchaseSchedules, whatsappNumbers, updatedAt)
+            INSERT INTO StockSupplierConfig
+              (stockAlertPct, iaWhatsapp, iaPrompt, purchaseSchedules, whatsappNumbers,
+               iaLigarModo, iaLigarDia, iaLigarHora, updatedAt)
             VALUES
               (${stockAlertPct}, ${iaWhatsapp ? 1 : 0}, ${iaPrompt},
-               ${schedJson}, ${numsJson}, GETUTCDATE())
+               ${schedJson}, ${numsJson},
+               ${iaLigarModo || 'ia'}, ${iaLigarDia || 'segunda'}, ${iaLigarHora || '09:00'},
+               GETUTCDATE())
           `;
         } else {
           const id = exists.recordset[0].id;
           await sql.query`
-            UPDATE StockPurchaseConfig SET
+            UPDATE StockSupplierConfig SET
               stockAlertPct     = ${stockAlertPct},
               iaWhatsapp        = ${iaWhatsapp ? 1 : 0},
               iaPrompt          = ${iaPrompt},
               purchaseSchedules = ${schedJson},
               whatsappNumbers   = ${numsJson},
+              iaLigarModo       = ${iaLigarModo || 'ia'},
+              iaLigarDia        = ${iaLigarDia  || 'segunda'},
+              iaLigarHora       = ${iaLigarHora || '09:00'},
               updatedAt         = GETUTCDATE()
             WHERE id = ${id}
           `;
@@ -96,12 +110,15 @@ app.http('stock-purchase-config', {
           iaPrompt:          (v) => ({ type: sql.NVarChar(sql.MAX),  val: String(v) }),
           purchaseSchedules: (v) => ({ type: sql.NVarChar(sql.MAX),  val: JSON.stringify(Array.isArray(v) ? v : []) }),
           whatsappNumbers:   (v) => ({ type: sql.NVarChar(sql.MAX),  val: JSON.stringify(Array.isArray(v) ? v : []) }),
+          iaLigarModo:       (v) => ({ type: sql.NVarChar(20),       val: String(v) }),
+          iaLigarDia:        (v) => ({ type: sql.NVarChar(20),       val: String(v) }),
+          iaLigarHora:       (v) => ({ type: sql.NVarChar(10),       val: String(v) }),
         };
 
         const entries = Object.entries(body).filter(([k]) => fieldMap[k]);
         if (entries.length === 0) return { jsonBody: { ok: true } };
 
-        const exists = await sql.query`SELECT TOP 1 id FROM StockPurchaseConfig ORDER BY id ASC`;
+        const exists = await sql.query`SELECT TOP 1 id FROM StockSupplierConfig ORDER BY id ASC`;
         if (exists.recordset.length === 0) return { status: 404, jsonBody: { error: 'No config found' } };
 
         const req = new sql.Request();
@@ -113,7 +130,7 @@ app.http('stock-purchase-config', {
           return `${col} = @${col}`;
         });
 
-        await req.query(`UPDATE StockPurchaseConfig SET ${setParts.join(', ')}, updatedAt = GETUTCDATE() WHERE id = @id`);
+        await req.query(`UPDATE StockSupplierConfig SET ${setParts.join(', ')}, updatedAt = GETUTCDATE() WHERE id = @id`);
 
         return { jsonBody: { ok: true } };
       }

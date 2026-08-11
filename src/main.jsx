@@ -4762,18 +4762,17 @@ function Settings({ notify }) {
     compraDatas:            f.compraDatas            || [],
     estoqueWhatsappNumeros: f.estoqueWhatsappNumeros || [],
     iaFornecedorPrompt:     f.iaFornecedorPrompt,
+    iaLigarModo:            f.iaLigarModo            || 'ia',
+    iaLigarDia:             f.iaLigarDia             || 'segunda',
+    iaLigarHora:            f.iaLigarHora            || '09:00',
   })
   const [savedOperacaoSnap, setSavedOperacaoSnap] = useState(() => snapOperacao(form))
 
   const snapRelatorios = (f) => JSON.stringify({
-    relatorioEmail:      f.relatorioEmail      || '',
-    relatorioFreq:       f.relatorioFreq       || 'desativado',
-    relatorioDia:        f.relatorioDia        || '1',
-    relatorioHora:       f.relatorioHora       || '08:00',
-    relatorioVendas:     !!f.relatorioVendas,
-    relatorioEstoque:    !!f.relatorioEstoque,
-    relatorioFinanceiro: !!f.relatorioFinanceiro,
-    relatorioEntregas:   !!f.relatorioEntregas,
+    relatorioEmail: f.relatorioEmail || '',
+    relatorioFreq:  f.relatorioFreq  || 'desativado',
+    relatorioDia:   f.relatorioDia   || '1',
+    relatorioHora:  f.relatorioHora  || '08:00',
   })
   const [savedRelatoriosSnap, setSavedRelatoriosSnap] = useState(() => snapRelatorios(form))
 
@@ -4789,6 +4788,9 @@ function Settings({ notify }) {
           iaFornecedorPrompt:     data.iaPrompt || f.iaFornecedorPrompt,
           compraDatas:            data.purchaseSchedules ?? f.compraDatas,
           estoqueWhatsappNumeros: data.whatsappNumbers   ?? f.estoqueWhatsappNumeros,
+          iaLigarModo:            data.iaLigarModo       ?? f.iaLigarModo,
+          iaLigarDia:             data.iaLigarDia        ?? f.iaLigarDia,
+          iaLigarHora:            data.iaLigarHora       ?? f.iaLigarHora,
         }));
         setSavedOperacaoSnap(JSON.stringify({
           estoqueAlerta:          String(data.stockAlertPct),
@@ -4796,6 +4798,9 @@ function Settings({ notify }) {
           compraDatas:            data.purchaseSchedules || [],
           estoqueWhatsappNumeros: data.whatsappNumbers   || [],
           iaFornecedorPrompt:     data.iaPrompt          || '',
+          iaLigarModo:            data.iaLigarModo       || 'ia',
+          iaLigarDia:             data.iaLigarDia        || 'segunda',
+          iaLigarHora:            data.iaLigarHora       || '09:00',
         }));
       })
       .catch(() => {});
@@ -4834,14 +4839,10 @@ function Settings({ notify }) {
           relatorioEntregas:   data.relatorioEntregas   ?? f.relatorioEntregas,
         }));
         setSavedRelatoriosSnap(JSON.stringify({
-          relatorioEmail:      data.relatorioEmail      || '',
-          relatorioFreq:       data.relatorioFreq       || 'desativado',
-          relatorioDia:        data.relatorioDia        || '1',
-          relatorioHora:       data.relatorioHora       || '08:00',
-          relatorioVendas:     !!data.relatorioVendas,
-          relatorioEstoque:    !!data.relatorioEstoque,
-          relatorioFinanceiro: !!data.relatorioFinanceiro,
-          relatorioEntregas:   !!data.relatorioEntregas,
+          relatorioEmail: data.relatorioEmail || '',
+          relatorioFreq:  data.relatorioFreq  || 'desativado',
+          relatorioDia:   data.relatorioDia   || '1',
+          relatorioHora:  data.relatorioHora  || '08:00',
         }));
       })
       .catch(() => {});
@@ -4867,6 +4868,12 @@ function Settings({ notify }) {
           patch.purchaseSchedules = form.compraDatas || []
         if (JSON.stringify(form.estoqueWhatsappNumeros || []) !== JSON.stringify(saved.estoqueWhatsappNumeros || []))
           patch.whatsappNumbers = form.estoqueWhatsappNumeros || []
+        if ((form.iaLigarModo || 'ia') !== (saved.iaLigarModo || 'ia'))
+          patch.iaLigarModo = form.iaLigarModo || 'ia'
+        if ((form.iaLigarDia || 'segunda') !== (saved.iaLigarDia || 'segunda'))
+          patch.iaLigarDia = form.iaLigarDia || 'segunda'
+        if ((form.iaLigarHora || '09:00') !== (saved.iaLigarHora || '09:00'))
+          patch.iaLigarHora = form.iaLigarHora || '09:00'
         if (Object.keys(patch).length > 0) {
           await fetch(`${API_URL}/api/stock-purchase-config`, {
             method: 'PATCH',
@@ -4882,14 +4889,10 @@ function Settings({ notify }) {
       try {
         const saved = JSON.parse(savedRelatoriosSnap)
         const patch = {}
-        if (form.relatorioEmail      !== saved.relatorioEmail)      patch.relatorioEmail      = form.relatorioEmail
-        if (form.relatorioFreq       !== saved.relatorioFreq)       patch.relatorioFreq       = form.relatorioFreq
-        if (form.relatorioDia        !== saved.relatorioDia)        patch.relatorioDia        = form.relatorioDia
-        if (form.relatorioHora       !== saved.relatorioHora)       patch.relatorioHora       = form.relatorioHora
-        if (!!form.relatorioVendas     !== !!saved.relatorioVendas)     patch.relatorioVendas     = !!form.relatorioVendas
-        if (!!form.relatorioEstoque    !== !!saved.relatorioEstoque)    patch.relatorioEstoque    = !!form.relatorioEstoque
-        if (!!form.relatorioFinanceiro !== !!saved.relatorioFinanceiro) patch.relatorioFinanceiro = !!form.relatorioFinanceiro
-        if (!!form.relatorioEntregas   !== !!saved.relatorioEntregas)   patch.relatorioEntregas   = !!form.relatorioEntregas
+        if (form.relatorioEmail !== saved.relatorioEmail) patch.relatorioEmail = form.relatorioEmail
+        if (form.relatorioFreq  !== saved.relatorioFreq)  patch.relatorioFreq  = form.relatorioFreq
+        if (form.relatorioDia   !== saved.relatorioDia)   patch.relatorioDia   = form.relatorioDia
+        if (form.relatorioHora  !== saved.relatorioHora)  patch.relatorioHora  = form.relatorioHora
         if (Object.keys(patch).length > 0) {
           await fetch(`${API_URL}/api/report-settings`, {
             method: 'PATCH',
@@ -4906,12 +4909,9 @@ function Settings({ notify }) {
 
   const settingsSections = [
     { id: 'empresa',       label: 'Dados da empresa',      icon: Building2  },
-    { id: 'operacao',      label: 'Estoque e compras',     icon: Boxes      },
+    { id: 'operacao',      label: 'Estoque e fornecedores', icon: Boxes      },
     { id: 'notificacoes',  label: 'Notificações',          icon: Bell       },
-    { id: 'aparencia',     label: 'Aparência',             icon: Settings2  },
-    { id: 'entregador',    label: 'Entregador',            icon: Truck      },
     { id: 'relatorios',    label: 'Relatórios',            icon: BarChart3  },
-    { id: 'ia',            label: 'IA — Ligações',         icon: Bot        },
     { id: 'fiscal',        label: 'Fiscal e NCM',          icon: ReceiptText },
   ]
 
@@ -4919,6 +4919,7 @@ function Settings({ notify }) {
   const active = settingsSections.find((s) => s.id === activeSection)
   const showSaveBtn = activeSection !== 'fiscal' && activeSection !== 'empresa' && activeSection !== 'notificacoes'
   const operacaoDirty = activeSection !== 'operacao' || snapOperacao(form) !== savedOperacaoSnap
+  const relatoriosDirty = activeSection !== 'relatorios' || snapRelatorios(form) !== savedRelatoriosSnap
 
   return (
     <>
@@ -4957,7 +4958,7 @@ function Settings({ notify }) {
 
           {activeSection === 'operacao' && (
             <div className="card settingsCard">
-              <div className="cardHeader"><div><p>Operação</p><h3>Estoque e compras</h3></div><Boxes size={22} /></div>
+              <div className="cardHeader"><div><p>Operação</p><h3>Estoque e fornecedores</h3></div><Boxes size={22} /></div>
               <div className="settingsForm">
                 <label>Alertar estoque quando abaixo de (%)<input type="number" value={form.estoqueAlerta} onChange={(e) => set('estoqueAlerta', e.target.value)} /></label>
                 <div className="settingsToggleRow" style={{ borderBottom: form.estoqueIaWhatsapp ? 'none' : undefined }}>
@@ -5000,6 +5001,42 @@ function Settings({ notify }) {
                   <textarea rows={6} value={form.iaFornecedorPrompt} onChange={(e) => set('iaFornecedorPrompt', e.target.value)} onFocus={(e) => { e.target.style.borderColor = 'var(--orange)'; e.target.style.background = '#fff' }} onBlur={(e) => { e.target.style.borderColor = 'var(--line)'; e.target.style.background = '#f9fbff' }} style={{ resize: 'vertical', width: '100%', padding: '11px 14px', borderRadius: 14, border: '1.5px solid var(--line)', font: 'inherit', color: 'var(--text)', fontWeight: 700, outline: 0, background: '#f9fbff', boxSizing: 'border-box' }} />
                 </label>
               </div>
+              <div className="iaModeSelector">
+                <button className={`iaModeBtn${form.iaLigarModo === 'ia' ? ' active' : ''}`} onClick={() => set('iaLigarModo', 'ia')}>
+                  <Sparkles size={18} />
+                  <div><b>Modo inteligente</b><small>A IA liga assim que detectar que o estoque está chegando ao limite crítico, sem horário fixo.</small></div>
+                </button>
+                <button className={`iaModeBtn${form.iaLigarModo === 'agendado' ? ' active' : ''}`} onClick={() => set('iaLigarModo', 'agendado')}>
+                  <CalendarDays size={18} />
+                  <div><b>Horário fixo</b><small>A IA liga em um dia e horário específico para verificar o estoque e alertar se necessário.</small></div>
+                </button>
+              </div>
+              {form.iaLigarModo === 'agendado' && (
+                <div className="settingsForm settingsTwoCols" style={{marginTop:'14px'}}>
+                  <label>Dia da semana
+                    <CustomSelect
+                      value={form.iaLigarDia}
+                      onChange={(v) => set('iaLigarDia', v)}
+                      options={[
+                        { value: 'segunda', label: 'Segunda-feira' },
+                        { value: 'terça',   label: 'Terça-feira'   },
+                        { value: 'quarta',  label: 'Quarta-feira'  },
+                        { value: 'quinta',  label: 'Quinta-feira'  },
+                        { value: 'sexta',   label: 'Sexta-feira'   },
+                        { value: 'sábado',  label: 'Sábado'        },
+                      ]}
+                    />
+                  </label>
+                  <label>Horário<TimePickerInput value={form.iaLigarHora} onChange={(v) => set('iaLigarHora', v)} /></label>
+                </div>
+              )}
+              <div className="settingsInfo" style={{marginTop:'14px'}}>
+                <Bot size={14} />
+                <span>{form.iaLigarModo === 'ia'
+                  ? 'A IA monitora o estoque em tempo real e aciona o contato assim que identificar risco de falta de produto.'
+                  : `A IA ligará toda ${form.iaLigarDia}-feira às ${form.iaLigarHora} para verificar o estoque e alertar o contato configurado.`}
+                </span>
+              </div>
             </div>
           )}
 
@@ -5039,48 +5076,6 @@ function Settings({ notify }) {
                   </div>
                 ))}
               </div>
-            </div>
-          )}
-
-          {activeSection === 'aparencia' && (
-            <div className="card settingsCard">
-              <div className="cardHeader"><div><p>Interface</p><h3>Aparência e sistema</h3></div><Settings2 size={22} /></div>
-              <div className="settingsForm">
-                <label>Tema
-                  <select value={form.tema} onChange={(e) => set('tema', e.target.value)}>
-                    <option value="claro">Claro</option>
-                    <option value="escuro">Escuro (em breve)</option>
-                  </select>
-                </label>
-                <label>Idioma
-                  <select value={form.idioma} onChange={(e) => set('idioma', e.target.value)}>
-                    <option value="pt-BR">Português (Brasil)</option>
-                    <option value="en">English (em breve)</option>
-                  </select>
-                </label>
-              </div>
-              <div className="settingsVersion"><ShieldCheck size={15} /><span>Versão {form.versao} • Sistema estável</span></div>
-            </div>
-          )}
-
-          {activeSection === 'entregador' && (
-            <div className="card settingsCard">
-              <div className="cardHeader"><div><p>Logística</p><h3>Contato do entregador</h3></div><Truck size={22} /></div>
-              <div className="settingsForm">
-                <label>Nome do entregador<input value={form.entregadorNome} onChange={(e) => set('entregadorNome', e.target.value)} /></label>
-                <label>WhatsApp / Telefone<input value={form.entregadorTelefone} onChange={(e) => set('entregadorTelefone', e.target.value)} /></label>
-              </div>
-              <div className="settingsToggles" style={{marginTop:'12px'}}>
-                <div className="settingsToggleRow">
-                  <span>Notificar ao receber pedido</span>
-                  <label className="switch"><input type="checkbox" checked={form.entregadorNotifPedido} onChange={() => set('entregadorNotifPedido', !form.entregadorNotifPedido)} /><span></span></label>
-                </div>
-                <div className="settingsToggleRow">
-                  <span>Notificar ao entrar em rota</span>
-                  <label className="switch"><input type="checkbox" checked={form.entregadorNotifRota} onChange={() => set('entregadorNotifRota', !form.entregadorNotifRota)} /><span></span></label>
-                </div>
-              </div>
-              <div className="settingsInfo"><Smartphone size={14} /><span>As notificações são enviadas via WhatsApp com os dados do pedido automaticamente.</span></div>
             </div>
           )}
 
@@ -5128,61 +5123,27 @@ function Settings({ notify }) {
                 {[['relatorioVendas','Resumo de vendas'],['relatorioEstoque','Movimentação de estoque'],['relatorioFinanceiro','Visão financeira'],['relatorioEntregas','Desempenho de entregas']].map(([key, label]) => (
                   <div className="settingsToggleRow" key={key}>
                     <span>{label}</span>
-                    <label className="switch"><input type="checkbox" checked={form[key]} onChange={() => set(key, !form[key])} /><span></span></label>
+                    <label className="switch"><input type="checkbox" checked={form[key]} onChange={async () => {
+                      const next = !form[key]
+                      set(key, next)
+                      try {
+                        await fetch(`${API_URL}/api/report-settings`, {
+                          method: 'PATCH',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ [key]: next }),
+                        })
+                      } catch {}
+                    }} /><span></span></label>
                   </div>
                 ))}
               </div>
             </div>
           )}
 
-          {activeSection === 'ia' && (
-            <div className="card settingsCard">
-              <div className="cardHeader"><div><p>Inteligência artificial</p><h3>Ligação automática de alerta de estoque</h3></div><Bot size={22} /></div>
-              <div className="settingsToggleRow" style={{marginBottom:'16px'}}>
-                <span>Ativar ligação automática da IA</span>
-                <label className="switch"><input type="checkbox" checked={form.iaLigarAtivo} onChange={() => set('iaLigarAtivo', !form.iaLigarAtivo)} /><span></span></label>
-              </div>
-              {form.iaLigarAtivo && (
-                <>
-                  <div className="settingsForm">
-                    <label>Número a ser contatado (WhatsApp / telefone)<input value={form.iaLigarContato} onChange={(e) => set('iaLigarContato', e.target.value)} /></label>
-                  </div>
-                  <div className="iaModeSelector">
-                    <button className={`iaModeBtn${form.iaLigarModo === 'ia' ? ' active' : ''}`} onClick={() => set('iaLigarModo', 'ia')}>
-                      <Sparkles size={18} />
-                      <div><b>Modo inteligente</b><small>A IA liga assim que detectar que o estoque está chegando ao limite crítico, sem horário fixo.</small></div>
-                    </button>
-                    <button className={`iaModeBtn${form.iaLigarModo === 'agendado' ? ' active' : ''}`} onClick={() => set('iaLigarModo', 'agendado')}>
-                      <CalendarDays size={18} />
-                      <div><b>Horário fixo</b><small>A IA liga em um dia e horário específico para verificar o estoque e alertar se necessário.</small></div>
-                    </button>
-                  </div>
-                  {form.iaLigarModo === 'agendado' && (
-                    <div className="settingsForm settingsTwoCols" style={{marginTop:'14px'}}>
-                      <label>Dia da semana
-                        <select value={form.iaLigarDia} onChange={(e) => set('iaLigarDia', e.target.value)}>
-                          {['segunda','terça','quarta','quinta','sexta','sábado'].map(d => <option key={d} value={d}>{d.charAt(0).toUpperCase()+d.slice(1)}-feira</option>)}
-                        </select>
-                      </label>
-                      <label>Horário<input type="time" value={form.iaLigarHora} onChange={(e) => set('iaLigarHora', e.target.value)} /></label>
-                    </div>
-                  )}
-                  <div className="settingsInfo" style={{marginTop:'14px'}}>
-                    <Bot size={14} />
-                    <span>{form.iaLigarModo === 'ia'
-                      ? 'A IA monitora o estoque em tempo real e aciona o contato assim que identificar risco de falta de produto.'
-                      : `A IA ligará toda ${form.iaLigarDia}-feira às ${form.iaLigarHora} para verificar o estoque e alertar o contato configurado.`}
-                    </span>
-                  </div>
-                </>
-              )}
-            </div>
-          )}
-
           {activeSection === 'fiscal' && <FiscalConfigSection notify={notify} />}
           {showSaveBtn && (
             <div style={{display:'flex', justifyContent:'flex-end', marginTop:'16px'}}>
-              <button className="btnSolid" onClick={saveSettings} disabled={!operacaoDirty} style={{ opacity: !operacaoDirty ? 0.45 : 1, cursor: !operacaoDirty ? 'not-allowed' : 'pointer' }}><CheckCircle2 size={18} /> Salvar alterações</button>
+              <button className="btnSolid" onClick={saveSettings} disabled={!operacaoDirty || !relatoriosDirty} style={{ opacity: (!operacaoDirty || !relatoriosDirty) ? 0.45 : 1, cursor: (!operacaoDirty || !relatoriosDirty) ? 'not-allowed' : 'pointer' }}><CheckCircle2 size={18} /> Salvar alterações</button>
             </div>
           )}
         </div>
