@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import {
   LayoutDashboard,
@@ -347,24 +347,20 @@ const statusClass = (status) => {
   return 'neutral'
 }
 
-const notifications = [
-  { id: 1, type: 'warning', icon: AlertTriangle, title: 'Estoque crítico', text: 'Açaí Premium Balde abaixo do mínimo. Apenas 31 unidades restantes.', time: 'Agora' },
-  { id: 2, icon: ShoppingCart, title: 'Novo pedido recebido', text: 'PED-2049 de Padaria Bela Vista no valor de R$ 1.984,60 aguarda separação.', time: '8min' },
-  { id: 3, icon: Truck, title: 'Entrega em rota', text: 'ENT-041 • Lages Centro está 72% concluída. Temperatura monitorada.', time: '22min' },
-  { id: 4, icon: ReceiptText, title: 'Nota fiscal pendente', text: 'NF-000915 de Padaria Serrana aguarda envio ao cliente.', time: '1h' },
-]
-
-function NotifPanel({ onClose }) {
+function NotifPanel({ notifications, onDismiss, onClearAll, onClose }) {
   return (
     <>
       <div className="notifOverlay" onClick={onClose} />
       <aside className="notifPanel">
         <div className="notifHeader">
           <h3>Notificações</h3>
-          <span className="badge navy">4 novas</span>
+          {notifications.length > 0 && <span className="badge navy">{notifications.length} nova{notifications.length !== 1 ? 's' : ''}</span>}
           <button className="notifClose" onClick={onClose}><X size={18} /></button>
         </div>
         <div className="notifList">
+          {notifications.length === 0 && (
+            <p style={{ textAlign: 'center', padding: '32px 16px', color: 'var(--muted)', fontWeight: 700 }}>Nenhuma notificação no momento.</p>
+          )}
           {notifications.map(({ id, icon: Icon, title, text, time, type }) => (
             <div className={`notifItem${type === 'warning' ? ' notifWarning' : ''}`} key={id}>
               <div className="notifIcon"><Icon size={18} /></div>
@@ -372,11 +368,16 @@ function NotifPanel({ onClose }) {
                 <b>{title}</b>
                 <p>{text}</p>
               </div>
-              <small>{time}</small>
+              <div className="notifItemRight">
+                <button className="notifDismiss" onClick={() => onDismiss(id)} aria-label="Remover notificação"><X size={13} /></button>
+                <small>{time}</small>
+              </div>
             </div>
           ))}
         </div>
-        <button className="notifFooter" onClick={onClose}>Marcar todas como lidas</button>
+        {notifications.length > 0 && (
+          <button className="notifFooter" onClick={onClearAll}>Limpar todas</button>
+        )}
       </aside>
     </>
   )
@@ -422,6 +423,36 @@ function App() {
   const [newPaymentOpen, setNewPaymentOpen] = useState(false)
   const [apiProductsState, setApiProductsState] = useState([])
 
+  const [systemNotifications, setSystemNotifications] = useState([])
+  const [notifSettings, setNotifSettings] = useState(() => {
+    try {
+      const s = JSON.parse(localStorage.getItem('saborsan_settings') || '{}')
+      return {
+        notifOrders:          s.notifOrders          !== undefined ? s.notifOrders          : true,
+        notifSellers:         s.notifSellers         !== undefined ? s.notifSellers         : true,
+        notifFiscalDocuments: s.notifFiscalDocuments !== undefined ? s.notifFiscalDocuments : true,
+        notifStock:           s.notifStock           !== undefined ? s.notifStock           : true,
+        notifSuppliers:       s.notifSuppliers       !== undefined ? s.notifSuppliers       : true,
+        notifPurchases:       s.notifPurchases       !== undefined ? s.notifPurchases       : true,
+        notifDeliveries:      s.notifDeliveries      !== undefined ? s.notifDeliveries      : true,
+        notifClients:         s.notifClients         !== undefined ? s.notifClients         : true,
+        notifPayments:        s.notifPayments        !== undefined ? s.notifPayments        : true,
+      }
+    } catch {
+      return { notifOrders: true, notifSellers: true, notifFiscalDocuments: true, notifStock: true, notifSuppliers: true, notifPurchases: true, notifDeliveries: true, notifClients: true, notifPayments: true }
+    }
+  })
+  const notifSettingsRef = useRef(notifSettings)
+  useEffect(() => { notifSettingsRef.current = notifSettings }, [notifSettings])
+  const addNotif = useCallback((category, { type = 'default', icon, title, text }) => {
+    if (!notifSettingsRef.current[category]) return
+    setSystemNotifications((prev) => [{
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      category, type, icon, title, text,
+      time: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
+    }, ...prev])
+  }, [])
+
   const fetchApiProducts = () => {
     fetch(`${API_URL}/api/products`)
       .then((r) => r.json())
@@ -465,7 +496,18 @@ function App() {
     setPaymentsLoading(true)
     fetch(`${API_URL}/api/payments`)
       .then((r) => r.json())
-      .then((data) => { if (data.payments) setPaymentsState(data.payments) })
+      .then((data) => {
+        if (data.payments) {
+          setPaymentsState(data.payments)
+          data.payments.filter((p) => p.status === 'Pendente' || p.status === 'Atrasado').forEach((p) => {
+            const sessionKey = `notif_pay_pending_${p.id}`
+            if (!sessionStorage.getItem(sessionKey)) {
+              addNotif('notifPayments', { icon: Clock3, type: 'warning', title: `Pagamento ${p.status.toLowerCase()}`, text: `Pagamento de ${p.clientName} no valor de ${money(p.paymentValue || 0)} está ${p.status.toLowerCase()}.` })
+              sessionStorage.setItem(sessionKey, '1')
+            }
+          })
+        }
+      })
       .catch(() => {})
       .finally(() => setPaymentsLoading(false))
   }
@@ -477,6 +519,25 @@ function App() {
   useEffect(() => { fetchPayments() }, [])
   useEffect(() => { fetchApiProducts() }, [stockRefreshKey])
   useEffect(() => { setTopbarSearch('') }, [active])
+  useEffect(() => {
+    fetch(`${API_URL}/api/notification-settings`)
+      .then((r) => r.ok ? r.json() : null)
+      .then((data) => {
+        if (!data) return
+        setNotifSettings((prev) => ({
+          ...prev,
+          notifOrders:          data.notifOrders          ?? prev.notifOrders,
+          notifSellers:         data.notifSellers         ?? prev.notifSellers,
+          notifFiscalDocuments: data.notifFiscalDocuments ?? prev.notifFiscalDocuments,
+          notifStock:           data.notifStock           ?? prev.notifStock,
+          notifSuppliers:       data.notifSuppliers       ?? prev.notifSuppliers,
+          notifPurchases:       data.notifPurchases       ?? prev.notifPurchases,
+          notifDeliveries:      data.notifDeliveries      ?? prev.notifDeliveries,
+          notifClients:         data.notifClients         ?? prev.notifClients,
+        }))
+      })
+      .catch(() => {})
+  }, [])
 
   const totals = useMemo(() => {
     const activeOrders = orders.filter((o) => !o.isDeleted)
@@ -501,10 +562,23 @@ function App() {
     if (verNotaOrder?.id === id) setVerNotaOrder((old) => ({ ...old, status, ...extra }))
 
     if (status === 'Rota') {
+      const linkedDelivery = deliveriesState.find((d) => d.orderIds?.includes(id))
       setDeliveriesState((prev) => prev.map((d) =>
         d.orderIds?.includes(id) ? { ...d, status: 'Em rota', progress: 60 } : d
       ))
       setSelectedDelivery((d) => d?.orderIds?.includes(id) ? { ...d, status: 'Em rota', progress: 60 } : d)
+      addNotif('notifOrders', { icon: Route, title: 'Pedido entrou em rota', text: `Pedido ${id} está em rota de entrega.` })
+      if (linkedDelivery) {
+        addNotif('notifDeliveries', { icon: Truck, title: 'Entrega em rota', text: `Entrega ${linkedDelivery.id} com ${linkedDelivery.driver} está em rota.` })
+      }
+    }
+
+    if (status === 'Entregue') {
+      addNotif('notifOrders', { icon: PackageCheck, title: 'Pedido entregue', text: `Pedido ${id} foi entregue com sucesso.` })
+    }
+
+    if (status === 'Pronto') {
+      addNotif('notifDeliveries', { icon: CheckCircle2, title: 'Pedidos prontos para rota', text: `Os pedidos foram confirmados como prontos. Nota fiscal gerada com sucesso.` })
     }
 
     notify(`Pedido ${id} atualizado para ${status}.`)
@@ -557,6 +631,7 @@ function App() {
     setOrders((prev) => [order, ...prev])
     setStockRefreshKey((k) => k + 1)
     notify(`Pedido ${order.id} criado com sucesso!`)
+    addNotif('notifOrders', { icon: ShoppingCart, title: 'Novo pedido recebido', text: `Pedido ${order.id} de ${order.customer} no valor de ${money(order.value)} aguarda separação.` })
   }
 
   const openGerarNota = (order) => {
@@ -659,7 +734,7 @@ function App() {
           </div>
           <div className="searchBox topbarSearch"><Search size={17} /><input placeholder={{ pedidos: 'Buscar pedidos, clientes...', estoque: 'Buscar produtos', notas: 'Buscar notas fiscais...', vendedores: 'Buscar vendedores...', fornecedores: 'Buscar fornecedores...', clientes: 'Buscar clientes...', pagamentos: 'Buscar pagamentos...' }[active] || 'Buscar no painel...'} value={topbarSearch} onChange={(e) => setTopbarSearch(e.target.value)} /></div>
           <div className="topActions">
-            <button className="iconButton" onClick={() => setNotifOpen(!notifOpen)}><Bell size={19} /><span>4</span></button>
+            <button className="iconButton" onClick={() => setNotifOpen(!notifOpen)}><Bell size={19} />{systemNotifications.length > 0 && <span>{systemNotifications.length}</span>}</button>
           </div>
         </header>
 
@@ -671,29 +746,36 @@ function App() {
 
         {active === 'dashboard' && <Dashboard totals={totals} orders={orders} aiEnabled={aiEnabled} setActive={setActive} />}
         {active === 'pedidos' && <Orders orders={orders} ordersLoading={ordersLoading} onSelect={setSelectedOrder} updateOrderStatus={updateOrderStatus} createInvoice={createInvoice} onGerarNota={openGerarNota} onNewOrder={() => setNewOrderOpen(true)} onVerNota={setVerNotaOrder} search={topbarSearch} />}
-        {active === 'vendedores' && <Sellers search={topbarSearch} />}
+        {active === 'vendedores' && <Sellers search={topbarSearch} addNotif={addNotif} />}
         {active === 'notas' && <Invoices orders={orders} onGerarNota={openGerarNota} onVerNota={setVerNotaOrder} search={topbarSearch} />}
-        {active === 'estoque' && <Stock onProduct={setSelectedProduct} refreshKey={stockRefreshKey} search={topbarSearch} />}
-        {active === 'fornecedores' && <Suppliers onMessage={setSupplierModal} search={topbarSearch} />}
-        {active === 'compras' && <Purchases notify={notify} />}
+        {active === 'estoque' && <Stock onProduct={setSelectedProduct} refreshKey={stockRefreshKey} search={topbarSearch} addNotif={addNotif} />}
+        {active === 'fornecedores' && <Suppliers onMessage={setSupplierModal} search={topbarSearch} addNotif={addNotif} />}
+        {active === 'compras' && <Purchases notify={notify} addNotif={addNotif} />}
         {active === 'entregas' && <Deliveries deliveries={deliveriesState} onNewDelivery={() => setNewDeliveryOpen(true)} onSelect={(d) => { setSelectedDelivery(d); fetchDeliveries() }} onOpenVehicles={() => setVehiclesOpen(true)} />}
         {active === 'clientes' && <Clients clientsData={clientsState} clientsLoading={clientsLoading} onNewClient={() => setNewClientOpen(true)} onSelectClient={setSelectedClient} search={topbarSearch} />}
         {active === 'pagamentos' && <Payments paymentsData={paymentsState} paymentsLoading={paymentsLoading} onSelectPayment={setSelectedPayment} onNewPayment={() => setNewPaymentOpen(true)} search={topbarSearch} />}
         {active === 'financeiro' && <Finance />}
         {active === 'relatorios' && <Reports />}
         {active === 'automacao' && <Automation aiEnabled={aiEnabled} setAiEnabled={setAiEnabled} notify={notify} />}
-        {active === 'configuracoes' && <Settings notify={notify} />}
+        {active === 'configuracoes' && <Settings notify={notify} onNotifSettingChange={(key, val) => setNotifSettings((p) => ({ ...p, [key]: val }))} />}
       </main>
 
       {selectedPayment && <PaymentDetailModal payment={selectedPayment} onClose={() => setSelectedPayment(null)} />}
-      {newPaymentOpen && <NewPaymentModal onClose={() => setNewPaymentOpen(false)} onCreated={(p) => { setPaymentsState((prev) => [p, ...prev]); notify(`Pagamento ${p.id} registrado com sucesso!`) }} />}
+      {newPaymentOpen && <NewPaymentModal onClose={() => setNewPaymentOpen(false)} onCreated={(p) => { setPaymentsState((prev) => [p, ...prev]); notify(`Pagamento ${p.id} registrado com sucesso!`); addNotif('notifPayments', { icon: CreditCard, title: 'Novo pagamento registrado', text: `Pagamento de ${p.clientName} no valor de ${money(p.paymentValue || 0)} foi registrado.` }); if (p.status === 'Pendente' || p.status === 'Atrasado') addNotif('notifPayments', { icon: Clock3, type: 'warning', title: 'Pagamento pendente', text: `Pagamento de ${p.clientName} está com status ${(p.status || '').toLowerCase()}.` }) }} />}
       {selectedProduct && <ProductModal product={selectedProduct} onClose={() => setSelectedProduct(null)} onRemove={() => setRemoveConfirmProduct(selectedProduct)} onEdit={() => { setEditProduct(selectedProduct); setSelectedProduct(null) }} />}
       {supplierModal && <SupplierModal supplier={supplierModal} onClose={() => setSupplierModal(null)} notify={notify} />}
-      {notaFiscalOrder && <NotaFiscalModal order={notaFiscalOrder} onClose={() => setNotaFiscalOrder(null)} updateOrderStatus={updateOrderStatus} notify={notify} />}
+      {notaFiscalOrder && <NotaFiscalModal order={notaFiscalOrder} onClose={() => setNotaFiscalOrder(null)} updateOrderStatus={updateOrderStatus} notify={notify} addNotif={addNotif} />}
       {verNotaOrder && <VerNotaModal order={verNotaOrder} onClose={() => setVerNotaOrder(null)} onSendToClient={sendNfeToClient} onGerarNota={(o) => { setVerNotaOrder(null); setNotaFiscalOrder(o) }} updateOrderStatus={updateOrderStatus} />}
-      {notifOpen && <NotifPanel onClose={() => setNotifOpen(false)} />}
-      {newDeliveryOpen && <NewDeliveryModal onClose={() => setNewDeliveryOpen(false)} orders={orders} vehicles={vehiclesState} onCreate={(d) => { setDeliveriesState((prev) => [d, ...prev]); notify(`Entrega ${d.id} criada com sucesso! O entregador será notificado sobre os pedidos em separação.`) }} />}
-      {editDelivery && <NewDeliveryModal onClose={() => setEditDelivery(null)} orders={orders} vehicles={vehiclesState} editDelivery={editDelivery} onUpdate={(d) => { setDeliveriesState((prev) => prev.map((x) => x.id === d.id ? d : x)); setEditDelivery(null); notify(`Entrega ${d.id} atualizada com sucesso!`) }} onCreate={(d) => { setDeliveriesState((prev) => [d, ...prev]); notify(`Entrega ${d.id} criada com sucesso! O entregador será notificado sobre os pedidos em separação.`) }} />}
+      {notifOpen && (
+        <NotifPanel
+          notifications={systemNotifications}
+          onDismiss={(id) => setSystemNotifications((prev) => prev.filter((n) => n.id !== id))}
+          onClearAll={() => setSystemNotifications([])}
+          onClose={() => setNotifOpen(false)}
+        />
+      )}
+      {newDeliveryOpen && <NewDeliveryModal onClose={() => setNewDeliveryOpen(false)} orders={orders} vehicles={vehiclesState} onCreate={(d) => { setDeliveriesState((prev) => [d, ...prev]); notify(`Entrega ${d.id} criada com sucesso! O entregador será notificado sobre os pedidos em separação.`); addNotif('notifDeliveries', { icon: Truck, title: 'Nova entrega criada', text: `Entrega ${d.id} com ${d.driver} foi criada e está planejada.` }) }} />}
+      {editDelivery && <NewDeliveryModal onClose={() => setEditDelivery(null)} orders={orders} vehicles={vehiclesState} editDelivery={editDelivery} onUpdate={(d) => { setDeliveriesState((prev) => prev.map((x) => x.id === d.id ? d : x)); setEditDelivery(null); notify(`Entrega ${d.id} atualizada com sucesso!`); if (d.status === 'Concluída') addNotif('notifDeliveries', { icon: CheckCircle2, title: 'Entrega concluída', text: `Entrega ${d.id} com ${d.driver} foi concluída com sucesso.` }); else if (d.status === 'Em rota') addNotif('notifDeliveries', { icon: Route, title: 'Entrega em rota', text: `Entrega ${d.id} com ${d.driver} entrou em rota.` }) }} onCreate={(d) => { setDeliveriesState((prev) => [d, ...prev]); notify(`Entrega ${d.id} criada com sucesso! O entregador será notificado sobre os pedidos em separação.`); addNotif('notifDeliveries', { icon: Truck, title: 'Nova entrega criada', text: `Entrega ${d.id} com ${d.driver} foi criada e está planejada.` }) }} />}
       {selectedDelivery && <DeliveryDetailModal delivery={deliveriesState.find((d) => d.id === selectedDelivery.id) || selectedDelivery} onClose={() => setSelectedDelivery(null)} orders={orders} onCancel={cancelDelivery} onRemove={removeDelivery} onReactivate={reactivateDelivery} onEdit={(d) => { setEditDelivery(d); setSelectedDelivery(null) }} onSelectOrder={setSelectedOrder} />}
       {selectedOrder && (() => {
         const _linkedDelivery = deliveriesState.find((d) => d.orderIds?.includes(selectedOrder.id))
@@ -763,7 +845,7 @@ function App() {
       {newClientOpen && (
         <NewClientModal
           onClose={() => { setNewClientOpen(false); setEditClient(null) }}
-          onCreated={(c) => { setClientsState((prev) => [c, ...prev]); notify(`Cliente ${c.establishmentName} cadastrado com sucesso!`) }}
+          onCreated={(c) => { setClientsState((prev) => [c, ...prev]); notify(`Cliente ${c.establishmentName} cadastrado com sucesso!`); addNotif('notifClients', { icon: Users, title: 'Novo cliente cadastrado', text: `${c.establishmentName} foi adicionado à carteira de clientes.` }) }}
           editClient={editClient}
           onUpdated={(c) => { setClientsState((prev) => prev.map((x) => x.id === c.id ? c : x)); setSelectedClient(c); fetchOrders(); notify(`Cliente ${c.establishmentName} atualizado com sucesso!`) }}
         />
@@ -1122,7 +1204,7 @@ function NewProductModal({ onClose, onCreated, editProduct, onUpdated }) {
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Erro ao criar produto')
-      onCreated()
+      onCreated({ isBatch: false, name: form.name.trim() })
       onClose()
     } catch (err) {
       setSubmitError(err.message || (editProduct ? 'Erro ao atualizar produto. Tente novamente.' : 'Erro ao criar produto. Tente novamente.'))
@@ -1187,7 +1269,7 @@ function NewProductModal({ onClose, onCreated, editProduct, onUpdated }) {
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Erro no envio')
       setUploadResult(data)
-      if (data.created?.length) onCreated()
+      if (data.created?.length) onCreated({ isBatch: true, count: data.created.length })
     } catch (err) {
       setParseError(err.message || 'Erro ao enviar produtos.')
     } finally {
@@ -1427,19 +1509,40 @@ function NewProductModal({ onClose, onCreated, editProduct, onUpdated }) {
   )
 }
 
-function Stock({ onProduct, refreshKey, search = '' }) {
+function Stock({ onProduct, refreshKey, search = '', addNotif }) {
   const [stockProducts, setStockProducts] = useState([])
   const [loading, setLoading] = useState(true)
   const [newProductOpen, setNewProductOpen] = useState(false)
   const [viewMode, setViewMode] = useState('grid')
   const [viewMenuOpen, setViewMenuOpen] = useState(false)
   const viewMenuRef = useRef(null)
+  const notifiedLowStockRef = useRef(new Set())
 
   const fetchProducts = () => {
     setLoading(true)
     fetch(`${API_URL}/api/products`)
       .then((r) => r.json())
-      .then((data) => { if (data.products) setStockProducts(data.products) })
+      .then((data) => {
+        if (data.products) {
+          setStockProducts(data.products)
+          if (addNotif) {
+            const alertPct = (() => { try { return parseFloat(JSON.parse(localStorage.getItem('saborsan_settings') || '{}').estoqueAlerta) || 10 } catch { return 10 } })()
+            data.products.forEach((p) => {
+              if (p.min > 0 && !notifiedLowStockRef.current.has(p.id)) {
+                const pct = (p.stock / (p.min * 2)) * 100
+                if (pct <= alertPct) {
+                  const sessionKey = `notif_stock_low_${p.id}`
+                  if (!sessionStorage.getItem(sessionKey)) {
+                    addNotif('notifStock', { icon: AlertTriangle, type: 'warning', title: 'Estoque abaixo do limite', text: `${p.name} está com estoque abaixo do mínimo configurado (${p.stock} ${p.unit || 'unid.'}).` })
+                    sessionStorage.setItem(sessionKey, '1')
+                    notifiedLowStockRef.current.add(p.id)
+                  }
+                }
+              }
+            })
+          }
+        }
+      })
       .catch(() => {})
       .finally(() => setLoading(false))
   }
@@ -1530,14 +1633,23 @@ function Stock({ onProduct, refreshKey, search = '' }) {
       {newProductOpen && (
         <NewProductModal
           onClose={() => setNewProductOpen(false)}
-          onCreated={() => { fetchProducts() }}
+          onCreated={(result) => {
+            if (addNotif) {
+              if (result?.isBatch) {
+                addNotif('notifStock', { icon: Boxes, title: 'Produtos registrados via upload', text: `${result.count} produto(s) adicionados ao estoque via documento.` })
+              } else {
+                addNotif('notifStock', { icon: PackageCheck, title: 'Produto registrado', text: `${result?.name || 'Novo produto'} foi adicionado ao estoque.` })
+              }
+            }
+            fetchProducts()
+          }}
         />
       )}
     </>
   )
 }
 
-function Suppliers({ onMessage, search = '' }) {
+function Suppliers({ onMessage, search = '', addNotif }) {
   const [suppliersData, setSuppliersData] = useState([])
   const [loading, setLoading] = useState(false)
   const [scheduledCounts, setScheduledCounts] = useState({})
@@ -1546,12 +1658,30 @@ function Suppliers({ onMessage, search = '' }) {
   const [detailSupplier, setDetailSupplier] = useState(null)
   const [transcript, setTranscript] = useState(null)
   const [removeConfirmSupplier, setRemoveConfirmSupplier] = useState(null)
+  const notifiedTranscriptRef = useRef(new Set())
 
   useEffect(() => {
     setLoading(true)
     fetch(`${API_URL}/api/suppliers`)
       .then((r) => r.json())
-      .then((data) => { if (data.suppliers) setSuppliersData(data.suppliers) })
+      .then((data) => {
+        if (data.suppliers) {
+          setSuppliersData(data.suppliers)
+          if (addNotif) {
+            data.suppliers.forEach((s) => {
+              const transcript = supplierTranscripts[s.id]
+              if (transcript?.status === 'Concluída' && !notifiedTranscriptRef.current.has(s.id)) {
+                const sessionKey = `notif_supplier_concluida_${s.id}`
+                if (!sessionStorage.getItem(sessionKey)) {
+                  addNotif('notifSuppliers', { icon: Bot, title: 'Conversa IA concluída', text: `A conversa da IA com ${s.name} foi concluída com sucesso.` })
+                  sessionStorage.setItem(sessionKey, '1')
+                  notifiedTranscriptRef.current.add(s.id)
+                }
+              }
+            })
+          }
+        }
+      })
       .catch(() => {})
       .finally(() => setLoading(false))
     fetch(`${API_URL}/api/supplier-purchases`)
@@ -2439,7 +2569,7 @@ function PurchaseDetailModal({ item, getDayLabel, onClose, onRemove, onEdit, sup
   )
 }
 
-function Purchases({ notify }) {
+function Purchases({ notify, addNotif }) {
   const [planningItems, setPlanningItems] = useState([])
   const [planningLoading, setPlanningLoading] = useState(true)
   const [suppliersData, setSuppliersData] = useState([])
@@ -2450,12 +2580,35 @@ function Purchases({ notify }) {
   const [newPurchaseModal, setNewPurchaseModal] = useState(false)
   const [detailModal, setDetailModal] = useState(null)
   const [editModal, setEditModal] = useState(null)
+  const notifiedPurchaseDueRef = useRef(new Set())
 
   useEffect(() => {
     setPlanningLoading(true)
     fetch(`${API_URL}/api/purchase-planning`)
       .then((r) => r.json())
-      .then((data) => { if (data.items) setPlanningItems(data.items) })
+      .then((data) => {
+        if (data.items) {
+          setPlanningItems(data.items)
+          if (addNotif) {
+            const tomorrow = new Date()
+            tomorrow.setDate(tomorrow.getDate() + 1)
+            const tomorrowStr = tomorrow.toDateString()
+            data.items.filter((item) => !item.completed).forEach((item) => {
+              try {
+                const d = new Date(item.scheduledDate + 'T00:00:00')
+                if (d.toDateString() === tomorrowStr && !notifiedPurchaseDueRef.current.has(item.id)) {
+                  const sessionKey = `notif_purchase_due_${item.id}`
+                  if (!sessionStorage.getItem(sessionKey)) {
+                    addNotif('notifPurchases', { icon: CalendarDays, title: 'Compra agendada para amanhã', text: `${item.title} está agendada para amanhã.` })
+                    sessionStorage.setItem(sessionKey, '1')
+                    notifiedPurchaseDueRef.current.add(item.id)
+                  }
+                }
+              } catch {}
+            })
+          }
+        }
+      })
       .catch(() => {})
       .finally(() => setPlanningLoading(false))
 
@@ -2549,6 +2702,9 @@ function Purchases({ notify }) {
         setPlanningItems((prev) =>
           [...prev, newItem].sort((a, b) => new Date(a.scheduledDate) - new Date(b.scheduledDate))
         )
+        if (addNotif) {
+          addNotif('notifPurchases', { icon: ClipboardList, title: 'Compra adicionada ao planejamento', text: `${newItem.title} foi adicionada à lista de compras.` })
+        }
       }
     }
   }
@@ -4737,7 +4893,7 @@ function FiscalConfigSection({ notify }) {
   )
 }
 
-function Settings({ notify }) {
+function Settings({ notify, onNotifSettingChange }) {
   const [form, setForm] = useState(() => {
     try {
       const stored = localStorage.getItem('saborsan_settings')
@@ -4788,6 +4944,7 @@ function Settings({ notify }) {
         notifPurchases: true,
         notifDeliveries: true,
         notifClients: true,
+        notifPayments: true,
         ...saved,
       }
     } catch {
@@ -4837,6 +4994,7 @@ function Settings({ notify }) {
         notifPurchases: true,
         notifDeliveries: true,
         notifClients: true,
+        notifPayments: true,
       }
     }
   })
@@ -5140,6 +5298,7 @@ function Settings({ notify }) {
                   ['notifPurchases',      'Notificações de compras',      'Alertas sobre pedidos de compra e reposição de estoque'],
                   ['notifDeliveries',     'Notificações de entregas',     'Alertas sobre saída, rota e conclusão de entregas'],
                   ['notifClients',        'Notificações de clientes',     'Alertas sobre novos cadastros e atividades de clientes'],
+                  ['notifPayments',       'Notificações de pagamentos',   'Alertas sobre registro e status de pagamentos'],
                 ].map(([key, label, subtitle]) => (
                   <div className="settingsToggleRow" key={key}>
                     <div>
@@ -5150,6 +5309,7 @@ function Settings({ notify }) {
                       <input type="checkbox" checked={form[key]} onChange={async () => {
                         const next = !form[key]
                         set(key, next)
+                        onNotifSettingChange && onNotifSettingChange(key, next)
                         try {
                           await fetch(`${API_URL}/api/notification-settings`, {
                             method: 'PATCH',
@@ -5421,7 +5581,7 @@ function SellerDetailModal({ seller, onClose, onToggleActive, onEdit }) {
   )
 }
 
-function Sellers({ search = '' }) {
+function Sellers({ search = '', addNotif }) {
   const [sellersData, setSellersData] = useState([])
   const [sellersLoading, setSellersLoading] = useState(false)
   const [selected, setSelected] = useState(null)
@@ -5431,12 +5591,29 @@ function Sellers({ search = '' }) {
   const seller = selected ? sellersData.find((s) => s.id === selected) : null
   const totalGeral = sellersData.reduce((a, s) => a + s.total, 0)
   const bestSeller = sellersData.length > 0 ? sellersData.reduce((a, b) => a.total > b.total ? a : b) : null
+  const notifiedSellersRef = useRef(new Set())
 
   useEffect(() => {
     setSellersLoading(true)
     fetch(`${API_URL}/api/sellers`)
       .then((r) => r.json())
-      .then((data) => { if (data.sellers) setSellersData(data.sellers) })
+      .then((data) => {
+        if (data.sellers) {
+          setSellersData(data.sellers)
+          if (addNotif) {
+            data.sellers.forEach((s) => {
+              if (s.meta > 0 && s.total >= s.meta && !notifiedSellersRef.current.has(`meta_${s.id}`)) {
+                const sessionKey = `notif_seller_meta_${s.id}`
+                if (!sessionStorage.getItem(sessionKey)) {
+                  addNotif('notifSellers', { icon: TrendingUp, title: 'Meta de vendas atingida', text: `${s.name} atingiu a meta de ${money(s.meta)} em vendas!` })
+                  sessionStorage.setItem(sessionKey, '1')
+                  notifiedSellersRef.current.add(`meta_${s.id}`)
+                }
+              }
+            })
+          }
+        }
+      })
       .catch(() => {})
       .finally(() => setSellersLoading(false))
   }, [])
@@ -5538,7 +5715,7 @@ const ncmMap = {
 
 const STEPS = ['previa', 'validacao', 'enviando', 'autorizada', 'cliente']
 
-function NotaFiscalModal({ order, onClose, updateOrderStatus, notify }) {
+function NotaFiscalModal({ order, onClose, updateOrderStatus, notify, addNotif }) {
   const [step, setStep] = useState('previa')
   const [purchasePurpose, setPurchasePurpose] = useState(order.purchasePurpose || 'consumo')
   // 0=preparando 1=enviando para Focus 2=recebido pela Focus 3=aguardando SEFAZ
@@ -5601,10 +5778,12 @@ function NotaFiscalModal({ order, onClose, updateOrderStatus, notify }) {
           setStep('autorizada')
           updateOrderStatus(order.id, 'Pronto', { nfeData: { ...data, reference: ref, nfeStatus: 'AUTHORIZED' } })
           notify(`NF-e ${data.number ? `nº ${data.number} ` : ''}autorizada para ${order.customer}.`)
+          addNotif && addNotif('notifFiscalDocuments', { icon: ReceiptText, title: 'Nota fiscal autorizada', text: `NF-e de ${order.customer} foi autorizada pelo SEFAZ.` })
         } else if (data.status === 'REJECTED' || data.status === 'SUBMISSION_FAILED') {
           setNfeError(data)
           setStep('rejeitada')
           updateOrderStatus(order.id, 'Pronto', { nfeData: { nfeStatus: data.status, errorCode: data.errorCode || null, errorMessage: data.errorMessage || null, reference: ref } })
+          addNotif && addNotif('notifFiscalDocuments', { icon: AlertTriangle, type: 'warning', title: 'Nota fiscal negada', text: `NF-e de ${order.customer} foi negada ou gerou erro pelo SEFAZ / Focus NF-e.` })
         } else {
           startPolling(ref, attempt + 1)
         }
@@ -5639,6 +5818,7 @@ function NotaFiscalModal({ order, onClose, updateOrderStatus, notify }) {
         setStep('autorizada')
         updateOrderStatus(order.id, 'Pronto', { nfeData: { ...data, nfeStatus: 'AUTHORIZED' } })
         notify(`NF-e ${data.number ? `nº ${data.number} ` : ''}autorizada para ${order.customer}.`)
+        addNotif && addNotif('notifFiscalDocuments', { icon: ReceiptText, title: 'Nota fiscal autorizada', text: `NF-e de ${order.customer} foi autorizada pelo SEFAZ.` })
         return
       }
       if ((data.status === 'PROCESSING' || data.status === 'SUBMITTING') && data.reference) {
@@ -5650,6 +5830,7 @@ function NotaFiscalModal({ order, onClose, updateOrderStatus, notify }) {
         setNfeError(data)
         setStep('rejeitada')
         updateOrderStatus(order.id, 'Pronto', { nfeData: { nfeStatus: data.status, errorCode: data.errorCode || null, errorMessage: data.errorMessage || null, reference: data.reference || null } })
+        addNotif && addNotif('notifFiscalDocuments', { icon: AlertTriangle, type: 'warning', title: 'Nota fiscal negada', text: `NF-e de ${order.customer} foi negada ou gerou erro pelo SEFAZ / Focus NF-e.` })
         return
       }
       if (data.status === 'FISCAL_RULES_ERROR' || data.status === 'VALIDATION_ERROR') {
