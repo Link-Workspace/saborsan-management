@@ -6296,20 +6296,47 @@ function NewPaymentModal({ onClose, onCreated }) {
     clientName: '',
     orderId: '',
     sellerName: '',
-    paymentDate: new Date().toLocaleDateString('pt-BR'),
+    paymentDate: new Date().toISOString().slice(0, 10) + 'T08:00',
     paymentMethod: '',
     paymentValue: '',
     totalPaid: '',
     status: 'Pendente',
   })
+  const [hasLinkedOrder, setHasLinkedOrder] = useState(true)
+  const [clientsData, setClientsData] = useState([])
+  const [clientsLoading, setClientsLoading] = useState(true)
+  const [sellersData, setSellersData] = useState([])
+  const [sellersLoading, setSellersLoading] = useState(true)
+  const [routeOrders, setRouteOrders] = useState([])
+  const [ordersLoading, setOrdersLoading] = useState(true)
   const [submitError, setSubmitError] = useState('')
   const [submitting, setSubmitting] = useState(false)
 
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }))
 
+  useEffect(() => {
+    fetch(`${API_URL}/api/clients`)
+      .then((r) => r.json())
+      .then((data) => { if (data.clients) setClientsData(data.clients) })
+      .catch(() => {})
+      .finally(() => setClientsLoading(false))
+
+    fetch(`${API_URL}/api/sellers`)
+      .then((r) => r.json())
+      .then((data) => { if (data.sellers) setSellersData(data.sellers) })
+      .catch(() => {})
+      .finally(() => setSellersLoading(false))
+
+    fetch(`${API_URL}/api/orders`)
+      .then((r) => r.json())
+      .then((data) => { if (data.orders) setRouteOrders(data.orders.filter((o) => o.status === 'Rota')) })
+      .catch(() => {})
+      .finally(() => setOrdersLoading(false))
+  }, [])
+
   const canSubmit =
     form.clientName.trim() !== '' &&
-    form.sellerName.trim() !== '' &&
+    form.sellerName !== '' &&
     form.paymentMethod !== '' &&
     form.paymentValue !== '' &&
     !isNaN(parseFloat(form.paymentValue))
@@ -6322,8 +6349,8 @@ function NewPaymentModal({ onClose, onCreated }) {
     try {
       const payload = {
         clientName: form.clientName.trim(),
-        orderId: form.orderId.trim() || null,
-        sellerName: form.sellerName.trim(),
+        orderId: hasLinkedOrder ? (form.orderId || null) : null,
+        sellerName: form.sellerName,
         paymentDate: form.paymentDate.trim(),
         paymentMethod: form.paymentMethod,
         paymentValue: parseFloat(form.paymentValue),
@@ -6365,18 +6392,45 @@ function NewPaymentModal({ onClose, onCreated }) {
 
               <p style={sectionTitle}>Vinculação</p>
               <label className="full">Cliente *
-                <input placeholder="Ex: Padaria Bela Vista" value={form.clientName} onChange={(e) => set('clientName', e.target.value)} required />
+                <CustomSelect
+                  value={form.clientName}
+                  onChange={(v) => set('clientName', v)}
+                  placeholder={clientsLoading ? 'Carregando clientes...' : 'Selecione o cliente'}
+                  disabled={clientsLoading}
+                  options={clientsData.map((c) => ({ value: c.establishmentName, label: c.establishmentName }))}
+                />
               </label>
               <label>Vendedor *
-                <input placeholder="Ex: Carlos Oliveira" value={form.sellerName} onChange={(e) => set('sellerName', e.target.value)} required />
+                <CustomSelect
+                  value={form.sellerName}
+                  onChange={(v) => set('sellerName', v)}
+                  placeholder={sellersLoading ? 'Carregando vendedores...' : 'Selecione o vendedor'}
+                  disabled={sellersLoading}
+                  options={sellersData.map((s) => ({ value: s.name, label: s.name }))}
+                />
               </label>
-              <label>Pedido vinculado
-                <input placeholder="Ex: PED-2049" value={form.orderId} onChange={(e) => set('orderId', e.target.value)} />
+              <label>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                  <span>Pedido vinculado</span>
+                  <div className="deliverySegmented">
+                    <button type="button" className={`deliverySegBtn${hasLinkedOrder ? ' active' : ''}`} onClick={() => setHasLinkedOrder(true)}>Sim</button>
+                    <button type="button" className={`deliverySegBtn${!hasLinkedOrder ? ' active' : ''}`} onClick={() => { setHasLinkedOrder(false); set('orderId', '') }}>Não</button>
+                  </div>
+                </div>
+                {hasLinkedOrder && (
+                  <CustomSelect
+                    value={form.orderId}
+                    onChange={(v) => set('orderId', v)}
+                    placeholder={ordersLoading ? 'Carregando pedidos...' : routeOrders.length === 0 ? 'Nenhum pedido em Rota' : 'Selecione o pedido'}
+                    disabled={ordersLoading}
+                    options={routeOrders.map((o) => ({ value: o.id, label: `${o.id} — ${o.customer}` }))}
+                  />
+                )}
               </label>
 
               <p style={sectionTitle}>Dados do pagamento</p>
               <label>Data do pagamento
-                <input placeholder="DD/MM/AAAA" value={form.paymentDate} onChange={(e) => set('paymentDate', e.target.value)} />
+                <DateTimePicker value={form.paymentDate} onChange={(v) => set('paymentDate', v)} placeholder="Selecionar data e hora" />
               </label>
               <label>Forma de pagamento *
                 <CustomSelect
