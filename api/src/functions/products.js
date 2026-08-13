@@ -61,7 +61,14 @@ app.http('products', {
         }
 
         const created = [];
+        const updated = [];
         const errors = [];
+
+        // Busca todos os nomes existentes para detecção de duplicatas
+        const existingResult = await sql.query`SELECT id, name FROM Products WHERE active = 1`;
+        const existingMap = new Map(
+          existingResult.recordset.map((r) => [r.name.trim().toLowerCase(), r.id])
+        );
 
         for (const item of items) {
           const { name, category, price, availableQuantity, badge, description,
@@ -74,26 +81,46 @@ app.http('products', {
 
           const priceStr = String(price ?? '0');
           const qty = parseInt(availableQuantity ?? 0, 10);
+          const existingId = existingMap.get(name.trim().toLowerCase());
 
-          const id = `PROD-${Date.now()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
-
-          await sql.query`
-            INSERT INTO Products (id, name, category, price, badge, description, details,
-                                  packaging, unitQuantity, packagingWeight, conservation, preparation, idealFor,
-                                  availableQuantity, imageUrl, active, createdAt, updatedAt)
-            VALUES (${id}, ${name.trim()}, ${category.trim()}, ${priceStr},
-                    ${badge || null}, ${description || null}, ${details || null},
-                    ${packaging || null}, ${unitQuantity != null ? parseInt(unitQuantity, 10) : null},
-                    ${packagingWeight != null ? parseFloat(packagingWeight) : null},
-                    ${conservation || null}, ${preparation || null}, ${idealFor || null},
-                    ${qty}, ${imageUrl || null},
-                    1, GETUTCDATE(), GETUTCDATE())
-          `;
-
-          created.push({ id, name: name.trim(), category: category.trim() });
+          if (existingId) {
+            // Produto já existe — atualiza apenas os campos presentes no documento
+            await sql.query`
+              UPDATE Products
+              SET category = ${category.trim()},
+                  price = ${priceStr},
+                  badge = ${badge || null},
+                  description = ${description || null},
+                  details = ${details || null},
+                  packaging = ${packaging || null},
+                  unitQuantity = ${unitQuantity != null ? parseInt(unitQuantity, 10) : null},
+                  packagingWeight = ${packagingWeight != null ? parseFloat(packagingWeight) : null},
+                  conservation = ${conservation || null},
+                  preparation = ${preparation || null},
+                  idealFor = ${idealFor || null},
+                  updatedAt = GETUTCDATE()
+              WHERE id = ${existingId}
+            `;
+            updated.push({ id: existingId, name: name.trim() });
+          } else {
+            const id = `PROD-${Date.now()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+            await sql.query`
+              INSERT INTO Products (id, name, category, price, badge, description, details,
+                                    packaging, unitQuantity, packagingWeight, conservation, preparation, idealFor,
+                                    availableQuantity, imageUrl, active, createdAt, updatedAt)
+              VALUES (${id}, ${name.trim()}, ${category.trim()}, ${priceStr},
+                      ${badge || null}, ${description || null}, ${details || null},
+                      ${packaging || null}, ${unitQuantity != null ? parseInt(unitQuantity, 10) : null},
+                      ${packagingWeight != null ? parseFloat(packagingWeight) : null},
+                      ${conservation || null}, ${preparation || null}, ${idealFor || null},
+                      ${qty}, ${imageUrl || null},
+                      1, GETUTCDATE(), GETUTCDATE())
+            `;
+            created.push({ id, name: name.trim(), category: category.trim() });
+          }
         }
 
-        return { jsonBody: { created, errors } };
+        return { jsonBody: { created, updated, errors } };
       }
 
       if (request.method === 'PUT') {

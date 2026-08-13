@@ -21,7 +21,7 @@ app.http('stock-purchase-config', {
       if (request.method === 'GET') {
         const result = await sql.query`
           SELECT TOP 1
-            stockAlertPct, iaWhatsapp, iaPrompt,
+            stockAlertPct, iaWhatsapp, iaPrompt, iaImportPrompt,
             purchaseSchedules, whatsappNumbers,
             iaLigarModo, iaLigarDia, iaLigarHora,
             updatedAt
@@ -38,7 +38,8 @@ app.http('stock-purchase-config', {
           jsonBody: {
             stockAlertPct:     row.stockAlertPct,
             iaWhatsapp:        !!row.iaWhatsapp,
-            iaPrompt:          row.iaPrompt || '',
+            iaPrompt:          row.iaPrompt        || '',
+            iaImportPrompt:    row.iaImportPrompt  || '',
             purchaseSchedules: row.purchaseSchedules ? JSON.parse(row.purchaseSchedules) : [],
             whatsappNumbers:   row.whatsappNumbers   ? JSON.parse(row.whatsappNumbers)   : [],
             iaLigarModo:       row.iaLigarModo || 'ia',
@@ -55,6 +56,7 @@ app.http('stock-purchase-config', {
           stockAlertPct,
           iaWhatsapp,
           iaPrompt,
+          iaImportPrompt,
           purchaseSchedules,
           whatsappNumbers,
           iaLigarModo,
@@ -72,10 +74,10 @@ app.http('stock-purchase-config', {
         if (exists.recordset.length === 0) {
           await sql.query`
             INSERT INTO StockSupplierConfig
-              (stockAlertPct, iaWhatsapp, iaPrompt, purchaseSchedules, whatsappNumbers,
+              (stockAlertPct, iaWhatsapp, iaPrompt, iaImportPrompt, purchaseSchedules, whatsappNumbers,
                iaLigarModo, iaLigarDia, iaLigarHora, updatedAt)
             VALUES
-              (${stockAlertPct}, ${iaWhatsapp ? 1 : 0}, ${iaPrompt},
+              (${stockAlertPct}, ${iaWhatsapp ? 1 : 0}, ${iaPrompt}, ${iaImportPrompt || null},
                ${schedJson}, ${numsJson},
                ${iaLigarModo || 'ia'}, ${iaLigarDia || 'segunda'}, ${iaLigarHora || '09:00'},
                GETUTCDATE())
@@ -87,6 +89,7 @@ app.http('stock-purchase-config', {
               stockAlertPct     = ${stockAlertPct},
               iaWhatsapp        = ${iaWhatsapp ? 1 : 0},
               iaPrompt          = ${iaPrompt},
+              iaImportPrompt    = ${iaImportPrompt || null},
               purchaseSchedules = ${schedJson},
               whatsappNumbers   = ${numsJson},
               iaLigarModo       = ${iaLigarModo || 'ia'},
@@ -108,6 +111,7 @@ app.http('stock-purchase-config', {
           stockAlertPct:     (v) => ({ type: sql.Decimal(10, 4),     val: parseFloat(v) || 0 }),
           iaWhatsapp:        (v) => ({ type: sql.Bit,                val: v ? 1 : 0 }),
           iaPrompt:          (v) => ({ type: sql.NVarChar(sql.MAX),  val: String(v) }),
+          iaImportPrompt:    (v) => ({ type: sql.NVarChar(sql.MAX),  val: String(v) }),
           purchaseSchedules: (v) => ({ type: sql.NVarChar(sql.MAX),  val: JSON.stringify(Array.isArray(v) ? v : []) }),
           whatsappNumbers:   (v) => ({ type: sql.NVarChar(sql.MAX),  val: JSON.stringify(Array.isArray(v) ? v : []) }),
           iaLigarModo:       (v) => ({ type: sql.NVarChar(20),       val: String(v) }),

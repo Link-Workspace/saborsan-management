@@ -1338,7 +1338,8 @@ function NewProductModal({ onClose, onCreated, editProduct, onUpdated }) {
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Erro no envio')
       setUploadResult(data)
-      if (data.created?.length) onCreated({ isBatch: true, count: data.created.length })
+      const totalAffected = (data.created?.length || 0) + (data.updated?.length || 0)
+      if (totalAffected) onCreated({ isBatch: true, count: totalAffected })
     } catch (err) {
       setParseError(err.message || 'Erro ao enviar produtos.')
     } finally {
@@ -1553,7 +1554,7 @@ function NewProductModal({ onClose, onCreated, editProduct, onUpdated }) {
                     <div className="uploadFormatHint">
                       <b><Sparkles size={13} style={{ verticalAlign: 'middle', marginRight: 4 }} />Análise inteligente com IA</b>
                       <p style={{ margin: '6px 0 0', fontSize: '.82rem', lineHeight: 1.5 }}>
-                        Envie qualquer documento com informações de produtos: tabelas, listas, notas fiscais, planilhas exportadas (TXT/CSV) ou PDFs. A IA extrai automaticamente nome, categoria, preço, quantidade e embalagem de múltiplos produtos.
+                        Envie qualquer documento com informações de produtos: tabelas, listas, notas fiscais, planilhas exportadas (TXT/CSV) ou PDFs. A IA extrai automaticamente nome, categoria, preço, quantidade e embalagem de múltiplos produtos. Imagens dos produtos não são extraídas.
                       </p>
                     </div>
                   )}
@@ -1600,7 +1601,12 @@ function NewProductModal({ onClose, onCreated, editProduct, onUpdated }) {
                 <div style={{ padding: '16px 0' }}>
                   {uploadResult.created?.length > 0 && (
                     <div className="noteBox" style={{ background: '#f0fdf4', borderColor: '#bbf7d0' }}>
-                      <b style={{ color: '#16a34a' }}><CheckCircle2 size={16} style={{ verticalAlign: 'middle' }} /> {uploadResult.created.length} produto(s) importado(s) com sucesso</b>
+                      <b style={{ color: '#16a34a' }}><CheckCircle2 size={16} style={{ verticalAlign: 'middle' }} /> {uploadResult.created.length} produto(s) criado(s) com sucesso</b>
+                    </div>
+                  )}
+                  {uploadResult.updated?.length > 0 && (
+                    <div className="noteBox" style={{ background: '#eff6ff', borderColor: '#bfdbfe', marginTop: uploadResult.created?.length ? 10 : 0 }}>
+                      <b style={{ color: '#2563eb' }}><CheckCircle2 size={16} style={{ verticalAlign: 'middle' }} /> {uploadResult.updated.length} produto(s) atualizado(s)</b>
                     </div>
                   )}
                   {uploadResult.errors?.length > 0 && (
@@ -5063,6 +5069,7 @@ function Settings({ notify, onNotifSettingChange }) {
         estoqueWhatsappNumeros: [],
         compraDatas: [],
         iaFornecedorPrompt: 'Você é um assistente de compras da Saborsan Distribuidora. Ao contatar fornecedores, seja cordial, objetivo e profissional. Solicite cotações de preço, prazo de entrega e condições de pagamento. Priorize fornecedores com melhor custo-benefício e histórico de pontualidade. Confirme disponibilidade de estoque antes de fechar pedido.',
+        iaImportPrompt: '',
         notifOrders: true,
         notifSellers: true,
         notifFiscalDocuments: true,
@@ -5113,6 +5120,7 @@ function Settings({ notify, onNotifSettingChange }) {
         estoqueWhatsappNumeros: [],
         compraDatas: [],
         iaFornecedorPrompt: 'Você é um assistente de compras da Saborsan Distribuidora. Ao contatar fornecedores, seja cordial, objetivo e profissional. Solicite cotações de preço, prazo de entrega e condições de pagamento. Priorize fornecedores com melhor custo-benefício e histórico de pontualidade. Confirme disponibilidade de estoque antes de fechar pedido.',
+        iaImportPrompt: '',
         notifOrders: true,
         notifSellers: true,
         notifFiscalDocuments: true,
@@ -5134,6 +5142,7 @@ function Settings({ notify, onNotifSettingChange }) {
     compraDatas:            f.compraDatas            || [],
     estoqueWhatsappNumeros: f.estoqueWhatsappNumeros || [],
     iaFornecedorPrompt:     f.iaFornecedorPrompt,
+    iaImportPrompt:         f.iaImportPrompt         || '',
     iaLigarModo:            f.iaLigarModo            || 'ia',
     iaLigarDia:             f.iaLigarDia             || 'segunda',
     iaLigarHora:            f.iaLigarHora            || '09:00',
@@ -5157,7 +5166,8 @@ function Settings({ notify, onNotifSettingChange }) {
           ...f,
           estoqueAlerta:          String(data.stockAlertPct ?? f.estoqueAlerta),
           estoqueIaWhatsapp:      !!data.iaWhatsapp,
-          iaFornecedorPrompt:     data.iaPrompt || f.iaFornecedorPrompt,
+          iaFornecedorPrompt:     data.iaPrompt        || f.iaFornecedorPrompt,
+          iaImportPrompt:         data.iaImportPrompt  || f.iaImportPrompt,
           compraDatas:            data.purchaseSchedules ?? f.compraDatas,
           estoqueWhatsappNumeros: data.whatsappNumbers   ?? f.estoqueWhatsappNumeros,
           iaLigarModo:            data.iaLigarModo       ?? f.iaLigarModo,
@@ -5170,6 +5180,7 @@ function Settings({ notify, onNotifSettingChange }) {
           compraDatas:            data.purchaseSchedules || [],
           estoqueWhatsappNumeros: data.whatsappNumbers   || [],
           iaFornecedorPrompt:     data.iaPrompt          || '',
+          iaImportPrompt:         data.iaImportPrompt    || '',
           iaLigarModo:            data.iaLigarModo       || 'ia',
           iaLigarDia:             data.iaLigarDia        || 'segunda',
           iaLigarHora:            data.iaLigarHora       || '09:00',
@@ -5236,6 +5247,8 @@ function Settings({ notify, onNotifSettingChange }) {
           patch.iaWhatsapp = !!form.estoqueIaWhatsapp
         if (form.iaFornecedorPrompt !== saved.iaFornecedorPrompt)
           patch.iaPrompt = form.iaFornecedorPrompt
+        if (form.iaImportPrompt !== saved.iaImportPrompt)
+          patch.iaImportPrompt = form.iaImportPrompt
         if (JSON.stringify(form.compraDatas || []) !== JSON.stringify(saved.compraDatas || []))
           patch.purchaseSchedules = form.compraDatas || []
         if (JSON.stringify(form.estoqueWhatsappNumeros || []) !== JSON.stringify(saved.estoqueWhatsappNumeros || []))
@@ -5371,6 +5384,9 @@ function Settings({ notify, onNotifSettingChange }) {
                 </label>
                 <label>Prompt de comportamento da IA com fornecedores
                   <textarea rows={6} value={form.iaFornecedorPrompt} onChange={(e) => set('iaFornecedorPrompt', e.target.value)} onFocus={(e) => { e.target.style.borderColor = 'var(--orange)'; e.target.style.background = '#fff' }} onBlur={(e) => { e.target.style.borderColor = 'var(--line)'; e.target.style.background = '#f9fbff' }} style={{ resize: 'vertical', width: '100%', padding: '11px 14px', borderRadius: 14, border: '1.5px solid var(--line)', font: 'inherit', color: 'var(--text)', fontWeight: 700, outline: 0, background: '#f9fbff', boxSizing: 'border-box' }} />
+                </label>
+                <label>Prompt de análise de documentos para importação de produtos
+                  <textarea rows={8} value={form.iaImportPrompt} onChange={(e) => set('iaImportPrompt', e.target.value)} placeholder="Deixe em branco para usar o prompt padrão do sistema." onFocus={(e) => { e.target.style.borderColor = 'var(--orange)'; e.target.style.background = '#fff' }} onBlur={(e) => { e.target.style.borderColor = 'var(--line)'; e.target.style.background = '#f9fbff' }} style={{ resize: 'vertical', width: '100%', padding: '11px 14px', borderRadius: 14, border: '1.5px solid var(--line)', font: 'inherit', color: 'var(--text)', fontWeight: 700, outline: 0, background: '#f9fbff', boxSizing: 'border-box' }} />
                 </label>
               </div>
               <div className="iaModeSelector">
