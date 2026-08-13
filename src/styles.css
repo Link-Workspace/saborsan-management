@@ -440,3 +440,6 @@ p{margin:0}.appShell{min-height:100vh;display:grid;grid-template-columns:300px 1
 .settingsSaveFooter{position:fixed;bottom:0;left:300px;right:0;background:#fff;border-top:1.5px solid var(--line);padding:14px 28px;display:flex;justify-content:flex-end;z-index:10;box-shadow:0 -6px 20px rgba(6,54,111,.06)}
 .settingsSectionTopbar{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:20px;padding-top:4px}
 .settingsSectionH2{font-size:1.5rem;letter-spacing:-.03em;margin-top:2px}
+@keyframes bgImportPulse{0%,100%{box-shadow:0 0 0 0 rgba(255,122,0,.5);border-color:var(--orange)}50%{box-shadow:0 0 0 5px rgba(255,122,0,0);border-color:#f25c00}}
+.bgImportPulse{border-color:var(--orange)!important;color:var(--orange)!important;animation:bgImportPulse 1.1s ease-in-out infinite}
+.bgImportHint{display:flex;align-items:center;gap:8px;background:var(--orange-soft);border:1px solid #ffd6a5;border-radius:12px;padding:10px 14px;margin-top:12px;font-size:.82rem;color:var(--orange-strong);font-weight:700}

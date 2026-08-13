@@ -423,6 +423,8 @@ function App() {
   const [selectedPayment, setSelectedPayment] = useState(null)
   const [newPaymentOpen, setNewPaymentOpen] = useState(false)
   const [apiProductsState, setApiProductsState] = useState([])
+  const [bgImport, setBgImport] = useState(null)
+  const [bgImportPanelOpen, setBgImportPanelOpen] = useState(false)
 
   const [systemNotifications, setSystemNotifications] = useState([])
   const [notifSettings, setNotifSettings] = useState(() => {
@@ -556,6 +558,46 @@ function App() {
     window.clearTimeout(window.__saborsanToast)
     window.__saborsanToast = window.setTimeout(() => setToast(''), 2600)
   }
+
+  const startBackgroundAnalysis = useCallback((file) => {
+    const ext = file.name.split('.').pop().toLowerCase()
+    if (!['txt', 'csv', 'pdf'].includes(ext)) {
+      setBgImport({ status: 'done', fileName: file.name, parsedRows: null, parseError: 'Formato não suportado. Use TXT, CSV ou PDF.' })
+      return
+    }
+    setBgImport({ status: 'analyzing', fileName: file.name, parsedRows: null, parseError: '' })
+    const reader = new FileReader()
+    reader.onload = async (e) => {
+      try {
+        const fileContent = e.target.result
+        const res = await fetch(`${API_URL}/api/analyze-document`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fileContent, fileName: file.name, fileType: ext }),
+        })
+        const data = await res.json()
+        if (!res.ok) throw new Error(data.error || 'Erro ao analisar documento.')
+        const rows = data.products?.length ? data.products : null
+        const parseErr = !data.products?.length ? 'Nenhum produto identificado no documento.' : ''
+        setBgImport((prev) => prev ? { ...prev, status: 'done', parsedRows: rows, parseError: parseErr } : null)
+      } catch (err) {
+        setBgImport((prev) => prev ? { ...prev, status: 'done', parsedRows: null, parseError: err.message || 'Erro ao analisar documento com IA.' } : null)
+      }
+    }
+    reader.onerror = () => setBgImport((prev) => prev ? { ...prev, status: 'done', parsedRows: null, parseError: 'Erro ao ler o arquivo.' } : null)
+    if (ext === 'pdf') reader.readAsDataURL(file)
+    else reader.readAsText(file)
+  }, [])
+
+  const prevBgStatusRef = useRef(null)
+  useEffect(() => {
+    const prev = prevBgStatusRef.current
+    prevBgStatusRef.current = bgImport?.status ?? null
+    if (prev === 'analyzing' && bgImport?.status === 'done') {
+      notify('IA concluiu a análise do documento de estoque!')
+      addNotif('notifStock', { icon: PackageCheck, title: 'Análise de estoque concluída', text: `A IA terminou de analisar "${bgImport.fileName}". Clique no ícone de estoque para importar.` })
+    }
+  }, [bgImport?.status])
 
   const updateOrderStatus = (id, status, extra = {}) => {
     setOrders((items) => items.map((item) => item.id === id ? { ...item, status, ...extra } : item))
@@ -747,6 +789,15 @@ function App() {
           </div>
           <div className="searchBox topbarSearch"><Search size={17} /><input placeholder={{ pedidos: 'Buscar pedidos, clientes...', estoque: 'Buscar produtos', notas: 'Buscar notas fiscais...', vendedores: 'Buscar vendedores...', fornecedores: 'Buscar fornecedores...', clientes: 'Buscar clientes...', pagamentos: 'Buscar pagamentos...' }[active] || 'Buscar no painel...'} value={topbarSearch} onChange={(e) => setTopbarSearch(e.target.value)} /></div>
           <div className="topActions">
+            {bgImport && (
+              <button
+                className={`iconButton${bgImport.status === 'done' ? ' bgImportPulse' : ''}`}
+                onClick={() => setBgImportPanelOpen(true)}
+                title={bgImport.status === 'analyzing' ? 'Análise de estoque em andamento...' : 'Análise de estoque concluída — clique para importar'}
+              >
+                <PackageCheck size={19} />
+              </button>
+            )}
             <button className="iconButton" onClick={() => setNotifOpen(!notifOpen)}><Bell size={19} />{systemNotifications.length > 0 && <span>{systemNotifications.length}</span>}</button>
           </div>
         </header>
@@ -761,7 +812,7 @@ function App() {
         {active === 'pedidos' && <Orders orders={orders} ordersLoading={ordersLoading} onSelect={setSelectedOrder} updateOrderStatus={updateOrderStatus} createInvoice={createInvoice} onGerarNota={openGerarNota} onNewOrder={() => setNewOrderOpen(true)} onVerNota={setVerNotaOrder} search={topbarSearch} />}
         {active === 'vendedores' && <Sellers search={topbarSearch} addNotif={addNotif} />}
         {active === 'notas' && <Invoices orders={orders} onGerarNota={openGerarNota} onVerNota={setVerNotaOrder} search={topbarSearch} />}
-        {active === 'estoque' && <Stock onProduct={setSelectedProduct} refreshKey={stockRefreshKey} search={topbarSearch} addNotif={addNotif} />}
+        {active === 'estoque' && <Stock onProduct={setSelectedProduct} refreshKey={stockRefreshKey} search={topbarSearch} addNotif={addNotif} bgImport={bgImport} onStartBgAnalysis={startBackgroundAnalysis} onClearBgImport={() => setBgImport(null)} />}
         {active === 'fornecedores' && <Suppliers onMessage={setSupplierModal} search={topbarSearch} addNotif={addNotif} />}
         {active === 'compras' && <Purchases notify={notify} addNotif={addNotif} />}
         {active === 'entregas' && <Deliveries deliveries={deliveriesState} onNewDelivery={() => setNewDeliveryOpen(true)} onSelect={(d) => { setSelectedDelivery(d); fetchDeliveries() }} onOpenVehicles={() => setVehiclesOpen(true)} />}
@@ -785,6 +836,19 @@ function App() {
           onDismiss={(id) => setSystemNotifications((prev) => prev.filter((n) => n.id !== id))}
           onClearAll={() => setSystemNotifications([])}
           onClose={() => setNotifOpen(false)}
+        />
+      )}
+      {bgImportPanelOpen && bgImport && (
+        <BgImportPanel
+          bgImport={bgImport}
+          onClose={() => setBgImportPanelOpen(false)}
+          onImportDone={(result) => {
+            if (result?.isBatch) addNotif('notifStock', { icon: Boxes, title: 'Produtos registrados via upload', text: `${result.count} produto(s) adicionados ao estoque via documento.` })
+            setStockRefreshKey((k) => k + 1)
+            setBgImport(null)
+            setBgImportPanelOpen(false)
+          }}
+          onClearBgImport={() => { setBgImport(null); setBgImportPanelOpen(false) }}
         />
       )}
       {newDeliveryOpen && <NewDeliveryModal onClose={() => setNewDeliveryOpen(false)} orders={orders} vehicles={vehiclesState} onCreate={(d) => { setDeliveriesState((prev) => [d, ...prev]); notify(`Entrega ${d.id} criada com sucesso! O entregador será notificado sobre os pedidos em separação.`); addNotif('notifDeliveries', { icon: Truck, title: 'Nova entrega criada', text: `Entrega ${d.id} com ${d.driver} foi criada e está planejada.` }) }} />}
@@ -1125,7 +1189,7 @@ function Invoices({ orders, onGerarNota, onVerNota, search = '' }) {
 const DEFAULT_GRUPOS = ['J.A Alimentos','Herança da serra',"Lanxe's",'Sabor da fruta','Garopaba','Caseirão','Longa vida','Mein haus','Ferraz','Belfoods','Mandiok','Polpa norte','Cordeiro','Saborsan','Nono paulino','Aipim','Demarchi','EasyChef']
 const DEFAULT_SUBGRUPOS = ['Padrão','J.A Alimentos','Herança da serra',"Lanxe's",'Sabor da fruta','Garopaba','Caseirão','Longa vida','Mein haus','Ferraz','Belfoods','Mandiok','Polpa norte','Cordeiro','Saborsan','Nono paulino','Aipim','Demarchi','EasyChef']
 
-function NewProductModal({ onClose, onCreated, editProduct, onUpdated }) {
+function NewProductModal({ onClose, onCreated, editProduct, onUpdated, bgImport, onStartBgAnalysis, onClearBgImport }) {
   const [tab, setTab] = useState('manual')
   const [form, setForm] = useState(() => editProduct ? {
     name: editProduct.name || '',
@@ -1191,11 +1255,9 @@ function NewProductModal({ onClose, onCreated, editProduct, onUpdated }) {
 
   // Upload tab state
   const [dragOver, setDragOver] = useState(false)
-  const [parsedRows, setParsedRows] = useState(null)
-  const [parseError, setParseError] = useState('')
+  const [uploadError, setUploadError] = useState('')
   const [uploadSubmitting, setUploadSubmitting] = useState(false)
   const [uploadResult, setUploadResult] = useState(null)
-  const [aiAnalyzing, setAiAnalyzing] = useState(false)
   const fileInputRef = useRef(null)
 
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }))
@@ -1283,47 +1345,14 @@ function NewProductModal({ onClose, onCreated, editProduct, onUpdated }) {
   }
 
   const handleFile = (file) => {
-    setParsedRows(null)
-    setParseError('')
     setUploadResult(null)
+    setUploadError('')
     if (!file) return
-    const ext = file.name.split('.').pop().toLowerCase()
-    if (!['txt', 'csv', 'pdf'].includes(ext)) {
-      setParseError('Formato não suportado. Use TXT, CSV ou PDF.')
-      return
-    }
-    setAiAnalyzing(true)
-    const reader = new FileReader()
-    reader.onload = async (e) => {
-      try {
-        const fileContent = e.target.result
-        const res = await fetch(`${API_URL}/api/analyze-document`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ fileContent, fileName: file.name, fileType: ext }),
-        })
-        const data = await res.json()
-        if (!res.ok) throw new Error(data.error || 'Erro ao analisar documento.')
-        if (!data.products?.length) {
-          setParseError('Nenhum produto identificado no documento.')
-        } else {
-          setParsedRows(data.products)
-        }
-      } catch (err) {
-        setParseError(err.message || 'Erro ao analisar documento com IA.')
-      } finally {
-        setAiAnalyzing(false)
-      }
-    }
-    reader.onerror = () => { setParseError('Erro ao ler o arquivo.'); setAiAnalyzing(false) }
-    if (ext === 'pdf') {
-      reader.readAsDataURL(file)
-    } else {
-      reader.readAsText(file)
-    }
+    onStartBgAnalysis?.(file)
   }
 
   const submitUpload = async () => {
+    const parsedRows = bgImport?.parsedRows
     if (!parsedRows) return
     const valid = parsedRows.filter((r) => r.valid)
     if (!valid.length) return
@@ -1339,9 +1368,9 @@ function NewProductModal({ onClose, onCreated, editProduct, onUpdated }) {
       if (!res.ok) throw new Error(data.error || 'Erro no envio')
       setUploadResult(data)
       const totalAffected = (data.created?.length || 0) + (data.updated?.length || 0)
-      if (totalAffected) onCreated({ isBatch: true, count: totalAffected })
+      if (totalAffected) { onCreated({ isBatch: true, count: totalAffected }); onClearBgImport?.() }
     } catch (err) {
-      setParseError(err.message || 'Erro ao enviar produtos.')
+      setUploadError(err.message || 'Erro ao enviar produtos.')
     } finally {
       setUploadSubmitting(false)
     }
@@ -1527,9 +1556,9 @@ function NewProductModal({ onClose, onCreated, editProduct, onUpdated }) {
         {tab === 'upload' && (
           <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden', minHeight: 0 }}>
             <div className="newProductScrollArea">
-              {!parsedRows && !uploadResult && (
+              {!bgImport?.parsedRows && !uploadResult && (
                 <>
-                  {aiAnalyzing ? (
+                  {bgImport?.status === 'analyzing' ? (
                     <div className="uploadZone" style={{ cursor: 'default', pointerEvents: 'none' }}>
                       <Sparkles size={40} style={{ color: 'var(--orange)', animation: 'spin 1.5s linear infinite' }} />
                       <p style={{ fontWeight: 600 }}>Analisando documento com IA...</p>
@@ -1549,8 +1578,13 @@ function NewProductModal({ onClose, onCreated, editProduct, onUpdated }) {
                       <input ref={fileInputRef} type="file" accept=".txt,.csv,.pdf" onChange={(e) => handleFile(e.target.files[0])} />
                     </div>
                   )}
-                  {parseError && <small className="errorText" style={{ marginTop: 10, display: 'block' }}>{parseError}</small>}
-                  {!aiAnalyzing && (
+                  {bgImport?.parseError && <small className="errorText" style={{ marginTop: 10, display: 'block' }}>{bgImport.parseError}</small>}
+                  {bgImport?.status === 'analyzing' && (
+                    <div className="bgImportHint">
+                      <Info size={14} /> Você pode fechar esta tela — a análise continuará em segundo plano.
+                    </div>
+                  )}
+                  {!bgImport?.status && (
                     <div className="uploadFormatHint">
                       <b><Sparkles size={13} style={{ verticalAlign: 'middle', marginRight: 4 }} />Análise inteligente com IA</b>
                       <p style={{ margin: '6px 0 0', fontSize: '.82rem', lineHeight: 1.5 }}>
@@ -1561,12 +1595,12 @@ function NewProductModal({ onClose, onCreated, editProduct, onUpdated }) {
                 </>
               )}
 
-              {parsedRows && !uploadResult && (
+              {bgImport?.parsedRows && !uploadResult && (
                 <div className="uploadPreview">
                   <div className="uploadPreviewHeader">
-                    <h4>{parsedRows.length} produto(s) identificado(s) — {parsedRows.filter((r) => r.valid).length} válido(s)</h4>
+                    <h4>{bgImport.parsedRows.length} produto(s) identificado(s) — {bgImport.parsedRows.filter((r) => r.valid).length} válido(s)</h4>
                     <div className="uploadBtnRow">
-                      <button className="btnReset" onClick={() => { setParsedRows(null); setParseError(''); fileInputRef.current && (fileInputRef.current.value = '') }}>
+                      <button className="btnReset" onClick={() => { onClearBgImport?.(); setUploadError(''); fileInputRef.current && (fileInputRef.current.value = '') }}>
                         <X size={14} /> Trocar arquivo
                       </button>
                     </div>
@@ -1582,7 +1616,7 @@ function NewProductModal({ onClose, onCreated, editProduct, onUpdated }) {
                       </tr>
                     </thead>
                     <tbody>
-                      {parsedRows.map((row, i) => (
+                      {bgImport.parsedRows.map((row, i) => (
                         <tr key={i} className={row.valid ? '' : 'err'}>
                           <td>{row.name || <em>—</em>}</td>
                           <td>{row.category || <em>—</em>}</td>
@@ -1593,7 +1627,7 @@ function NewProductModal({ onClose, onCreated, editProduct, onUpdated }) {
                       ))}
                     </tbody>
                   </table>
-                  {parseError && <small className="errorText" style={{ marginTop: 8, display: 'block' }}>{parseError}</small>}
+                  {uploadError && <small className="errorText" style={{ marginTop: 8, display: 'block' }}>{uploadError}</small>}
                 </div>
               )}
 
@@ -1621,13 +1655,13 @@ function NewProductModal({ onClose, onCreated, editProduct, onUpdated }) {
 
             <div className="newProductFooter">
               <button type="button" onClick={onClose}>Fechar</button>
-              {parsedRows && !uploadResult && (
+              {bgImport?.parsedRows && !uploadResult && (
                 <button
                   className="btnPrimary"
-                  disabled={!parsedRows.filter((r) => r.valid).length || uploadSubmitting}
+                  disabled={!bgImport.parsedRows.filter((r) => r.valid).length || uploadSubmitting}
                   onClick={submitUpload}
                 >
-                  <UploadCloud size={17} /> {uploadSubmitting ? 'Importando...' : `Importar ${parsedRows.filter((r) => r.valid).length} produto(s)`}
+                  <UploadCloud size={17} /> {uploadSubmitting ? 'Importando...' : `Importar ${bgImport.parsedRows.filter((r) => r.valid).length} produto(s)`}
                 </button>
               )}
             </div>
@@ -1638,7 +1672,138 @@ function NewProductModal({ onClose, onCreated, editProduct, onUpdated }) {
   )
 }
 
-function Stock({ onProduct, refreshKey, search = '', addNotif }) {
+function BgImportPanel({ bgImport, onClose, onImportDone, onClearBgImport }) {
+  const [uploadResult, setUploadResult] = useState(null)
+  const [uploadSubmitting, setUploadSubmitting] = useState(false)
+  const [uploadError, setUploadError] = useState('')
+
+  const parsedRows = bgImport?.parsedRows
+
+  const submitUpload = async () => {
+    if (!parsedRows) return
+    const valid = parsedRows.filter((r) => r.valid)
+    if (!valid.length) return
+    setUploadSubmitting(true)
+    setUploadResult(null)
+    try {
+      const res = await fetch(`${API_URL}/api/products`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ products: valid }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Erro no envio')
+      setUploadResult(data)
+      const totalAffected = (data.created?.length || 0) + (data.updated?.length || 0)
+      if (totalAffected) onImportDone?.({ isBatch: true, count: totalAffected })
+    } catch (err) {
+      setUploadError(err.message || 'Erro ao enviar produtos.')
+    } finally {
+      setUploadSubmitting(false)
+    }
+  }
+
+  return (
+    <div className="modalBackdrop">
+      <div className="detailModal newProductModal">
+        <button className="closeBtn" onClick={onClose}><X /></button>
+        <div className="modalHeader">
+          <div>
+            <span>Estoque</span>
+            <h2>Entrada de estoque</h2>
+            <p>{bgImport?.status === 'analyzing' ? 'Análise de documento em andamento...' : `Arquivo: ${bgImport?.fileName || ''}`}</p>
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden', minHeight: 0 }}>
+          <div className="newProductScrollArea">
+            {!parsedRows && !uploadResult && (
+              bgImport?.status === 'analyzing' ? (
+                <div className="uploadZone" style={{ cursor: 'default', pointerEvents: 'none' }}>
+                  <Sparkles size={40} style={{ color: 'var(--orange)', animation: 'spin 1.5s linear infinite' }} />
+                  <p style={{ fontWeight: 600 }}>Analisando documento com IA...</p>
+                  <small>A IA está identificando os produtos. Aguarde um momento.</small>
+                </div>
+              ) : (
+                <div className="uploadZone" style={{ cursor: 'default', pointerEvents: 'none', borderStyle: 'solid', borderColor: 'var(--red-soft, #fca5a5)' }}>
+                  <AlertTriangle size={40} style={{ color: 'var(--red, #ef4444)' }} />
+                  <p style={{ fontWeight: 600 }}>Nenhum produto identificado</p>
+                  <small>{bgImport?.parseError || 'Não foi possível extrair produtos do documento.'}</small>
+                </div>
+              )
+            )}
+
+            {parsedRows && !uploadResult && (
+              <div className="uploadPreview">
+                <div className="uploadPreviewHeader">
+                  <h4>{parsedRows.length} produto(s) identificado(s) — {parsedRows.filter((r) => r.valid).length} válido(s)</h4>
+                  <div className="uploadBtnRow">
+                    <button className="btnReset" onClick={onClearBgImport}>
+                      <X size={14} /> Cancelar importação
+                    </button>
+                  </div>
+                </div>
+                <table className="uploadPreviewTable">
+                  <thead>
+                    <tr><th>Nome</th><th>Categoria</th><th>Preço</th><th>Qtd.</th><th>Embalagem</th></tr>
+                  </thead>
+                  <tbody>
+                    {parsedRows.map((row, i) => (
+                      <tr key={i} className={row.valid ? '' : 'err'}>
+                        <td>{row.name || <em>—</em>}</td>
+                        <td>{row.category || <em>—</em>}</td>
+                        <td>{row.price}</td>
+                        <td>{row.availableQuantity}</td>
+                        <td>{row.packaging || '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {uploadError && <small className="errorText" style={{ marginTop: 8, display: 'block' }}>{uploadError}</small>}
+              </div>
+            )}
+
+            {uploadResult && (
+              <div style={{ padding: '16px 0' }}>
+                {uploadResult.created?.length > 0 && (
+                  <div className="noteBox" style={{ background: '#f0fdf4', borderColor: '#bbf7d0' }}>
+                    <b style={{ color: '#16a34a' }}><CheckCircle2 size={16} style={{ verticalAlign: 'middle' }} /> {uploadResult.created.length} produto(s) criado(s) com sucesso</b>
+                  </div>
+                )}
+                {uploadResult.updated?.length > 0 && (
+                  <div className="noteBox" style={{ background: '#eff6ff', borderColor: '#bfdbfe', marginTop: uploadResult.created?.length ? 10 : 0 }}>
+                    <b style={{ color: '#2563eb' }}><CheckCircle2 size={16} style={{ verticalAlign: 'middle' }} /> {uploadResult.updated.length} produto(s) atualizado(s)</b>
+                  </div>
+                )}
+                {uploadResult.errors?.length > 0 && (
+                  <div className="noteBox" style={{ background: '#fff5f5', borderColor: '#fecaca', marginTop: 10 }}>
+                    <b style={{ color: 'var(--red)' }}>{uploadResult.errors.length} produto(s) com erro</b>
+                    {uploadResult.errors.map((e, i) => <p key={i} style={{ fontSize: '.82rem', margin: '4px 0 0' }}>{e.name}: {e.error}</p>)}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          <div className="newProductFooter">
+            <button type="button" onClick={onClose}>Fechar</button>
+            {parsedRows && !uploadResult && (
+              <button
+                className="btnPrimary"
+                disabled={!parsedRows.filter((r) => r.valid).length || uploadSubmitting}
+                onClick={submitUpload}
+              >
+                <UploadCloud size={17} /> {uploadSubmitting ? 'Importando...' : `Importar ${parsedRows.filter((r) => r.valid).length} produto(s)`}
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function Stock({ onProduct, refreshKey, search = '', addNotif, bgImport, onStartBgAnalysis, onClearBgImport }) {
   const [stockProducts, setStockProducts] = useState([])
   const [loading, setLoading] = useState(true)
   const [newProductOpen, setNewProductOpen] = useState(false)
@@ -1714,7 +1879,7 @@ function Stock({ onProduct, refreshKey, search = '', addNotif }) {
               </div>
             )}
           </div>
-          <button className="btnSolid" onClick={() => setNewProductOpen(true)}><PackageCheck size={18} /> Entrada de estoque</button>
+          <button className="btnSolid" disabled={!!bgImport} onClick={() => !bgImport && setNewProductOpen(true)} title={bgImport ? 'Importação em segundo plano em andamento' : undefined}><PackageCheck size={18} /> Entrada de estoque</button>
         </div>
         {loading && <p className="loadingText">Carregando produtos...</p>}
         {viewMode !== 'list' ? (
@@ -1762,6 +1927,9 @@ function Stock({ onProduct, refreshKey, search = '', addNotif }) {
       {newProductOpen && (
         <NewProductModal
           onClose={() => setNewProductOpen(false)}
+          bgImport={bgImport}
+          onStartBgAnalysis={onStartBgAnalysis}
+          onClearBgImport={onClearBgImport}
           onCreated={(result) => {
             if (addNotif) {
               if (result?.isBatch) {
