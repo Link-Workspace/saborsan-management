@@ -20,7 +20,7 @@ app.http('products', {
         const result = await sql.query`
           SELECT id, name, category, price, badge, description, details,
                  packaging, unitQuantity, packagingWeight, conservation, preparation, idealFor,
-                 availableQuantity, imageUrl, active, createdAt, updatedAt
+                 availableQuantity, imageUrl, active, productGroup, subGroup, createdAt, updatedAt
           FROM Products
           WHERE active = 1
           ORDER BY name ASC
@@ -44,8 +44,8 @@ app.http('products', {
           image: p.imageUrl || null,
           unit: p.packaging || '',
           temperature: p.conservation || '',
-          active: p.active,
-        }));
+          active: p.active,          productGroup: p.productGroup || null,
+          subGroup: p.subGroup || null,        }));
 
         return { jsonBody: { products } };
       }
@@ -72,7 +72,9 @@ app.http('products', {
 
         for (const item of items) {
           const { name, category, price, availableQuantity, badge, description,
-                  details, packaging, unitQuantity, packagingWeight, conservation, preparation, idealFor, imageUrl } = item;
+                  details, packaging, unitQuantity, packagingWeight, conservation, preparation, idealFor, imageUrl,
+                  group, subGroup } = item;
+          const productGroup = group || null;
 
           if (!name || !name.trim() || !category || !category.trim()) {
             errors.push({ name: name || '?', error: 'Nome e categoria são obrigatórios.' });
@@ -98,6 +100,8 @@ app.http('products', {
                   conservation = ${conservation || null},
                   preparation = ${preparation || null},
                   idealFor = ${idealFor || null},
+                  productGroup = ${productGroup},
+                  subGroup = ${subGroup || null},
                   updatedAt = GETUTCDATE()
               WHERE id = ${existingId}
             `;
@@ -107,14 +111,14 @@ app.http('products', {
             await sql.query`
               INSERT INTO Products (id, name, category, price, badge, description, details,
                                     packaging, unitQuantity, packagingWeight, conservation, preparation, idealFor,
-                                    availableQuantity, imageUrl, active, createdAt, updatedAt)
+                                    availableQuantity, imageUrl, active, productGroup, subGroup, createdAt, updatedAt)
               VALUES (${id}, ${name.trim()}, ${category.trim()}, ${priceStr},
                       ${badge || null}, ${description || null}, ${details || null},
                       ${packaging || null}, ${unitQuantity != null ? parseInt(unitQuantity, 10) : null},
                       ${packagingWeight != null ? parseFloat(packagingWeight) : null},
                       ${conservation || null}, ${preparation || null}, ${idealFor || null},
                       ${qty}, ${imageUrl || null},
-                      1, GETUTCDATE(), GETUTCDATE())
+                      1, ${productGroup}, ${subGroup || null}, GETUTCDATE(), GETUTCDATE())
             `;
             created.push({ id, name: name.trim(), category: category.trim() });
           }
@@ -126,7 +130,8 @@ app.http('products', {
       if (request.method === 'PUT') {
         const body = await request.json();
         const { id, name, category, price, availableQuantity, packaging, unitQuantity, packagingWeight, conservation,
-                description, details, preparation, idealFor, badge, imageUrl } = body;
+                description, details, preparation, idealFor, badge, imageUrl, group, subGroup } = body;
+        const productGroup = group || null;
 
         if (!id || !name?.trim() || !category?.trim()) {
           return { status: 400, jsonBody: { error: 'id, nome e categoria são obrigatórios.' } };
@@ -148,6 +153,8 @@ app.http('products', {
               idealFor = ${idealFor || null},
               availableQuantity = ${parseInt(availableQuantity ?? 0, 10)},
               imageUrl = ${imageUrl || null},
+              productGroup = ${productGroup},
+              subGroup = ${subGroup || null},
               updatedAt = GETUTCDATE()
           WHERE id = ${id}
         `;

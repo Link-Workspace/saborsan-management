@@ -1,6 +1,7 @@
 const { app } = require('@azure/functions');
 const { OpenAI } = require('openai');
 const sql = require('mssql');
+const { PDFParse } = require('pdf-parse');
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
@@ -24,10 +25,10 @@ CAMPOS VÁLIDOS DO BANCO DE DADOS — mapeie cada informação exatamente para u
 - unitQuantity: Número inteiro de unidades por embalagem — ex: "c/10" → 10, "c/20" → 20, "Pct/10" → 10. Null se não informado.
 - packagingWeight: Peso em kg da embalagem como número decimal — ex: "10Kg" → 10, "1,02kg" → 1.02, "2Kg" → 2, "600g" → 0.6. Null se não informado.
 - conservation: Condição de conservação — ex: "-18°C", "Refrigerado", "Temperatura ambiente". Infira pelo tipo de produto (congelados → "-18°C", frios → "Refrigerado") se não estiver explícito. Null se não for possível inferir.
-- group: Grupo ou família do produto conforme campo "Grupo" do documento. Null se não informado.
-- subGroup: Subgrupo do produto conforme campo "Subgrupo" ou "Sub grupo" do documento. Null se não informado.
+- group: Nome EXATO do grupo ou seção conforme aparece no documento — pode ser um cabeçalho de seção (ex: "POLPA NORTE", "CORDEIRO", "EASYCHEF"), uma coluna "Grupo" ou similar. Se o produto está numa seção com esse cabeçalho, use-o como group. Null apenas se não houver nenhuma indicação de grupo no documento.
+- subGroup: Nome EXATO do subgrupo conforme campo "Subgrupo", "Sub grupo" ou subdivisão do documento. Frequentemente igual ao group quando não há subdivisão explícita. Null se não informado.
 - badge: Destaque, variação ou característica especial detectada no nome — ex: "TRADICIONAL", "NATURAL", "SUPER CONGELADO", "SABOR NATURAL". Null se não houver.
-- description: Descrição adicional relevante que não se encaixe em nenhum campo acima. Null se não houver.
+- description: Use SOMENTE para informações de preparo ou estado do produto que não cabem em nenhum outro campo — ex: "(CRU)", "(FRITO)", "(ASSADO)". NÃO use description para grupo, subgrupo, fabricante, fornecedor, conservação, embalagem ou qualquer informação que tenha campo próprio acima.
 
 REGRAS CRÍTICAS:
 1. Retorne APENAS um JSON válido — sem markdown, sem texto adicional, sem blocos de código.
@@ -37,6 +38,8 @@ REGRAS CRÍTICAS:
 5. availableQuantity é SEMPRE 0 quando o documento não informa quantidade em estoque.
 6. Se o documento tiver coluna "Un" ou "Unidade": use PC/PCT → "Pacote", CX → "Caixa", PO/POTE → "Pote".
 7. Se não encontrar nenhum produto, retorne [].
+8. group e subGroup são campos DEDICADOS — NUNCA coloque nome de grupo, seção ou fabricante no campo description.
+9. Se um trecho do documento começa com produtos sem cabeçalho de grupo visível, mas o contexto anterior indicava um grupo, mantenha esse grupo para esses produtos.
 
 Estrutura do JSON:
 [
@@ -55,6 +58,65 @@ Estrutura do JSON:
     "description": null
   }
 ]`;
+
+// Split text into chunks of ~N non-empty lines with overlap to preserve section headers across boundaries
+function splitIntoChunks(text, linesPerChunk = 120, overlapLines = 20) {
+  const lines = text.split('\n');
+  const chunks = [];
+  let currentStart = 0;
+  let nonEmptyCount = 0;
+  let i = 0;
+
+  while (i < lines.length) {
+    if (lines[i].trim()) nonEmptyCount++;
+    if (nonEmptyCount >= linesPerChunk) {
+      chunks.push(lines.slice(currentStart, i + 1).join('\n'));
+      // Next chunk starts overlapLines back so group headers are visible
+      const overlapStart = Math.max(currentStart, i + 1 - overlapLines);
+      currentStart = overlapStart;
+      nonEmptyCount = lines.slice(overlapStart, i + 1).filter((l) => l.trim()).length;
+    }
+    i++;
+  }
+
+  if (currentStart < lines.length && lines.slice(currentStart).some((l) => l.trim())) {
+    chunks.push(lines.slice(currentStart).join('\n'));
+  }
+
+  return chunks;
+}
+
+// Call AI on one text chunk and return parsed product array
+async function extractFromChunk(chunkText, activePrompt) {
+  const completion = await openai.chat.completions.create({
+    model: 'gpt-4o',
+    messages: [
+      { role: 'system', content: activePrompt },
+      { role: 'user', content: `Extraia todos os produtos do seguinte trecho do documento e retorne APENAS o JSON conforme as instruções:\n\n${chunkText}` },
+    ],
+    temperature: 0,
+    max_tokens: 16384,
+  });
+
+  const raw = completion.choices[0]?.message?.content?.trim() || '[]';
+  let jsonStr = raw;
+  const mdMatch = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (mdMatch) jsonStr = mdMatch[1].trim();
+
+  try {
+    const result = JSON.parse(jsonStr);
+    return Array.isArray(result) ? result : [];
+  } catch {
+    const lastClose = jsonStr.lastIndexOf('}');
+    if (lastClose !== -1) {
+      try {
+        const result = JSON.parse(jsonStr.substring(0, lastClose + 1) + ']');
+        return Array.isArray(result) ? result : [];
+      } catch {}
+    }
+    return [];
+  }
+}
 
 app.http('analyze-document', {
   methods: ['POST'],
@@ -81,53 +143,31 @@ app.http('analyze-document', {
 
       const ext = (fileType || fileName.split('.').pop()).toLowerCase();
 
-      let userContent;
+      let products;
 
       if (ext === 'pdf') {
-        userContent = [
-          {
-            type: 'file',
-            file: {
-              filename: fileName,
-              file_data: fileContent,
-            },
-          },
-          {
-            type: 'text',
-            text: 'Extraia todos os produtos deste documento e retorne APENAS o JSON conforme as instruções.',
-          },
-        ];
+        // Extract text from PDF, split into chunks, process all in parallel
+        const base64 = fileContent.includes(',') ? fileContent.split(',')[1] : fileContent;
+        const pdfBuffer = Buffer.from(base64, 'base64');
+        const parser = new PDFParse({ data: pdfBuffer });
+        const pdfData = await parser.getText();
+        const pdfText = pdfData.text;
+
+        if (!pdfText?.trim()) {
+          return { status: 422, jsonBody: { error: 'Não foi possível extrair texto do PDF. O arquivo deve ser um PDF com texto selecionável (não escaneado).' } };
+        }
+
+        const chunks = splitIntoChunks(pdfText, 120);
+        context.log(`analyze-document: processing PDF in ${chunks.length} chunk(s).`);
+
+        const chunkResults = await Promise.all(chunks.map((chunk) => extractFromChunk(chunk, activePrompt)));
+        products = chunkResults.flat();
       } else {
-        userContent = `Extraia todos os produtos do seguinte documento e retorne APENAS o JSON conforme as instruções:\n\n${fileContent}`;
+        products = await extractFromChunk(fileContent, activePrompt);
       }
 
-      const completion = await openai.chat.completions.create({
-        model: 'gpt-4o',
-        messages: [
-          { role: 'system', content: activePrompt },
-          { role: 'user', content: userContent },
-        ],
-        temperature: 0,
-        max_tokens: 4096,
-      });
-
-      const raw = completion.choices[0]?.message?.content?.trim() || '[]';
-
-      // Remove markdown code block wrappers if present
-      let jsonStr = raw;
-      const mdMatch = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
-      if (mdMatch) jsonStr = mdMatch[1].trim();
-
-      let products;
-      try {
-        products = JSON.parse(jsonStr);
-      } catch {
-        context.warn('analyze-document: JSON parse failed. Raw response:', raw);
+      if (!Array.isArray(products) || !products.length) {
         return { status: 422, jsonBody: { error: 'Não foi possível extrair produtos do documento. Verifique se o arquivo contém dados de produtos.' } };
-      }
-
-      if (!Array.isArray(products)) {
-        return { status: 422, jsonBody: { error: 'Formato inválido retornado pela IA.' } };
       }
 
       const normalized = products.map((p) => ({
