@@ -1951,6 +1951,13 @@ function Stock({ onProduct, refreshKey, search = '', addNotif, bgImport, onStart
 
   const filtered = stockProducts.filter((p) => !search || p.name.toLowerCase().includes(search.toLowerCase()))
 
+  // IDs de produtos que compartilham nome e grupo com pelo menos outro produto
+  const dupIds = new Set(
+    stockProducts
+      .filter((p) => stockProducts.some((q) => q.id !== p.id && q.name === p.name && (q.group || '') === (p.group || '')))
+      .map((p) => p.id)
+  )
+
   const viewOptions = [
     { key: 'grid', icon: LayoutGrid, label: 'Cards com imagem' },
     { key: 'grid-no-image', icon: Boxes, label: 'Cards sem imagem' },
@@ -1985,7 +1992,7 @@ function Stock({ onProduct, refreshKey, search = '', addNotif, bgImport, onStart
             {filtered.map((product) => {
               const percent = product.stock === 0 ? 0 : product.min > 0 ? Math.min(100, Math.round((product.stock / (product.min * 2)) * 100)) : 100
               return (
-                <article className="stockCard" key={product.id} onClick={() => onProduct(product)}>
+                <article className="stockCard" key={product.id} onClick={() => onProduct({ ...product, showKg: dupIds.has(product.id) && !!product.packagingWeight })}>
                   {viewMode === 'grid' && (
                     product.image
                       ? <img src={product.image} alt={product.name} />
@@ -1993,7 +2000,7 @@ function Stock({ onProduct, refreshKey, search = '', addNotif, bgImport, onStart
                   )}
                   <div className="stockBody">
                     <span>{product.category}</span>
-                    <h3>{product.name}</h3>
+                    <h3>{product.name}{dupIds.has(product.id) && product.packagingWeight ? <small style={{fontWeight:400,marginLeft:6}}>{product.packagingWeight}kg</small> : null}</h3>
                     <p>{[product.group, product.description].filter(Boolean).join(' • ')}</p>
                     <div className="stockLevel"><div style={{ width: `${percent}%` }}></div></div>
                     <div className="stockMeta"><b>{product.stock}{product.unit ? ` ${product.unit}` : ''}</b><small>{product.min > 0 ? `Mínimo: ${product.min}` : 'Sem mínimo definido'}</small></div>
@@ -2008,10 +2015,10 @@ function Stock({ onProduct, refreshKey, search = '', addNotif, bgImport, onStart
             {filtered.map((product) => {
               const percent = product.stock === 0 ? 0 : product.min > 0 ? Math.min(100, Math.round((product.stock / (product.min * 2)) * 100)) : 100
               return (
-                <article className="stockListItem" key={product.id} onClick={() => onProduct(product)}>
+                <article className="stockListItem" key={product.id} onClick={() => onProduct({ ...product, showKg: dupIds.has(product.id) && !!product.packagingWeight })}>
                   <div className="stockListInfo">
                     <span>{product.category}</span>
-                    <h3>{product.name}</h3>
+                    <h3>{product.name}{dupIds.has(product.id) && product.packagingWeight ? <small style={{fontWeight:400,marginLeft:6}}>{product.packagingWeight}kg</small> : null}</h3>
                     <p>{[product.group, product.description].filter(Boolean).join(' • ')}</p>
                   </div>
                   <div className="stockLevel stockListLevel"><div style={{ width: `${percent}%` }}></div></div>
@@ -4905,7 +4912,7 @@ function ProductModal({ product, onClose, onRemove, onEdit }) {
             : <div className="productModalNoImage"><ImageOff size={48} /><span>Sem imagem</span></div>}
           <div className="productModalContent">
             <span className="badge">{product.category}</span>
-            <h2>{product.name}</h2>
+            <h2>{product.name}{product.showKg ? <small style={{fontWeight:400,marginLeft:8}}>{product.packagingWeight}kg</small> : null}</h2>
             <p>{product.description || 'Produto controlado no estoque da Saborsan com gestão de validade, temperatura, fornecedor, custo e disponibilidade para pedidos do app.'}</p>
             <div className="detailGrid">
               <div><b>Estoque</b><span>{product.stock}{product.unit ? ` ${product.unit}` : ''}</span></div>
