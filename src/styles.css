@@ -200,6 +200,11 @@ p{margin:0}.appShell{min-height:100vh;display:grid;grid-template-columns:300px 1
 .uploadPreviewTable td{padding:7px 10px;border-bottom:1px solid var(--line);font-weight:700;color:var(--navy-dark)}
 .uploadPreviewTable tr:last-child td{border-bottom:0}
 .uploadPreviewTable tr.err td{color:var(--red);background:#fff5f5}
+.uploadPreviewTable tr.rowChanged td{background:#fffbeb}
+.btnApplyNewInfo{background:var(--orange);color:#fff;border:none;border-radius:8px;padding:4px 10px;font-size:.75rem;font-weight:800;cursor:pointer;white-space:nowrap;transition:.15s}
+.btnApplyNewInfo:hover:not(:disabled){background:var(--orange-strong,#d97706)}
+.btnApplyNewInfo:disabled{opacity:.6;cursor:default}
+.rowUpdatedBadge{display:inline-flex;align-items:center;gap:4px;background:#dcfce7;color:#16a34a;border-radius:8px;padding:3px 9px;font-size:.75rem;font-weight:800}
 .uploadFormatHint{background:#f2f6fb;border-radius:14px;padding:14px 16px;margin-top:12px}
 .uploadFormatHint b{display:block;font-size:.82rem;color:var(--navy-dark);margin-bottom:6px}
 .uploadFormatHint code{font-size:.78rem;color:var(--orange-strong);font-family:monospace;line-height:1.7}

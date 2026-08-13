@@ -186,6 +186,44 @@ app.http('analyze-document', {
         valid: !!(p.name && String(p.name).trim() && p.category && String(p.category).trim()),
       }));
 
+      // Detect products that already exist in DB and have changed data
+      try {
+        await sql.connect(sqlConfig);
+        const existingResult = await sql.query`
+          SELECT id, name, category, price, packaging, unitQuantity, packagingWeight,
+                 conservation, productGroup, subGroup, badge
+          FROM Products WHERE active = 1
+        `;
+        const existingMap = new Map(
+          existingResult.recordset.map((r) => [r.name.trim().toLowerCase(), r])
+        );
+
+        for (const p of normalized) {
+          if (!p.valid) continue;
+          const existing = existingMap.get(p.name.toLowerCase());
+          if (!existing) continue;
+
+          const norm = (v) => (v || '').toString().trim().toLowerCase();
+          const changed =
+            (p.price > 0 && Math.abs(parseFloat(existing.price) - p.price) > 0.001) ||
+            (p.packaging && norm(existing.packaging) !== norm(p.packaging)) ||
+            (p.conservation && norm(existing.conservation) !== norm(p.conservation)) ||
+            (p.category && norm(existing.category) !== norm(p.category)) ||
+            (p.group && norm(existing.productGroup) !== norm(p.group)) ||
+            (p.subGroup && norm(existing.subGroup) !== norm(p.subGroup)) ||
+            (p.badge && norm(existing.badge) !== norm(p.badge)) ||
+            (p.unitQuantity != null && existing.unitQuantity != null && parseInt(existing.unitQuantity) !== p.unitQuantity) ||
+            (p.packagingWeight != null && existing.packagingWeight != null && Math.abs(parseFloat(existing.packagingWeight) - p.packagingWeight) > 0.001);
+
+          if (changed) {
+            p.isExistingWithChanges = true;
+            p.existingId = existing.id;
+          }
+        }
+      } catch (dbErr) {
+        context.warn('analyze-document: could not check existing products for change detection.', dbErr?.message);
+      }
+
       return { jsonBody: { products: normalized } };
     } catch (err) {
       context.error('analyze-document error:', err);

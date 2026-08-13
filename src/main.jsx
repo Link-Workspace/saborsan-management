@@ -1351,10 +1351,45 @@ function NewProductModal({ onClose, onCreated, editProduct, onUpdated, bgImport,
     onStartBgAnalysis?.(file)
   }
 
+  const [rowUpdatedSet, setRowUpdatedSet] = useState(new Set())
+  const [rowApplyingSet, setRowApplyingSet] = useState(new Set())
+
+  const applyNewInfo = async (row, index) => {
+    setRowApplyingSet((prev) => new Set(prev).add(index))
+    try {
+      const res = await fetch(`${API_URL}/api/products`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: row.existingId,
+          name: row.name,
+          category: row.category,
+          price: row.price,
+          availableQuantity: row.availableQuantity,
+          packaging: row.packaging,
+          unitQuantity: row.unitQuantity,
+          packagingWeight: row.packagingWeight,
+          conservation: row.conservation,
+          group: row.group,
+          subGroup: row.subGroup,
+          badge: row.badge,
+          description: row.description,
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Erro ao atualizar produto')
+      setRowUpdatedSet((prev) => new Set(prev).add(index))
+    } catch (err) {
+      setUploadError(err.message || 'Erro ao atualizar produto.')
+    } finally {
+      setRowApplyingSet((prev) => { const s = new Set(prev); s.delete(index); return s })
+    }
+  }
+
   const submitUpload = async () => {
     const parsedRows = bgImport?.parsedRows
     if (!parsedRows) return
-    const valid = parsedRows.filter((r) => r.valid)
+    const valid = parsedRows.filter((r) => r.valid && !r.isExistingWithChanges)
     if (!valid.length) return
     setUploadSubmitting(true)
     setUploadResult(null)
@@ -1613,16 +1648,26 @@ function NewProductModal({ onClose, onCreated, editProduct, onUpdated, bgImport,
                         <th>Preço</th>
                         <th>Qtd.</th>
                         <th>Embalagem</th>
+                        <th></th>
                       </tr>
                     </thead>
                     <tbody>
                       {bgImport.parsedRows.map((row, i) => (
-                        <tr key={i} className={row.valid ? '' : 'err'}>
+                        <tr key={i} className={`${row.valid ? '' : 'err'}${row.isExistingWithChanges ? ' rowChanged' : ''}`}>
                           <td>{row.name || <em>—</em>}</td>
                           <td>{row.category || <em>—</em>}</td>
                           <td>{row.price}</td>
                           <td>{row.availableQuantity}</td>
                           <td>{row.packaging || '—'}</td>
+                          <td>
+                            {row.isExistingWithChanges && (
+                              rowUpdatedSet.has(i)
+                                ? <span className="rowUpdatedBadge">Atualizado</span>
+                                : <button className="btnApplyNewInfo" disabled={rowApplyingSet.has(i)} onClick={() => applyNewInfo(row, i)}>
+                                    {rowApplyingSet.has(i) ? 'Salvando...' : 'Usar novas informações'}
+                                  </button>
+                            )}
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -1655,15 +1700,18 @@ function NewProductModal({ onClose, onCreated, editProduct, onUpdated, bgImport,
 
             <div className="newProductFooter">
               <button type="button" onClick={onClose}>Fechar</button>
-              {bgImport?.parsedRows && !uploadResult && (
-                <button
-                  className="btnPrimary"
-                  disabled={!bgImport.parsedRows.filter((r) => r.valid).length || uploadSubmitting}
-                  onClick={submitUpload}
-                >
-                  <UploadCloud size={17} /> {uploadSubmitting ? 'Importando...' : `Importar ${bgImport.parsedRows.filter((r) => r.valid).length} produto(s)`}
-                </button>
-              )}
+              {bgImport?.parsedRows && !uploadResult && (() => {
+                const importableCount = bgImport.parsedRows.filter((r) => r.valid && !r.isExistingWithChanges).length
+                return importableCount > 0 ? (
+                  <button
+                    className="btnPrimary"
+                    disabled={uploadSubmitting}
+                    onClick={submitUpload}
+                  >
+                    <UploadCloud size={17} /> {uploadSubmitting ? 'Importando...' : `Importar ${importableCount} produto(s)`}
+                  </button>
+                ) : null
+              })()}
             </div>
           </div>
         )}
@@ -1676,12 +1724,46 @@ function BgImportPanel({ bgImport, onClose, onImportDone, onClearBgImport }) {
   const [uploadResult, setUploadResult] = useState(null)
   const [uploadSubmitting, setUploadSubmitting] = useState(false)
   const [uploadError, setUploadError] = useState('')
+  const [rowUpdatedSet, setRowUpdatedSet] = useState(new Set())
+  const [rowApplyingSet, setRowApplyingSet] = useState(new Set())
 
   const parsedRows = bgImport?.parsedRows
 
+  const applyNewInfo = async (row, index) => {
+    setRowApplyingSet((prev) => new Set(prev).add(index))
+    try {
+      const res = await fetch(`${API_URL}/api/products`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: row.existingId,
+          name: row.name,
+          category: row.category,
+          price: row.price,
+          availableQuantity: row.availableQuantity,
+          packaging: row.packaging,
+          unitQuantity: row.unitQuantity,
+          packagingWeight: row.packagingWeight,
+          conservation: row.conservation,
+          group: row.group,
+          subGroup: row.subGroup,
+          badge: row.badge,
+          description: row.description,
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Erro ao atualizar produto')
+      setRowUpdatedSet((prev) => new Set(prev).add(index))
+    } catch (err) {
+      setUploadError(err.message || 'Erro ao atualizar produto.')
+    } finally {
+      setRowApplyingSet((prev) => { const s = new Set(prev); s.delete(index); return s })
+    }
+  }
+
   const submitUpload = async () => {
     if (!parsedRows) return
-    const valid = parsedRows.filter((r) => r.valid)
+    const valid = parsedRows.filter((r) => r.valid && !r.isExistingWithChanges)
     if (!valid.length) return
     setUploadSubmitting(true)
     setUploadResult(null)
@@ -1745,16 +1827,25 @@ function BgImportPanel({ bgImport, onClose, onImportDone, onClearBgImport }) {
                 </div>
                 <table className="uploadPreviewTable">
                   <thead>
-                    <tr><th>Nome</th><th>Categoria</th><th>Preço</th><th>Qtd.</th><th>Embalagem</th></tr>
+                    <tr><th>Nome</th><th>Categoria</th><th>Preço</th><th>Qtd.</th><th>Embalagem</th><th></th></tr>
                   </thead>
                   <tbody>
                     {parsedRows.map((row, i) => (
-                      <tr key={i} className={row.valid ? '' : 'err'}>
+                      <tr key={i} className={`${row.valid ? '' : 'err'}${row.isExistingWithChanges ? ' rowChanged' : ''}`}>
                         <td>{row.name || <em>—</em>}</td>
                         <td>{row.category || <em>—</em>}</td>
                         <td>{row.price}</td>
                         <td>{row.availableQuantity}</td>
                         <td>{row.packaging || '—'}</td>
+                        <td>
+                          {row.isExistingWithChanges && (
+                            rowUpdatedSet.has(i)
+                              ? <span className="rowUpdatedBadge">Atualizado</span>
+                              : <button className="btnApplyNewInfo" disabled={rowApplyingSet.has(i)} onClick={() => applyNewInfo(row, i)}>
+                                  {rowApplyingSet.has(i) ? 'Salvando...' : 'Usar novas informações'}
+                                </button>
+                          )}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -1787,15 +1878,18 @@ function BgImportPanel({ bgImport, onClose, onImportDone, onClearBgImport }) {
 
           <div className="newProductFooter">
             <button type="button" onClick={onClose}>Fechar</button>
-            {parsedRows && !uploadResult && (
-              <button
-                className="btnPrimary"
-                disabled={!parsedRows.filter((r) => r.valid).length || uploadSubmitting}
-                onClick={submitUpload}
-              >
-                <UploadCloud size={17} /> {uploadSubmitting ? 'Importando...' : `Importar ${parsedRows.filter((r) => r.valid).length} produto(s)`}
-              </button>
-            )}
+            {parsedRows && !uploadResult && (() => {
+              const importableCount = parsedRows.filter((r) => r.valid && !r.isExistingWithChanges).length
+              return importableCount > 0 ? (
+                <button
+                  className="btnPrimary"
+                  disabled={uploadSubmitting}
+                  onClick={submitUpload}
+                >
+                  <UploadCloud size={17} /> {uploadSubmitting ? 'Importando...' : `Importar ${importableCount} produto(s)`}
+                </button>
+              ) : null
+            })()}
           </div>
         </div>
       </div>
