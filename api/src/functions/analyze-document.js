@@ -25,8 +25,8 @@ CAMPOS VÁLIDOS DO BANCO DE DADOS — mapeie cada informação exatamente para u
 - unitQuantity: Número inteiro de unidades por embalagem — ex: "c/10" → 10, "c/20" → 20, "Pct/10" → 10. Null se não informado.
 - packagingWeight: Peso em kg da embalagem como número decimal — ex: "10Kg" → 10, "1,02kg" → 1.02, "2Kg" → 2, "600g" → 0.6. Null se não informado.
 - conservation: Condição de conservação — ex: "-18°C", "Refrigerado", "Temperatura ambiente". Infira pelo tipo de produto (congelados → "-18°C", frios → "Refrigerado") se não estiver explícito. Null se não for possível inferir.
-- group: Nome EXATO do grupo ou seção conforme aparece no documento — pode ser um cabeçalho de seção (ex: "POLPA NORTE", "CORDEIRO", "EASYCHEF"), uma coluna "Grupo" ou similar. Se o produto está numa seção com esse cabeçalho, use-o como group. Null apenas se não houver nenhuma indicação de grupo no documento.
-- subGroup: Nome EXATO do subgrupo conforme campo "Subgrupo", "Sub grupo" ou subdivisão do documento. Frequentemente igual ao group quando não há subdivisão explícita. Null se não informado.
+- group: Nome do grupo ou seção conforme aparece no documento — pode ser um cabeçalho de seção (ex: "POLPA NORTE", "CORDEIRO", "EASYCHEF"), uma coluna "Grupo" ou similar. IMPORTANTE: remova qualquer número ou código que preceda o nome (ex: "96 GAROPABA" → "GAROPABA", "105 SABOR DA FRUTA" → "SABOR DA FRUTA"). Null apenas se não houver nenhuma indicação de grupo no documento.
+- subGroup: Nome do subgrupo conforme campo "Subgrupo", "Sub grupo" ou subdivisão do documento. IMPORTANTE: remova qualquer número ou código que preceda o nome (ex: "96.1 PADRÃO" → "PADRÃO", "105.1 ESPECIAL" → "ESPECIAL"). Frequentemente igual ao group quando não há subdivisão explícita. Null se não informado.
 - badge: Destaque, variação ou característica especial detectada no nome — ex: "TRADICIONAL", "NATURAL", "SUPER CONGELADO", "SABOR NATURAL". Null se não houver.
 - description: Use SOMENTE para informações de preparo ou estado do produto que não cabem em nenhum outro campo — ex: "(CRU)", "(FRITO)", "(ASSADO)". NÃO use description para grupo, subgrupo, fabricante, fornecedor, conservação, embalagem ou qualquer informação que tenha campo próprio acima.
 
@@ -179,8 +179,8 @@ app.http('analyze-document', {
         unitQuantity: p.unitQuantity != null ? parseInt(p.unitQuantity, 10) || null : null,
         packagingWeight: p.packagingWeight != null ? parseFloat(String(p.packagingWeight).replace(',', '.')) || null : null,
         conservation: p.conservation ? String(p.conservation).trim() : null,
-        group: p.group ? String(p.group).trim() : null,
-        subGroup: p.subGroup ? String(p.subGroup).trim() : null,
+        group: p.group ? String(p.group).trim().replace(/^\d+(\.\d+)*\s+/, '') : null,
+        subGroup: p.subGroup ? String(p.subGroup).trim().replace(/^\d+(\.\d+)*\s+/, '') : null,
         badge: p.badge ? String(p.badge).trim() : null,
         description: p.description ? String(p.description).trim() : null,
         valid: !!(p.name && String(p.name).trim() && p.category && String(p.category).trim()),

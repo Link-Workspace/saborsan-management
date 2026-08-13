@@ -1228,8 +1228,8 @@ function NewProductModal({ onClose, onCreated, editProduct, onUpdated, bgImport,
   const [addGroupInput, setAddGroupInput] = useState('')
   const [addSubGroupInput, setAddSubGroupInput] = useState('')
 
-  const allGrupos = [...DEFAULT_GRUPOS, ...customGroups]
-  const allSubGrupos = [...DEFAULT_SUBGRUPOS, ...customSubGroups]
+  const allGrupos = [...new Set([...DEFAULT_GRUPOS, ...customGroups, ...(editProduct?.group ? [editProduct.group] : [])])]
+  const allSubGrupos = [...new Set([...DEFAULT_SUBGRUPOS, ...customSubGroups, ...(editProduct?.subGroup ? [editProduct.subGroup] : [])])]
 
   const handleAddGroup = () => {
     const v = addGroupInput.trim()
@@ -1994,7 +1994,7 @@ function Stock({ onProduct, refreshKey, search = '', addNotif, bgImport, onStart
                   <div className="stockBody">
                     <span>{product.category}</span>
                     <h3>{product.name}</h3>
-                    <p>{[product.temperature, product.description].filter(Boolean).join(' • ')}</p>
+                    <p>{[product.group, product.description].filter(Boolean).join(' • ')}</p>
                     <div className="stockLevel"><div style={{ width: `${percent}%` }}></div></div>
                     <div className="stockMeta"><b>{product.stock}{product.unit ? ` ${product.unit}` : ''}</b><small>{product.min > 0 ? `Mínimo: ${product.min}` : 'Sem mínimo definido'}</small></div>
                   </div>
@@ -2012,7 +2012,7 @@ function Stock({ onProduct, refreshKey, search = '', addNotif, bgImport, onStart
                   <div className="stockListInfo">
                     <span>{product.category}</span>
                     <h3>{product.name}</h3>
-                    <p>{[product.temperature, product.description].filter(Boolean).join(' • ')}</p>
+                    <p>{[product.group, product.description].filter(Boolean).join(' • ')}</p>
                   </div>
                   <div className="stockLevel stockListLevel"><div style={{ width: `${percent}%` }}></div></div>
                   <div className="stockMeta stockListMeta">

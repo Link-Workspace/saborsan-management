@@ -44,8 +44,10 @@ app.http('products', {
           image: p.imageUrl || null,
           unit: p.packaging || '',
           temperature: p.conservation || '',
-          active: p.active,          productGroup: p.productGroup || null,
-          subGroup: p.subGroup || null,        }));
+          active: p.active,
+          group: p.productGroup || null,
+          subGroup: p.subGroup || null,
+        }));
 
         return { jsonBody: { products } };
       }
