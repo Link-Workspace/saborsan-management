@@ -343,7 +343,7 @@ const statusClass = (status) => {
   if (s.includes('recebido') || s.includes('aguardando') || s.includes('preparo') || s.includes('pendente')) return 'warning'
   if (s.includes('separação') || s.includes('rota') || s.includes('carregando') || s.includes('parcial')) return 'info'
   if (s.includes('entregue') || s.includes('emitida') || s.includes('ativo') || s.includes('vip') || s.includes('pronto') || s.includes('pago')) return 'success'
-  if (s.includes('inativo') || s.includes('atenção') || s.includes('reativar') || s.includes('baixo') || s.includes('erro') || s.includes('rejeitad') || s.includes('atrasado') || s.includes('cancelado')) return 'danger'
+  if (s.includes('inativo') || s.includes('atenção') || s.includes('reativar') || s.includes('baixo') || s.includes('erro') || s.includes('rejeitad') || s.includes('atrasado') || s.includes('cancelado') || s.includes('removido')) return 'danger'
   return 'neutral'
 }
 
@@ -400,6 +400,7 @@ function App() {
   const [newOrderOpen, setNewOrderOpen] = useState(false)
   const [verNotaOrder, setVerNotaOrder] = useState(null)
   const [removeConfirmOrder, setRemoveConfirmOrder] = useState(null)
+  const [reactivateConfirmOrder, setReactivateConfirmOrder] = useState(null)
   const [editOrder, setEditOrder] = useState(null)
   const [removeConfirmProduct, setRemoveConfirmProduct] = useState(null)
   const [editProduct, setEditProduct] = useState(null)
@@ -667,7 +668,7 @@ function App() {
     }
     if (softDeleted) {
       // Keep in fiscal history — mark as deleted but preserve nfeData
-      setOrders((items) => items.map((item) => item.id === id ? { ...item, isDeleted: true, products: [] } : item))
+      setOrders((items) => items.map((item) => item.id === id ? { ...item, isDeleted: true, status: 'Removido', products: [] } : item))
     } else {
       setOrders((items) => items.filter((item) => item.id !== id))
     }
@@ -675,6 +676,18 @@ function App() {
     setSelectedOrder(null)
     setStockRefreshKey((k) => k + 1)
     notify(`Pedido ${id} removido.`)
+  }
+
+  const reactivateOrder = (id) => {
+    setOrders((items) => items.map((item) => item.id === id ? { ...item, isDeleted: false, status: 'Recebido' } : item))
+    setReactivateConfirmOrder(null)
+    setSelectedOrder(null)
+    notify(`Pedido ${id} reativado.`)
+    fetch(`${API_URL}/api/orders`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ orderId: id, reactivate: true }),
+    }).catch(() => {})
   }
 
   const updateOrder = (updatedOrder) => {
@@ -779,8 +792,8 @@ function App() {
       {selectedDelivery && <DeliveryDetailModal delivery={deliveriesState.find((d) => d.id === selectedDelivery.id) || selectedDelivery} onClose={() => setSelectedDelivery(null)} orders={orders} onCancel={cancelDelivery} onRemove={removeDelivery} onReactivate={reactivateDelivery} onEdit={(d) => { setEditDelivery(d); setSelectedDelivery(null) }} onSelectOrder={setSelectedOrder} />}
       {selectedOrder && (() => {
         const _linkedDelivery = deliveriesState.find((d) => d.orderIds?.includes(selectedOrder.id))
-        const _canRemove = !_linkedDelivery || _linkedDelivery.status === 'Cancelada' || selectedOrder.status !== 'Rota'
-        return <OrderModal order={selectedOrder} onClose={() => setSelectedOrder(null)} updateOrderStatus={updateOrderStatus} createInvoice={createInvoice} onRemove={_canRemove ? () => setRemoveConfirmOrder(selectedOrder) : null} canRemove={_canRemove} onEdit={() => { setEditOrder(selectedOrder); setSelectedOrder(null) }} />
+        const _canRemove = !selectedOrder.isDeleted && selectedOrder.status !== 'Entregue' && selectedOrder.status !== 'Rota'
+        return <OrderModal order={selectedOrder} onClose={() => setSelectedOrder(null)} updateOrderStatus={updateOrderStatus} createInvoice={createInvoice} onRemove={_canRemove ? () => setRemoveConfirmOrder(selectedOrder) : null} canRemove={_canRemove} onReactivate={selectedOrder.isDeleted ? () => setReactivateConfirmOrder(selectedOrder) : null} onEdit={() => { setEditOrder(selectedOrder); setSelectedOrder(null) }} />
       })()}
       {vehiclesOpen && <VehiclesModal
         onClose={() => setVehiclesOpen(false)}
@@ -815,7 +828,8 @@ function App() {
       {(newOrderOpen || editOrder) && (() => {
         const _linkedDelivery = editOrder ? deliveriesState.find((d) => d.orderIds?.includes(editOrder.id)) : null
         const _lockedEdit = !!(editOrder && editOrder.status === 'Rota' && _linkedDelivery?.status === 'Em rota')
-        return <NewOrderModal onClose={() => { setNewOrderOpen(false); setEditOrder(null) }} onCreateOrder={createOrder} onUpdateOrder={updateOrder} editOrder={editOrder} clients={clientsState} lockedEdit={_lockedEdit} products={apiProductsState} />
+        const _notesOnlyEdit = !!(editOrder && editOrder.status === 'Entregue')
+        return <NewOrderModal onClose={() => { setNewOrderOpen(false); setEditOrder(null) }} onCreateOrder={createOrder} onUpdateOrder={updateOrder} editOrder={editOrder} clients={clientsState} lockedEdit={_lockedEdit} notesOnlyEdit={_notesOnlyEdit} products={apiProductsState} />
       })()}
       {editProduct && <NewProductModal editProduct={editProduct} onClose={() => setEditProduct(null)} onCreated={() => {}} onUpdated={() => { setStockRefreshKey((k) => k + 1); notify('Produto atualizado com sucesso!') }} />}
       {removeConfirmOrder && (
@@ -826,6 +840,18 @@ function App() {
             <div className="cancelSepActions">
               <button className="cancelSepConfirm" style={{background:'var(--red)'}} onClick={() => removeOrder(removeConfirmOrder.id)}>Sim, remover pedido</button>
               <button className="cancelSepDeny" onClick={() => setRemoveConfirmOrder(null)}>Não, voltar</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {reactivateConfirmOrder && (
+        <div className="cancelSepOverlay" onClick={(e) => { if (e.target.classList.contains('cancelSepOverlay')) setReactivateConfirmOrder(null) }}>
+          <div className="cancelSepModal">
+            <h3>Reativar pedido?</h3>
+            <p>O pedido <b>{reactivateConfirmOrder.id}</b> de <b>{reactivateConfirmOrder.customer}</b> será reativado com o status <b>Recebido</b>.</p>
+            <div className="cancelSepActions">
+              <button className="cancelSepConfirm" style={{background:'var(--green, #22c55e)'}} onClick={() => reactivateOrder(reactivateConfirmOrder.id)}>Sim, reativar pedido</button>
+              <button className="cancelSepDeny" onClick={() => setReactivateConfirmOrder(null)}>Não, voltar</button>
             </div>
           </div>
         </div>
@@ -1011,7 +1037,8 @@ function Dashboard({ totals, orders, aiEnabled, setActive }) {
 function Orders({ orders, ordersLoading, onSelect, updateOrderStatus, createInvoice, onGerarNota, onNewOrder, onVerNota, search = '' }) {
   const [filter, setFilter] = useState('Todos')
   const activeOrders = orders.filter((o) => !o.isDeleted)
-  const byStatus = filter === 'Todos' ? activeOrders : activeOrders.filter((o) => o.status === filter)
+  const removedOrders = orders.filter((o) => o.isDeleted)
+  const byStatus = filter === 'Todos' ? activeOrders : filter === 'Removido' ? removedOrders : activeOrders.filter((o) => o.status === filter)
   const filtered = !search ? byStatus : byStatus.filter((o) => o.customer.toLowerCase().includes(search.toLowerCase()) || o.id.toLowerCase().includes(search.toLowerCase()))
   return (
     <section className="pageStack">
@@ -1020,14 +1047,14 @@ function Orders({ orders, ordersLoading, onSelect, updateOrderStatus, createInvo
         <button className="btnSolid" onClick={onNewOrder}><Plus size={18} /> Novo pedido</button>
       </div>
       <div className="filtersRow">
-        {['Todos', 'Recebido', 'Separação', 'Pronto', 'Rota', 'Entregue'].map((item) => <button key={item} className={filter === item ? 'active' : ''} onClick={() => setFilter(item)}><Filter size={15} />{item}</button>)}
+        {['Todos', 'Recebido', 'Separação', 'Pronto', 'Rota', 'Entregue', 'Removido'].map((item) => <button key={item} className={filter === item ? 'active' : ''} onClick={() => setFilter(item)}><Filter size={15} />{item}</button>)}
       </div>
       {ordersLoading && <p className="loadingText">Carregando pedidos...</p>}
       <div className="ordersBoard">
         {!ordersLoading && filtered.length === 0 && <p className="emptyText">Nenhum pedido encontrado.</p>}
         {filtered.map((order) => (
           <article className="orderCard" key={order.id}>
-            <div className="orderTop"><div><b>{order.id}</b><span>{order.source}</span></div><div style={{display:'flex',gap:'6px',alignItems:'center',flexWrap:'wrap',justifyContent:'flex-end'}}><Status status={order.status} />{order.status === 'Pronto' && order.nfeData && (order.nfeData.nfeStatus === 'AUTHORIZED' ? <span className="nfeSubStatus success">Nota emitida com sucesso</span> : <span className="nfeSubStatus error">Erro na emição da nota</span>)}</div></div>
+            <div className="orderTop"><div><b>{order.id}</b><span>{order.source}</span></div><div style={{display:'flex',gap:'6px',alignItems:'center',flexWrap:'wrap',justifyContent:'flex-end'}}><Status status={filter === 'Removido' ? 'Removido' : order.status} />{order.status === 'Pronto' && order.nfeData && (order.nfeData.nfeStatus === 'AUTHORIZED' ? <span className="nfeSubStatus success">Nota emitida com sucesso</span> : <span className="nfeSubStatus error">Erro na emição da nota</span>)}</div></div>
             <h3>{order.customer}</h3>
             <p>{order.city} • {order.whatsapp}</p>
             <div className="orderProducts">{order.products.map((p) => <span key={p.name}>{p.qty} {p.unit} • {p.name}</span>)}</div>
@@ -1095,6 +1122,9 @@ function Invoices({ orders, onGerarNota, onVerNota, search = '' }) {
   )
 }
 
+const DEFAULT_GRUPOS = ['J.A Alimentos','Herança da serra',"Lanxe's",'Sabor da fruta','Garopaba','Caseirão','Longa vida','Mein haus','Ferraz','Belfoods','Mandiok','Polpa norte','Cordeiro','Saborsan','Nono paulino','Aipim','Demarchi','EasyChef']
+const DEFAULT_SUBGRUPOS = ['Padrão','J.A Alimentos','Herança da serra',"Lanxe's",'Sabor da fruta','Garopaba','Caseirão','Longa vida','Mein haus','Ferraz','Belfoods','Mandiok','Polpa norte','Cordeiro','Saborsan','Nono paulino','Aipim','Demarchi','EasyChef']
+
 function NewProductModal({ onClose, onCreated, editProduct, onUpdated }) {
   const [tab, setTab] = useState('manual')
   const [form, setForm] = useState(() => editProduct ? {
@@ -1112,16 +1142,51 @@ function NewProductModal({ onClose, onCreated, editProduct, onUpdated }) {
     idealFor: editProduct.idealFor || '',
     badge: editProduct.badge || '',
     imageUrl: editProduct.image || editProduct.imageUrl || '',
+    group: editProduct.group || '',
+    subGroup: editProduct.subGroup || '',
   } : {
     name: '', category: '', price: '', availableQuantity: '',
     packaging: '', unitQuantity: '', packagingWeight: '',
     conservation: '', description: '', details: '',
     preparation: '', idealFor: '', badge: '', imageUrl: '',
+    group: '', subGroup: '',
   })
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState('')
   const [imageFile, setImageFile] = useState(null)
   const [imagePreview, setImagePreview] = useState(editProduct ? (editProduct.image || editProduct.imageUrl || '') : '')
+
+  const [customGroups, setCustomGroups] = useState(() => { try { return JSON.parse(localStorage.getItem('saborsan_custom_grupos') || '[]') } catch { return [] } })
+  const [customSubGroups, setCustomSubGroups] = useState(() => { try { return JSON.parse(localStorage.getItem('saborsan_custom_subgrupos') || '[]') } catch { return [] } })
+  const [showAddGroup, setShowAddGroup] = useState(false)
+  const [showAddSubGroup, setShowAddSubGroup] = useState(false)
+  const [addGroupInput, setAddGroupInput] = useState('')
+  const [addSubGroupInput, setAddSubGroupInput] = useState('')
+
+  const allGrupos = [...DEFAULT_GRUPOS, ...customGroups]
+  const allSubGrupos = [...DEFAULT_SUBGRUPOS, ...customSubGroups]
+
+  const handleAddGroup = () => {
+    const v = addGroupInput.trim()
+    if (!v || allGrupos.includes(v)) { setShowAddGroup(false); setAddGroupInput(''); return }
+    const updated = [...customGroups, v]
+    setCustomGroups(updated)
+    localStorage.setItem('saborsan_custom_grupos', JSON.stringify(updated))
+    set('group', v)
+    setAddGroupInput('')
+    setShowAddGroup(false)
+  }
+
+  const handleAddSubGroup = () => {
+    const v = addSubGroupInput.trim()
+    if (!v || allSubGrupos.includes(v)) { setShowAddSubGroup(false); setAddSubGroupInput(''); return }
+    const updated = [...customSubGroups, v]
+    setCustomSubGroups(updated)
+    localStorage.setItem('saborsan_custom_subgrupos', JSON.stringify(updated))
+    set('subGroup', v)
+    setAddSubGroupInput('')
+    setShowAddSubGroup(false)
+  }
   const imageInputRef = useRef(null)
 
   // Upload tab state
@@ -1174,6 +1239,8 @@ function NewProductModal({ onClose, onCreated, editProduct, onUpdated }) {
             idealFor: form.idealFor || null,
             badge: form.badge || null,
             imageUrl: resolvedImageUrl,
+            group: form.group || null,
+            subGroup: form.subGroup || null,
           }),
         })
         const data = await res.json()
@@ -1200,6 +1267,8 @@ function NewProductModal({ onClose, onCreated, editProduct, onUpdated }) {
           idealFor: form.idealFor || null,
           badge: form.badge || null,
           imageUrl: resolvedImageUrl,
+          group: form.group || null,
+          subGroup: form.subGroup || null,
         }),
       })
       const data = await res.json()
@@ -1335,6 +1404,60 @@ function NewProductModal({ onClose, onCreated, editProduct, onUpdated }) {
                 </label>
                 <label>Conservação / Temperatura
                   <input placeholder="Ex: -18°C, Refrigerado" value={form.conservation} onChange={(e) => set('conservation', e.target.value)} />
+                </label>
+                <label>Grupo
+                  <div style={{ display: 'flex', gap: 6, alignItems: 'flex-start' }}>
+                    <div style={{ flex: 1 }}>
+                      <CustomSelect
+                        value={form.group}
+                        onChange={(v) => set('group', v)}
+                        placeholder="Selecionar grupo..."
+                        options={allGrupos.map((g) => ({ value: g, label: g }))}
+                      />
+                    </div>
+                    <button type="button" className="addGroupBtn" title="Adicionar novo grupo" onClick={() => { setShowAddGroup((v) => !v); setAddGroupInput('') }}>
+                      <Plus size={14} />
+                    </button>
+                  </div>
+                  {showAddGroup && (
+                    <div className="addGroupInline">
+                      <input
+                        value={addGroupInput}
+                        onChange={(e) => setAddGroupInput(e.target.value)}
+                        placeholder="Nome do novo grupo..."
+                        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleAddGroup() } }}
+                        autoFocus
+                      />
+                      <button type="button" onClick={handleAddGroup}><CheckCircle2 size={14} /></button>
+                    </div>
+                  )}
+                </label>
+                <label>Sub grupo
+                  <div style={{ display: 'flex', gap: 6, alignItems: 'flex-start' }}>
+                    <div style={{ flex: 1 }}>
+                      <CustomSelect
+                        value={form.subGroup}
+                        onChange={(v) => set('subGroup', v)}
+                        placeholder="Selecionar sub grupo..."
+                        options={allSubGrupos.map((g) => ({ value: g, label: g }))}
+                      />
+                    </div>
+                    <button type="button" className="addGroupBtn" title="Adicionar novo sub grupo" onClick={() => { setShowAddSubGroup((v) => !v); setAddSubGroupInput('') }}>
+                      <Plus size={14} />
+                    </button>
+                  </div>
+                  {showAddSubGroup && (
+                    <div className="addGroupInline">
+                      <input
+                        value={addSubGroupInput}
+                        onChange={(e) => setAddSubGroupInput(e.target.value)}
+                        placeholder="Nome do novo sub grupo..."
+                        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleAddSubGroup() } }}
+                        autoFocus
+                      />
+                      <button type="button" onClick={handleAddSubGroup}><CheckCircle2 size={14} /></button>
+                    </div>
+                  )}
                 </label>
                 <label className="full">Descrição
                   <input placeholder="Breve descrição do produto" value={form.description} onChange={(e) => set('description', e.target.value)} />
@@ -4215,7 +4338,7 @@ function ProductSelect({ value, onChange, disabled, products: productList = [] }
   )
 }
 
-function NewOrderModal({ onClose, onCreateOrder, onUpdateOrder, editOrder, clients = [], lockedEdit = false, products = [] }) {
+function NewOrderModal({ onClose, onCreateOrder, onUpdateOrder, editOrder, clients = [], lockedEdit = false, notesOnlyEdit = false, products = [] }) {
   const [selectedClientId, setSelectedClientId] = useState(() => {
     if (editOrder) {
       const match = clients.find((c) => c.establishmentName === editOrder.customer)
@@ -4283,7 +4406,7 @@ function NewOrderModal({ onClose, onCreateOrder, onUpdateOrder, editOrder, clien
 
   const total = orderProducts.reduce((sum, p) => sum + p.price * p.qty, 0)
   const hasValidProducts = items.some((item) => item.productId && item.qty > 0)
-  const canSubmit = lockedEdit ? form.delivery.trim() !== '' : (selectedClientId !== '' && form.delivery.trim() !== '' && hasValidProducts)
+  const canSubmit = notesOnlyEdit ? true : lockedEdit ? form.delivery.trim() !== '' : (selectedClientId !== '' && form.delivery.trim() !== '' && hasValidProducts)
 
   const submit = async (e) => {
     e.preventDefault()
@@ -4370,7 +4493,7 @@ function NewOrderModal({ onClose, onCreateOrder, onUpdateOrder, editOrder, clien
           <div>
             <span>Pedido {editOrder ? 'existente' : 'manual'}</span>
             <h2>{editOrder ? 'Editar pedido' : 'Novo pedido'}</h2>
-            <p>{editOrder ? 'Altere os dados do pedido e salve as modificações' : 'Preencha os dados do cliente e os produtos solicitados'}</p>
+            <p>{notesOnlyEdit ? 'Pedido entregue — apenas Observações pode ser editado' : editOrder ? 'Altere os dados do pedido e salve as modificações' : 'Preencha os dados do cliente e os produtos solicitados'}</p>
           </div>
         </div>
         <form onSubmit={submit}>
@@ -4381,7 +4504,7 @@ function NewOrderModal({ onClose, onCreateOrder, onUpdateOrder, editOrder, clien
                 <CustomSelect
                   value={selectedClientId}
                   onChange={(v) => handleClientSelect(v)}
-                  disabled={lockedEdit}
+                  disabled={lockedEdit || notesOnlyEdit}
                   placeholder={clients.length === 0 ? 'Carregando clientes...' : 'Selecione o cliente'}
                   options={clients.map((c) => ({ value: String(c.id), label: `${c.establishmentName}${c.city ? ` — ${c.city}` : ''}` }))}
                 />
@@ -4407,20 +4530,20 @@ function NewOrderModal({ onClose, onCreateOrder, onUpdateOrder, editOrder, clien
                   <div className="newOrderItem" key={idx}>
                     <ProductSelect
                       value={item.productId}
-                      disabled={lockedEdit}
+                      disabled={lockedEdit || notesOnlyEdit}
                       products={products}
                       onChange={(val) => setItems((prev) => prev.map((it, j) => j === idx ? { ...it, productId: val, qty: Math.max(1, it.qty) } : it))}
                     />
-                    <input type="number" min={item.productId ? 1 : 0} value={item.qty} disabled={lockedEdit || !item.productId} onChange={(e) => updateItem(idx, 'qty', Math.max(1, Number(e.target.value)))} />
+                    <input type="number" min={item.productId ? 1 : 0} value={item.qty} disabled={lockedEdit || notesOnlyEdit || !item.productId} onChange={(e) => updateItem(idx, 'qty', Math.max(1, Number(e.target.value)))} />
                     <span className="newOrderUnit">{product ? product.unit : ''}</span>
                     <span className="newOrderItemPrice">{product && item.qty > 0 ? money(product.price * item.qty) : ''}</span>
-                    {!lockedEdit && items.length > 1 && (
+                    {!lockedEdit && !notesOnlyEdit && items.length > 1 && (
                       <button type="button" className="newOrderRemoveBtn" onClick={() => removeItem(idx)}><X size={14} /></button>
                     )}
                   </div>
                 )
               })}
-              <button type="button" className="newOrderAddBtn" onClick={addItem} style={lockedEdit ? {display:'none'} : {}}>
+              <button type="button" className="newOrderAddBtn" onClick={addItem} style={(lockedEdit || notesOnlyEdit) ? {display:'none'} : {}}>
                 <Plus size={15} /> Adicionar produto
               </button>
             </div>
@@ -4431,6 +4554,7 @@ function NewOrderModal({ onClose, onCreateOrder, onUpdateOrder, editOrder, clien
                 <CustomSelect
                   value={form.priority}
                   onChange={(v) => set('priority', v)}
+                  disabled={notesOnlyEdit}
                   options={[
                     { value: 'Normal', label: 'Normal' },
                     { value: 'Alta', label: 'Alta' },
@@ -4438,7 +4562,7 @@ function NewOrderModal({ onClose, onCreateOrder, onUpdateOrder, editOrder, clien
                 />
               </label>
               <label>Previsão de entrega
-                <input placeholder="Hoje, 15:00" value={form.delivery} onChange={(e) => set('delivery', e.target.value)} />
+                <input placeholder="Hoje, 15:00" value={form.delivery} disabled={notesOnlyEdit} onChange={(e) => set('delivery', e.target.value)} />
               </label>
             </div>
 
@@ -4464,12 +4588,12 @@ function NewOrderModal({ onClose, onCreateOrder, onUpdateOrder, editOrder, clien
   )
 }
 
-function OrderModal({ order, onClose, updateOrderStatus, createInvoice, onRemove, onEdit, canRemove = true }) {
+function OrderModal({ order, onClose, updateOrderStatus, createInvoice, onRemove, onEdit, canRemove = true, onReactivate = null }) {
   return (
     <div className="modalBackdrop">
       <div className="detailModal orderModal">
         <button className="closeBtn" onClick={onClose}><X /></button>
-        <div className="modalHeader"><div><span>{order.id}</span><h2>{order.customer}</h2><p>{order.cnpj} • {order.city}</p></div><Status status={order.status} /></div>
+        <div className="modalHeader"><div><span>{order.id}</span><h2>{order.customer}</h2><p>{order.cnpj} • {order.city}</p></div><Status status={order.isDeleted ? 'Removido' : order.status} /></div>
         <div className="orderModalBody">
           <div className="modalSplit">
             <div>
@@ -4486,8 +4610,9 @@ function OrderModal({ order, onClose, updateOrderStatus, createInvoice, onRemove
           </div>
         </div>
         <div className="orderModalFooter">
-          {canRemove && <button className="orderModalBtn orderModalBtnDanger" onClick={onRemove}>Remover</button>}
-          <button className="orderModalBtn orderModalBtnPrimary" onClick={onEdit}>Editar</button>
+          {onReactivate && <button className="orderModalBtn orderModalBtnPrimary" style={{background:'var(--green, #22c55e)',borderColor:'var(--green, #22c55e)'}} onClick={onReactivate}>Reativar</button>}
+          {!onReactivate && canRemove && <button className="orderModalBtn orderModalBtnDanger" onClick={onRemove}>Remover</button>}
+          {!onReactivate && <button className="orderModalBtn orderModalBtnPrimary" onClick={onEdit}>Editar</button>}
         </div>
       </div>
     </div>
@@ -4510,6 +4635,8 @@ function ProductModal({ product, onClose, onRemove, onEdit }) {
               {product.temperature && <div><b>Conservação</b><span>{product.temperature}</span></div>}
               {product.packaging && <div><b>Embalagem</b><span>{product.packaging}</span></div>}
               <div><b>Preço base</b><span>{money(product.price)}</span></div>
+              {product.group && <div><b>Grupo</b><span>{product.group}</span></div>}
+              {product.subGroup && <div><b>Sub grupo</b><span>{product.subGroup}</span></div>}
               {product.idealFor && <div><b>Indicado para</b><span>{product.idealFor}</span></div>}
               {product.preparation && <div><b>Preparo</b><span>{product.preparation}</span></div>}
             </div>
