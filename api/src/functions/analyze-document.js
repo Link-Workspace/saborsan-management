@@ -218,6 +218,8 @@ app.http('analyze-document', {
           if (changed) {
             p.isExistingWithChanges = true;
             p.existingId = existing.id;
+          } else {
+            p.isExistingNoChanges = true;
           }
         }
       } catch (dbErr) {

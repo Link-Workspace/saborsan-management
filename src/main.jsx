@@ -1389,7 +1389,7 @@ function NewProductModal({ onClose, onCreated, editProduct, onUpdated, bgImport,
   const submitUpload = async () => {
     const parsedRows = bgImport?.parsedRows
     if (!parsedRows) return
-    const valid = parsedRows.filter((r) => r.valid && !r.isExistingWithChanges)
+    const valid = parsedRows.filter((r) => r.valid && !r.isExistingWithChanges && !r.isExistingNoChanges)
     if (!valid.length) return
     setUploadSubmitting(true)
     setUploadResult(null)
@@ -1653,7 +1653,7 @@ function NewProductModal({ onClose, onCreated, editProduct, onUpdated, bgImport,
                     </thead>
                     <tbody>
                       {bgImport.parsedRows.map((row, i) => (
-                        <tr key={i} className={`${row.valid ? '' : 'err'}${row.isExistingWithChanges ? ' rowChanged' : ''}`}>
+                        <tr key={i} className={`${row.valid ? '' : 'err'}${row.isExistingWithChanges ? ' rowChanged' : ''}${row.isExistingNoChanges ? ' rowNoChanges' : ''}`}>
                           <td>{row.name || <em>—</em>}</td>
                           <td>{row.category || <em>—</em>}</td>
                           <td>{row.price}</td>
@@ -1667,6 +1667,7 @@ function NewProductModal({ onClose, onCreated, editProduct, onUpdated, bgImport,
                                     {rowApplyingSet.has(i) ? 'Salvando...' : 'Usar novas informações'}
                                   </button>
                             )}
+                            {row.isExistingNoChanges && <span className="rowIgnoredBadge">Já existe</span>}
                           </td>
                         </tr>
                       ))}
@@ -1701,7 +1702,7 @@ function NewProductModal({ onClose, onCreated, editProduct, onUpdated, bgImport,
             <div className="newProductFooter">
               <button type="button" onClick={onClose}>Fechar</button>
               {bgImport?.parsedRows && !uploadResult && (() => {
-                const importableCount = bgImport.parsedRows.filter((r) => r.valid && !r.isExistingWithChanges).length
+                const importableCount = bgImport.parsedRows.filter((r) => r.valid && !r.isExistingWithChanges && !r.isExistingNoChanges).length
                 return importableCount > 0 ? (
                   <button
                     className="btnPrimary"
@@ -1763,7 +1764,7 @@ function BgImportPanel({ bgImport, onClose, onImportDone, onClearBgImport }) {
 
   const submitUpload = async () => {
     if (!parsedRows) return
-    const valid = parsedRows.filter((r) => r.valid && !r.isExistingWithChanges)
+    const valid = parsedRows.filter((r) => r.valid && !r.isExistingWithChanges && !r.isExistingNoChanges)
     if (!valid.length) return
     setUploadSubmitting(true)
     setUploadResult(null)
@@ -1831,7 +1832,7 @@ function BgImportPanel({ bgImport, onClose, onImportDone, onClearBgImport }) {
                   </thead>
                   <tbody>
                     {parsedRows.map((row, i) => (
-                      <tr key={i} className={`${row.valid ? '' : 'err'}${row.isExistingWithChanges ? ' rowChanged' : ''}`}>
+                      <tr key={i} className={`${row.valid ? '' : 'err'}${row.isExistingWithChanges ? ' rowChanged' : ''}${row.isExistingNoChanges ? ' rowNoChanges' : ''}`}>
                         <td>{row.name || <em>—</em>}</td>
                         <td>{row.category || <em>—</em>}</td>
                         <td>{row.price}</td>
@@ -1845,6 +1846,7 @@ function BgImportPanel({ bgImport, onClose, onImportDone, onClearBgImport }) {
                                   {rowApplyingSet.has(i) ? 'Salvando...' : 'Usar novas informações'}
                                 </button>
                           )}
+                          {row.isExistingNoChanges && <span className="rowIgnoredBadge">Já existe</span>}
                         </td>
                       </tr>
                     ))}
@@ -1879,7 +1881,7 @@ function BgImportPanel({ bgImport, onClose, onImportDone, onClearBgImport }) {
           <div className="newProductFooter">
             <button type="button" onClick={onClose}>Fechar</button>
             {parsedRows && !uploadResult && (() => {
-              const importableCount = parsedRows.filter((r) => r.valid && !r.isExistingWithChanges).length
+              const importableCount = parsedRows.filter((r) => r.valid && !r.isExistingWithChanges && !r.isExistingNoChanges).length
               return importableCount > 0 ? (
                 <button
                   className="btnPrimary"
