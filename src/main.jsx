@@ -57,6 +57,7 @@ import {
   Tag,
   Wand2,
   Database,
+  ImageOff,
 } from 'lucide-react'
 import './styles.css'
 
@@ -1985,7 +1986,11 @@ function Stock({ onProduct, refreshKey, search = '', addNotif, bgImport, onStart
               const percent = product.stock === 0 ? 0 : product.min > 0 ? Math.min(100, Math.round((product.stock / (product.min * 2)) * 100)) : 100
               return (
                 <article className="stockCard" key={product.id} onClick={() => onProduct(product)}>
-                  {viewMode === 'grid' && product.image && <img src={product.image} alt={product.name} />}
+                  {viewMode === 'grid' && (
+                    product.image
+                      ? <img src={product.image} alt={product.name} />
+                      : <div className="stockCardNoImage"><ImageOff size={36} /><span>Sem imagem</span></div>
+                  )}
                   <div className="stockBody">
                     <span>{product.category}</span>
                     <h3>{product.name}</h3>
@@ -4895,7 +4900,9 @@ function ProductModal({ product, onClose, onRemove, onEdit }) {
       <div className="productModal">
         <button className="closeBtn" onClick={onClose}><X /></button>
         <div className="productModalBody">
-          {product.image && <img src={product.image} alt={product.name} />}
+          {product.image
+            ? <img src={product.image} alt={product.name} />
+            : <div className="productModalNoImage"><ImageOff size={48} /><span>Sem imagem</span></div>}
           <div className="productModalContent">
             <span className="badge">{product.category}</span>
             <h2>{product.name}</h2>
