@@ -1263,7 +1263,28 @@ function NewProductModal({ onClose, onCreated, editProduct, onUpdated, bgImport,
 
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }))
 
-  const canSubmit = form.name.trim() && form.category.trim() && form.price.trim() && form.packaging && form.unitQuantity.trim() && form.packagingWeight.trim()
+  const isDirty = !editProduct ||
+    imageFile !== null ||
+    form.name !== (editProduct.name || '') ||
+    form.category !== (editProduct.category || '') ||
+    form.price !== (editProduct.price ? String(editProduct.price) : '') ||
+    form.availableQuantity !== (editProduct.stock != null ? String(editProduct.stock) : '') ||
+    form.packaging !== (editProduct.unit || editProduct.packaging || '') ||
+    form.unitQuantity !== (editProduct.unitQuantity != null ? String(editProduct.unitQuantity) : '') ||
+    form.packagingWeight !== (editProduct.packagingWeight != null ? String(editProduct.packagingWeight) : '') ||
+    form.conservation !== (editProduct.temperature || editProduct.conservation || '') ||
+    form.description !== (editProduct.description || '') ||
+    form.details !== (editProduct.details || '') ||
+    form.preparation !== (editProduct.preparation || '') ||
+    form.idealFor !== (editProduct.idealFor || '') ||
+    form.badge !== (editProduct.badge || '') ||
+    form.imageUrl !== (editProduct.image || editProduct.imageUrl || '') ||
+    form.group !== (editProduct.group || '') ||
+    form.subGroup !== (editProduct.subGroup || '')
+
+  const canSubmit = editProduct
+    ? (form.name.trim() && isDirty)
+    : (form.name.trim() && form.category.trim() && form.price.trim() && form.packaging && form.unitQuantity.trim() && form.packagingWeight.trim())
 
   const submitManual = async (e) => {
     e.preventDefault()
