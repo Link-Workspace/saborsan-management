@@ -13,6 +13,7 @@
     "bcryptjs": "^3.0.3",
     "firebase-admin": "^14.1.0",
     "mssql": "^12.6.0",
-    "openai": "^6.45.0"
+    "openai": "^6.45.0",
+    "pdf-parse": "^2.4.5"
   }
 }

@@ -21,13 +21,37 @@ async function getPool() {
 }
 
 let _columnsEnsured = false;
+let _documentTypeResized = false;
+
+async function ensureDocumentTypeSize(pool, context) {
+  if (_documentTypeResized) return;
+  try {
+    // Drop any non-PK/non-unique-constraint indexes on documentType that would block ALTER
+    await pool.request().query`
+      DECLARE @sql NVARCHAR(MAX) = '';
+      SELECT @sql = @sql + 'DROP INDEX [' + i.name + '] ON [Clients]; '
+      FROM sys.indexes i
+      INNER JOIN sys.index_columns ic ON i.object_id = ic.object_id AND i.index_id = ic.index_id
+      INNER JOIN sys.columns c ON ic.object_id = c.object_id AND ic.column_id = c.column_id
+      WHERE c.object_id = OBJECT_ID('Clients') AND c.name = 'documentType'
+        AND i.is_primary_key = 0 AND i.is_unique_constraint = 0 AND i.type > 0;
+      IF LEN(@sql) > 0 EXEC(@sql);
+    `;
+    await pool.request().query`
+      IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Clients') AND name = 'documentType')
+        ALTER TABLE Clients ADD documentType NVARCHAR(20) NULL;
+      ELSE IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Clients') AND name = 'documentType' AND max_length < 40)
+        ALTER TABLE Clients ALTER COLUMN documentType NVARCHAR(20) NULL;
+    `;
+    _documentTypeResized = true;
+  } catch (e) {
+    context.log('ensureDocumentTypeSize error:', e.message);
+  }
+}
+
 async function ensureClientColumns() {
   if (_columnsEnsured) return;
   const pool = await getPool();
-  await pool.request().query`
-    IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Clients') AND name = 'documentType')
-      ALTER TABLE Clients ADD documentType NVARCHAR(20) NULL
-  `;
   await pool.request().query`
     IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Clients') AND name = 'city')
       ALTER TABLE Clients ADD city NVARCHAR(100) NULL
@@ -94,6 +118,7 @@ app.http('clients', {
     try {
       const pool = await getPool();
       try { await ensureClientColumns(); } catch (_) {}
+      await ensureDocumentTypeSize(pool, context);
 
       // ─── GET ────────────────────────────────────────────────────────────────
       if (request.method === 'GET') {

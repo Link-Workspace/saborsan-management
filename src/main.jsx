@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import {
   LayoutDashboard,
@@ -48,6 +48,7 @@ import {
   LayoutGrid,
   List,
   ChevronDown,
+  ChevronUp,
   ArrowLeft,
   Loader2,
   Package,
@@ -56,6 +57,7 @@ import {
   Tag,
   Wand2,
   Database,
+  ImageOff,
 } from 'lucide-react'
 import './styles.css'
 
@@ -148,6 +150,75 @@ const initialOrders = [
       { name: 'Pão de Queijo Tradicional', qty: 2, unit: 'cx', price: 128.9 },
     ],
     notes: 'Cliente elogiou o atendimento. Oferecer croissant no próximo contato.',
+  },
+]
+
+const initialPayments = [
+  {
+    id: 'PAG-001',
+    clientName: 'Padaria Bela Vista',
+    orderId: 'PED-2049',
+    sellerName: 'Carlos Oliveira',
+    paymentDate: '11/08/2025',
+    paymentMethod: 'PIX',
+    paymentValue: 1984.60,
+    totalPaid: 1984.60,
+    status: 'Pago',
+  },
+  {
+    id: 'PAG-002',
+    clientName: 'Café Avenida',
+    orderId: 'PED-2048',
+    sellerName: 'Carlos Oliveira',
+    paymentDate: '10/08/2025',
+    paymentMethod: 'Cartão de débito',
+    paymentValue: 1297.20,
+    totalPaid: 1297.20,
+    status: 'Pago',
+  },
+  {
+    id: 'PAG-003',
+    clientName: 'Mercado Santa Clara',
+    orderId: 'PED-2047',
+    sellerName: 'Ana Paula Ramos',
+    paymentDate: '11/08/2025',
+    paymentMethod: 'Boleto',
+    paymentValue: 2880.30,
+    totalPaid: 0,
+    status: 'Pendente',
+  },
+  {
+    id: 'PAG-004',
+    clientName: 'Restaurante Dom Sabor',
+    orderId: 'PED-2046',
+    sellerName: 'Ana Paula Ramos',
+    paymentDate: '09/08/2025',
+    paymentMethod: 'PIX',
+    paymentValue: 953.80,
+    totalPaid: 953.80,
+    status: 'Pago',
+  },
+  {
+    id: 'PAG-005',
+    clientName: 'Padaria Serrana',
+    orderId: 'PED-2044',
+    sellerName: 'Rafael Menezes',
+    paymentDate: '07/08/2025',
+    paymentMethod: 'Boleto',
+    paymentValue: 1780.00,
+    totalPaid: 890.00,
+    status: 'Parcial',
+  },
+  {
+    id: 'PAG-006',
+    clientName: 'Conveniência Central',
+    orderId: 'PED-2040',
+    sellerName: 'Rafael Menezes',
+    paymentDate: '02/08/2025',
+    paymentMethod: 'Cartão de crédito',
+    paymentValue: 620.00,
+    totalPaid: 0,
+    status: 'Atrasado',
   },
 ]
 
@@ -261,6 +332,7 @@ const navItems = [
   { id: 'compras', label: 'Compras', icon: ClipboardList },
   { id: 'entregas', label: 'Entregas', icon: Truck },
   { id: 'clientes', label: 'Clientes', icon: Users },
+  { id: 'pagamentos', label: 'Pagamentos', icon: CreditCard },
   { id: 'financeiro', label: 'Financeiro', icon: Wallet },
   { id: 'relatorios', label: 'Relatórios', icon: BarChart3 },
   { id: 'automacao', label: 'Automação', icon: Bot },
@@ -269,31 +341,27 @@ const navItems = [
 
 const statusClass = (status) => {
   const s = status.toLowerCase()
-  if (s.includes('recebido') || s.includes('aguardando') || s.includes('preparo')) return 'warning'
-  if (s.includes('separação') || s.includes('rota') || s.includes('carregando')) return 'info'
-  if (s.includes('entregue') || s.includes('emitida') || s.includes('ativo') || s.includes('vip') || s.includes('pronto')) return 'success'
-  if (s.includes('inativo') || s.includes('atenção') || s.includes('reativar') || s.includes('baixo') || s.includes('erro') || s.includes('rejeitad')) return 'danger'
+  if (s.includes('recebido') || s.includes('aguardando') || s.includes('preparo') || s.includes('pendente')) return 'warning'
+  if (s.includes('separação') || s.includes('rota') || s.includes('carregando') || s.includes('parcial')) return 'info'
+  if (s.includes('entregue') || s.includes('emitida') || s.includes('ativo') || s.includes('vip') || s.includes('pronto') || s.includes('pago')) return 'success'
+  if (s.includes('inativo') || s.includes('atenção') || s.includes('reativar') || s.includes('baixo') || s.includes('erro') || s.includes('rejeitad') || s.includes('atrasado') || s.includes('cancelado') || s.includes('removido')) return 'danger'
   return 'neutral'
 }
 
-const notifications = [
-  { id: 1, type: 'warning', icon: AlertTriangle, title: 'Estoque crítico', text: 'Açaí Premium Balde abaixo do mínimo. Apenas 31 unidades restantes.', time: 'Agora' },
-  { id: 2, icon: ShoppingCart, title: 'Novo pedido recebido', text: 'PED-2049 de Padaria Bela Vista no valor de R$ 1.984,60 aguarda separação.', time: '8min' },
-  { id: 3, icon: Truck, title: 'Entrega em rota', text: 'ENT-041 • Lages Centro está 72% concluída. Temperatura monitorada.', time: '22min' },
-  { id: 4, icon: ReceiptText, title: 'Nota fiscal pendente', text: 'NF-000915 de Padaria Serrana aguarda envio ao cliente.', time: '1h' },
-]
-
-function NotifPanel({ onClose }) {
+function NotifPanel({ notifications, onDismiss, onClearAll, onClose }) {
   return (
     <>
       <div className="notifOverlay" onClick={onClose} />
       <aside className="notifPanel">
         <div className="notifHeader">
           <h3>Notificações</h3>
-          <span className="badge navy">4 novas</span>
+          {notifications.length > 0 && <span className="badge navy">{notifications.length} nova{notifications.length !== 1 ? 's' : ''}</span>}
           <button className="notifClose" onClick={onClose}><X size={18} /></button>
         </div>
         <div className="notifList">
+          {notifications.length === 0 && (
+            <p style={{ textAlign: 'center', padding: '32px 16px', color: 'var(--muted)', fontWeight: 700 }}>Nenhuma notificação no momento.</p>
+          )}
           {notifications.map(({ id, icon: Icon, title, text, time, type }) => (
             <div className={`notifItem${type === 'warning' ? ' notifWarning' : ''}`} key={id}>
               <div className="notifIcon"><Icon size={18} /></div>
@@ -301,11 +369,16 @@ function NotifPanel({ onClose }) {
                 <b>{title}</b>
                 <p>{text}</p>
               </div>
-              <small>{time}</small>
+              <div className="notifItemRight">
+                <button className="notifDismiss" onClick={() => onDismiss(id)} aria-label="Remover notificação"><X size={13} /></button>
+                <small>{time}</small>
+              </div>
             </div>
           ))}
         </div>
-        <button className="notifFooter" onClick={onClose}>Marcar todas como lidas</button>
+        {notifications.length > 0 && (
+          <button className="notifFooter" onClick={onClearAll}>Limpar todas</button>
+        )}
       </aside>
     </>
   )
@@ -328,6 +401,7 @@ function App() {
   const [newOrderOpen, setNewOrderOpen] = useState(false)
   const [verNotaOrder, setVerNotaOrder] = useState(null)
   const [removeConfirmOrder, setRemoveConfirmOrder] = useState(null)
+  const [reactivateConfirmOrder, setReactivateConfirmOrder] = useState(null)
   const [editOrder, setEditOrder] = useState(null)
   const [removeConfirmProduct, setRemoveConfirmProduct] = useState(null)
   const [editProduct, setEditProduct] = useState(null)
@@ -345,7 +419,43 @@ function App() {
   const [selectedClient, setSelectedClient] = useState(null)
   const [editClient, setEditClient] = useState(null)
   const [removeConfirmClient, setRemoveConfirmClient] = useState(null)
+  const [paymentsState, setPaymentsState] = useState(initialPayments)
+  const [paymentsLoading, setPaymentsLoading] = useState(false)
+  const [selectedPayment, setSelectedPayment] = useState(null)
+  const [newPaymentOpen, setNewPaymentOpen] = useState(false)
   const [apiProductsState, setApiProductsState] = useState([])
+  const [bgImport, setBgImport] = useState(null)
+  const [bgImportPanelOpen, setBgImportPanelOpen] = useState(false)
+
+  const [systemNotifications, setSystemNotifications] = useState([])
+  const [notifSettings, setNotifSettings] = useState(() => {
+    try {
+      const s = JSON.parse(localStorage.getItem('saborsan_settings') || '{}')
+      return {
+        notifOrders:          s.notifOrders          !== undefined ? s.notifOrders          : true,
+        notifSellers:         s.notifSellers         !== undefined ? s.notifSellers         : true,
+        notifFiscalDocuments: s.notifFiscalDocuments !== undefined ? s.notifFiscalDocuments : true,
+        notifStock:           s.notifStock           !== undefined ? s.notifStock           : true,
+        notifSuppliers:       s.notifSuppliers       !== undefined ? s.notifSuppliers       : true,
+        notifPurchases:       s.notifPurchases       !== undefined ? s.notifPurchases       : true,
+        notifDeliveries:      s.notifDeliveries      !== undefined ? s.notifDeliveries      : true,
+        notifClients:         s.notifClients         !== undefined ? s.notifClients         : true,
+        notifPayments:        s.notifPayments        !== undefined ? s.notifPayments        : true,
+      }
+    } catch {
+      return { notifOrders: true, notifSellers: true, notifFiscalDocuments: true, notifStock: true, notifSuppliers: true, notifPurchases: true, notifDeliveries: true, notifClients: true, notifPayments: true }
+    }
+  })
+  const notifSettingsRef = useRef(notifSettings)
+  useEffect(() => { notifSettingsRef.current = notifSettings }, [notifSettings])
+  const addNotif = useCallback((category, { type = 'default', icon, title, text }) => {
+    if (!notifSettingsRef.current[category]) return
+    setSystemNotifications((prev) => [{
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      category, type, icon, title, text,
+      time: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
+    }, ...prev])
+  }, [])
 
   const fetchApiProducts = () => {
     fetch(`${API_URL}/api/products`)
@@ -386,12 +496,52 @@ function App() {
       .finally(() => setClientsLoading(false))
   }
 
+  const fetchPayments = () => {
+    setPaymentsLoading(true)
+    fetch(`${API_URL}/api/payments`)
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.payments) {
+          setPaymentsState(data.payments)
+          data.payments.filter((p) => p.status === 'Pendente' || p.status === 'Atrasado').forEach((p) => {
+            const sessionKey = `notif_pay_pending_${p.id}`
+            if (!sessionStorage.getItem(sessionKey)) {
+              addNotif('notifPayments', { icon: Clock3, type: 'warning', title: `Pagamento ${p.status.toLowerCase()}`, text: `Pagamento de ${p.clientName} no valor de ${money(p.paymentValue || 0)} está ${p.status.toLowerCase()}.` })
+              sessionStorage.setItem(sessionKey, '1')
+            }
+          })
+        }
+      })
+      .catch(() => {})
+      .finally(() => setPaymentsLoading(false))
+  }
+
   useEffect(() => { fetchOrders() }, [])
   useEffect(() => { fetchDeliveries() }, [])
   useEffect(() => { fetchVehicles() }, [])
   useEffect(() => { fetchClients() }, [])
+  useEffect(() => { fetchPayments() }, [])
   useEffect(() => { fetchApiProducts() }, [stockRefreshKey])
   useEffect(() => { setTopbarSearch('') }, [active])
+  useEffect(() => {
+    fetch(`${API_URL}/api/notification-settings`)
+      .then((r) => r.ok ? r.json() : null)
+      .then((data) => {
+        if (!data) return
+        setNotifSettings((prev) => ({
+          ...prev,
+          notifOrders:          data.notifOrders          ?? prev.notifOrders,
+          notifSellers:         data.notifSellers         ?? prev.notifSellers,
+          notifFiscalDocuments: data.notifFiscalDocuments ?? prev.notifFiscalDocuments,
+          notifStock:           data.notifStock           ?? prev.notifStock,
+          notifSuppliers:       data.notifSuppliers       ?? prev.notifSuppliers,
+          notifPurchases:       data.notifPurchases       ?? prev.notifPurchases,
+          notifDeliveries:      data.notifDeliveries      ?? prev.notifDeliveries,
+          notifClients:         data.notifClients         ?? prev.notifClients,
+        }))
+      })
+      .catch(() => {})
+  }, [])
 
   const totals = useMemo(() => {
     const activeOrders = orders.filter((o) => !o.isDeleted)
@@ -410,16 +560,69 @@ function App() {
     window.__saborsanToast = window.setTimeout(() => setToast(''), 2600)
   }
 
+  const startBackgroundAnalysis = useCallback((file) => {
+    const ext = file.name.split('.').pop().toLowerCase()
+    if (!['txt', 'csv', 'pdf'].includes(ext)) {
+      setBgImport({ status: 'done', fileName: file.name, parsedRows: null, parseError: 'Formato não suportado. Use TXT, CSV ou PDF.' })
+      return
+    }
+    setBgImport({ status: 'analyzing', fileName: file.name, parsedRows: null, parseError: '' })
+    const reader = new FileReader()
+    reader.onload = async (e) => {
+      try {
+        const fileContent = e.target.result
+        const res = await fetch(`${API_URL}/api/analyze-document`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fileContent, fileName: file.name, fileType: ext }),
+        })
+        const data = await res.json()
+        if (!res.ok) throw new Error(data.error || 'Erro ao analisar documento.')
+        const rows = data.products?.length ? data.products : null
+        const parseErr = !data.products?.length ? 'Nenhum produto identificado no documento.' : ''
+        setBgImport((prev) => prev ? { ...prev, status: 'done', parsedRows: rows, parseError: parseErr } : null)
+      } catch (err) {
+        setBgImport((prev) => prev ? { ...prev, status: 'done', parsedRows: null, parseError: err.message || 'Erro ao analisar documento com IA.' } : null)
+      }
+    }
+    reader.onerror = () => setBgImport((prev) => prev ? { ...prev, status: 'done', parsedRows: null, parseError: 'Erro ao ler o arquivo.' } : null)
+    if (ext === 'pdf') reader.readAsDataURL(file)
+    else reader.readAsText(file)
+  }, [])
+
+  const prevBgStatusRef = useRef(null)
+  useEffect(() => {
+    const prev = prevBgStatusRef.current
+    prevBgStatusRef.current = bgImport?.status ?? null
+    if (prev === 'analyzing' && bgImport?.status === 'done') {
+      notify('IA concluiu a análise do documento de estoque!')
+      addNotif('notifStock', { icon: PackageCheck, title: 'Análise de estoque concluída', text: `A IA terminou de analisar "${bgImport.fileName}". Clique no ícone de estoque para importar.` })
+    }
+  }, [bgImport?.status])
+
   const updateOrderStatus = (id, status, extra = {}) => {
     setOrders((items) => items.map((item) => item.id === id ? { ...item, status, ...extra } : item))
     if (selectedOrder?.id === id) setSelectedOrder((old) => ({ ...old, status, ...extra }))
     if (verNotaOrder?.id === id) setVerNotaOrder((old) => ({ ...old, status, ...extra }))
 
     if (status === 'Rota') {
+      const linkedDelivery = deliveriesState.find((d) => d.orderIds?.includes(id))
       setDeliveriesState((prev) => prev.map((d) =>
         d.orderIds?.includes(id) ? { ...d, status: 'Em rota', progress: 60 } : d
       ))
       setSelectedDelivery((d) => d?.orderIds?.includes(id) ? { ...d, status: 'Em rota', progress: 60 } : d)
+      addNotif('notifOrders', { icon: Route, title: 'Pedido entrou em rota', text: `Pedido ${id} está em rota de entrega.` })
+      if (linkedDelivery) {
+        addNotif('notifDeliveries', { icon: Truck, title: 'Entrega em rota', text: `Entrega ${linkedDelivery.id} com ${linkedDelivery.driver} está em rota.` })
+      }
+    }
+
+    if (status === 'Entregue') {
+      addNotif('notifOrders', { icon: PackageCheck, title: 'Pedido entregue', text: `Pedido ${id} foi entregue com sucesso.` })
+    }
+
+    if (status === 'Pronto') {
+      addNotif('notifDeliveries', { icon: CheckCircle2, title: 'Pedidos prontos para rota', text: `Os pedidos foram confirmados como prontos. Nota fiscal gerada com sucesso.` })
     }
 
     notify(`Pedido ${id} atualizado para ${status}.`)
@@ -472,6 +675,7 @@ function App() {
     setOrders((prev) => [order, ...prev])
     setStockRefreshKey((k) => k + 1)
     notify(`Pedido ${order.id} criado com sucesso!`)
+    addNotif('notifOrders', { icon: ShoppingCart, title: 'Novo pedido recebido', text: `Pedido ${order.id} de ${order.customer} no valor de ${money(order.value)} aguarda separação.` })
   }
 
   const openGerarNota = (order) => {
@@ -507,7 +711,7 @@ function App() {
     }
     if (softDeleted) {
       // Keep in fiscal history — mark as deleted but preserve nfeData
-      setOrders((items) => items.map((item) => item.id === id ? { ...item, isDeleted: true, products: [] } : item))
+      setOrders((items) => items.map((item) => item.id === id ? { ...item, isDeleted: true, status: 'Removido', products: [] } : item))
     } else {
       setOrders((items) => items.filter((item) => item.id !== id))
     }
@@ -515,6 +719,18 @@ function App() {
     setSelectedOrder(null)
     setStockRefreshKey((k) => k + 1)
     notify(`Pedido ${id} removido.`)
+  }
+
+  const reactivateOrder = (id) => {
+    setOrders((items) => items.map((item) => item.id === id ? { ...item, isDeleted: false, status: 'Recebido' } : item))
+    setReactivateConfirmOrder(null)
+    setSelectedOrder(null)
+    notify(`Pedido ${id} reativado.`)
+    fetch(`${API_URL}/api/orders`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ orderId: id, reactivate: true }),
+    }).catch(() => {})
   }
 
   const updateOrder = (updatedOrder) => {
@@ -572,9 +788,18 @@ function App() {
             <span className="topKicker">Saborsan Distribuidora</span>
             <h1>{title}</h1>
           </div>
-          <div className="searchBox topbarSearch"><Search size={17} /><input placeholder={{ pedidos: 'Buscar pedidos, clientes...', estoque: 'Buscar produtos', notas: 'Buscar notas fiscais...', vendedores: 'Buscar vendedores...', fornecedores: 'Buscar fornecedores...', clientes: 'Buscar clientes...' }[active] || 'Buscar no painel...'} value={topbarSearch} onChange={(e) => setTopbarSearch(e.target.value)} /></div>
+          <div className="searchBox topbarSearch"><Search size={17} /><input placeholder={{ pedidos: 'Buscar pedidos, clientes...', estoque: 'Buscar produtos', notas: 'Buscar notas fiscais...', vendedores: 'Buscar vendedores...', fornecedores: 'Buscar fornecedores...', clientes: 'Buscar clientes...', pagamentos: 'Buscar pagamentos...' }[active] || 'Buscar no painel...'} value={topbarSearch} onChange={(e) => setTopbarSearch(e.target.value)} /></div>
           <div className="topActions">
-            <button className="iconButton" onClick={() => setNotifOpen(!notifOpen)}><Bell size={19} /><span>4</span></button>
+            {bgImport && (
+              <button
+                className={`iconButton${bgImport.status === 'done' ? ' bgImportPulse' : ''}`}
+                onClick={() => setBgImportPanelOpen(true)}
+                title={bgImport.status === 'analyzing' ? 'Análise de estoque em andamento...' : 'Análise de estoque concluída — clique para importar'}
+              >
+                <PackageCheck size={19} />
+              </button>
+            )}
+            <button className="iconButton" onClick={() => setNotifOpen(!notifOpen)}><Bell size={19} />{systemNotifications.length > 0 && <span>{systemNotifications.length}</span>}</button>
           </div>
         </header>
 
@@ -586,31 +811,54 @@ function App() {
 
         {active === 'dashboard' && <Dashboard totals={totals} orders={orders} aiEnabled={aiEnabled} setActive={setActive} />}
         {active === 'pedidos' && <Orders orders={orders} ordersLoading={ordersLoading} onSelect={setSelectedOrder} updateOrderStatus={updateOrderStatus} createInvoice={createInvoice} onGerarNota={openGerarNota} onNewOrder={() => setNewOrderOpen(true)} onVerNota={setVerNotaOrder} search={topbarSearch} />}
-        {active === 'vendedores' && <Sellers search={topbarSearch} />}
+        {active === 'vendedores' && <Sellers search={topbarSearch} addNotif={addNotif} />}
         {active === 'notas' && <Invoices orders={orders} onGerarNota={openGerarNota} onVerNota={setVerNotaOrder} search={topbarSearch} />}
-        {active === 'estoque' && <Stock onProduct={setSelectedProduct} refreshKey={stockRefreshKey} search={topbarSearch} />}
-        {active === 'fornecedores' && <Suppliers onMessage={setSupplierModal} search={topbarSearch} />}
-        {active === 'compras' && <Purchases notify={notify} />}
+        {active === 'estoque' && <Stock onProduct={setSelectedProduct} refreshKey={stockRefreshKey} search={topbarSearch} addNotif={addNotif} bgImport={bgImport} onStartBgAnalysis={startBackgroundAnalysis} onClearBgImport={() => setBgImport(null)} />}
+        {active === 'fornecedores' && <Suppliers onMessage={setSupplierModal} search={topbarSearch} addNotif={addNotif} />}
+        {active === 'compras' && <Purchases notify={notify} addNotif={addNotif} />}
         {active === 'entregas' && <Deliveries deliveries={deliveriesState} onNewDelivery={() => setNewDeliveryOpen(true)} onSelect={(d) => { setSelectedDelivery(d); fetchDeliveries() }} onOpenVehicles={() => setVehiclesOpen(true)} />}
         {active === 'clientes' && <Clients clientsData={clientsState} clientsLoading={clientsLoading} onNewClient={() => setNewClientOpen(true)} onSelectClient={setSelectedClient} search={topbarSearch} />}
+        {active === 'pagamentos' && <Payments paymentsData={paymentsState} paymentsLoading={paymentsLoading} onSelectPayment={setSelectedPayment} onNewPayment={() => setNewPaymentOpen(true)} search={topbarSearch} />}
         {active === 'financeiro' && <Finance />}
         {active === 'relatorios' && <Reports />}
         {active === 'automacao' && <Automation aiEnabled={aiEnabled} setAiEnabled={setAiEnabled} notify={notify} />}
-        {active === 'configuracoes' && <Settings notify={notify} />}
+        {active === 'configuracoes' && <Settings notify={notify} onNotifSettingChange={(key, val) => setNotifSettings((p) => ({ ...p, [key]: val }))} />}
       </main>
 
+      {selectedPayment && <PaymentDetailModal payment={selectedPayment} onClose={() => setSelectedPayment(null)} />}
+      {newPaymentOpen && <NewPaymentModal onClose={() => setNewPaymentOpen(false)} onCreated={(p) => { setPaymentsState((prev) => [p, ...prev]); notify(`Pagamento ${p.id} registrado com sucesso!`); addNotif('notifPayments', { icon: CreditCard, title: 'Novo pagamento registrado', text: `Pagamento de ${p.clientName} no valor de ${money(p.paymentValue || 0)} foi registrado.` }); if (p.status === 'Pendente' || p.status === 'Atrasado') addNotif('notifPayments', { icon: Clock3, type: 'warning', title: 'Pagamento pendente', text: `Pagamento de ${p.clientName} está com status ${(p.status || '').toLowerCase()}.` }) }} />}
       {selectedProduct && <ProductModal product={selectedProduct} onClose={() => setSelectedProduct(null)} onRemove={() => setRemoveConfirmProduct(selectedProduct)} onEdit={() => { setEditProduct(selectedProduct); setSelectedProduct(null) }} />}
       {supplierModal && <SupplierModal supplier={supplierModal} onClose={() => setSupplierModal(null)} notify={notify} />}
-      {notaFiscalOrder && <NotaFiscalModal order={notaFiscalOrder} onClose={() => setNotaFiscalOrder(null)} updateOrderStatus={updateOrderStatus} notify={notify} />}
+      {notaFiscalOrder && <NotaFiscalModal order={notaFiscalOrder} onClose={() => setNotaFiscalOrder(null)} updateOrderStatus={updateOrderStatus} notify={notify} addNotif={addNotif} />}
       {verNotaOrder && <VerNotaModal order={verNotaOrder} onClose={() => setVerNotaOrder(null)} onSendToClient={sendNfeToClient} onGerarNota={(o) => { setVerNotaOrder(null); setNotaFiscalOrder(o) }} updateOrderStatus={updateOrderStatus} />}
-      {notifOpen && <NotifPanel onClose={() => setNotifOpen(false)} />}
-      {newDeliveryOpen && <NewDeliveryModal onClose={() => setNewDeliveryOpen(false)} orders={orders} vehicles={vehiclesState} onCreate={(d) => { setDeliveriesState((prev) => [d, ...prev]); notify(`Entrega ${d.id} criada com sucesso! O entregador será notificado sobre os pedidos em separação.`) }} />}
-      {editDelivery && <NewDeliveryModal onClose={() => setEditDelivery(null)} orders={orders} vehicles={vehiclesState} editDelivery={editDelivery} onUpdate={(d) => { setDeliveriesState((prev) => prev.map((x) => x.id === d.id ? d : x)); setEditDelivery(null); notify(`Entrega ${d.id} atualizada com sucesso!`) }} onCreate={(d) => { setDeliveriesState((prev) => [d, ...prev]); notify(`Entrega ${d.id} criada com sucesso! O entregador será notificado sobre os pedidos em separação.`) }} />}
+      {notifOpen && (
+        <NotifPanel
+          notifications={systemNotifications}
+          onDismiss={(id) => setSystemNotifications((prev) => prev.filter((n) => n.id !== id))}
+          onClearAll={() => setSystemNotifications([])}
+          onClose={() => setNotifOpen(false)}
+        />
+      )}
+      {bgImportPanelOpen && bgImport && (
+        <BgImportPanel
+          bgImport={bgImport}
+          onClose={() => setBgImportPanelOpen(false)}
+          onImportDone={(result) => {
+            if (result?.isBatch) addNotif('notifStock', { icon: Boxes, title: 'Produtos registrados via upload', text: `${result.count} produto(s) adicionados ao estoque via documento.` })
+            setStockRefreshKey((k) => k + 1)
+            setBgImport(null)
+            setBgImportPanelOpen(false)
+          }}
+          onClearBgImport={() => { setBgImport(null); setBgImportPanelOpen(false) }}
+        />
+      )}
+      {newDeliveryOpen && <NewDeliveryModal onClose={() => setNewDeliveryOpen(false)} orders={orders} vehicles={vehiclesState} onCreate={(d) => { setDeliveriesState((prev) => [d, ...prev]); notify(`Entrega ${d.id} criada com sucesso! O entregador será notificado sobre os pedidos em separação.`); addNotif('notifDeliveries', { icon: Truck, title: 'Nova entrega criada', text: `Entrega ${d.id} com ${d.driver} foi criada e está planejada.` }) }} />}
+      {editDelivery && <NewDeliveryModal onClose={() => setEditDelivery(null)} orders={orders} vehicles={vehiclesState} editDelivery={editDelivery} onUpdate={(d) => { setDeliveriesState((prev) => prev.map((x) => x.id === d.id ? d : x)); setEditDelivery(null); notify(`Entrega ${d.id} atualizada com sucesso!`); if (d.status === 'Concluída') addNotif('notifDeliveries', { icon: CheckCircle2, title: 'Entrega concluída', text: `Entrega ${d.id} com ${d.driver} foi concluída com sucesso.` }); else if (d.status === 'Em rota') addNotif('notifDeliveries', { icon: Route, title: 'Entrega em rota', text: `Entrega ${d.id} com ${d.driver} entrou em rota.` }) }} onCreate={(d) => { setDeliveriesState((prev) => [d, ...prev]); notify(`Entrega ${d.id} criada com sucesso! O entregador será notificado sobre os pedidos em separação.`); addNotif('notifDeliveries', { icon: Truck, title: 'Nova entrega criada', text: `Entrega ${d.id} com ${d.driver} foi criada e está planejada.` }) }} />}
       {selectedDelivery && <DeliveryDetailModal delivery={deliveriesState.find((d) => d.id === selectedDelivery.id) || selectedDelivery} onClose={() => setSelectedDelivery(null)} orders={orders} onCancel={cancelDelivery} onRemove={removeDelivery} onReactivate={reactivateDelivery} onEdit={(d) => { setEditDelivery(d); setSelectedDelivery(null) }} onSelectOrder={setSelectedOrder} />}
       {selectedOrder && (() => {
         const _linkedDelivery = deliveriesState.find((d) => d.orderIds?.includes(selectedOrder.id))
-        const _canRemove = !_linkedDelivery || _linkedDelivery.status === 'Cancelada' || selectedOrder.status !== 'Rota'
-        return <OrderModal order={selectedOrder} onClose={() => setSelectedOrder(null)} updateOrderStatus={updateOrderStatus} createInvoice={createInvoice} onRemove={_canRemove ? () => setRemoveConfirmOrder(selectedOrder) : null} canRemove={_canRemove} onEdit={() => { setEditOrder(selectedOrder); setSelectedOrder(null) }} />
+        const _canRemove = !selectedOrder.isDeleted && selectedOrder.status !== 'Entregue' && selectedOrder.status !== 'Rota'
+        return <OrderModal order={selectedOrder} onClose={() => setSelectedOrder(null)} updateOrderStatus={updateOrderStatus} createInvoice={createInvoice} onRemove={_canRemove ? () => setRemoveConfirmOrder(selectedOrder) : null} canRemove={_canRemove} onReactivate={selectedOrder.isDeleted ? () => setReactivateConfirmOrder(selectedOrder) : null} onEdit={() => { setEditOrder(selectedOrder); setSelectedOrder(null) }} />
       })()}
       {vehiclesOpen && <VehiclesModal
         onClose={() => setVehiclesOpen(false)}
@@ -645,7 +893,8 @@ function App() {
       {(newOrderOpen || editOrder) && (() => {
         const _linkedDelivery = editOrder ? deliveriesState.find((d) => d.orderIds?.includes(editOrder.id)) : null
         const _lockedEdit = !!(editOrder && editOrder.status === 'Rota' && _linkedDelivery?.status === 'Em rota')
-        return <NewOrderModal onClose={() => { setNewOrderOpen(false); setEditOrder(null) }} onCreateOrder={createOrder} onUpdateOrder={updateOrder} editOrder={editOrder} clients={clientsState} lockedEdit={_lockedEdit} products={apiProductsState} />
+        const _notesOnlyEdit = !!(editOrder && editOrder.status === 'Entregue')
+        return <NewOrderModal onClose={() => { setNewOrderOpen(false); setEditOrder(null) }} onCreateOrder={createOrder} onUpdateOrder={updateOrder} editOrder={editOrder} clients={clientsState} lockedEdit={_lockedEdit} notesOnlyEdit={_notesOnlyEdit} products={apiProductsState} />
       })()}
       {editProduct && <NewProductModal editProduct={editProduct} onClose={() => setEditProduct(null)} onCreated={() => {}} onUpdated={() => { setStockRefreshKey((k) => k + 1); notify('Produto atualizado com sucesso!') }} />}
       {removeConfirmOrder && (
@@ -656,6 +905,18 @@ function App() {
             <div className="cancelSepActions">
               <button className="cancelSepConfirm" style={{background:'var(--red)'}} onClick={() => removeOrder(removeConfirmOrder.id)}>Sim, remover pedido</button>
               <button className="cancelSepDeny" onClick={() => setRemoveConfirmOrder(null)}>Não, voltar</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {reactivateConfirmOrder && (
+        <div className="cancelSepOverlay" onClick={(e) => { if (e.target.classList.contains('cancelSepOverlay')) setReactivateConfirmOrder(null) }}>
+          <div className="cancelSepModal">
+            <h3>Reativar pedido?</h3>
+            <p>O pedido <b>{reactivateConfirmOrder.id}</b> de <b>{reactivateConfirmOrder.customer}</b> será reativado com o status <b>Recebido</b>.</p>
+            <div className="cancelSepActions">
+              <button className="cancelSepConfirm" style={{background:'var(--green, #22c55e)'}} onClick={() => reactivateOrder(reactivateConfirmOrder.id)}>Sim, reativar pedido</button>
+              <button className="cancelSepDeny" onClick={() => setReactivateConfirmOrder(null)}>Não, voltar</button>
             </div>
           </div>
         </div>
@@ -675,7 +936,7 @@ function App() {
       {newClientOpen && (
         <NewClientModal
           onClose={() => { setNewClientOpen(false); setEditClient(null) }}
-          onCreated={(c) => { setClientsState((prev) => [c, ...prev]); notify(`Cliente ${c.establishmentName} cadastrado com sucesso!`) }}
+          onCreated={(c) => { setClientsState((prev) => [c, ...prev]); notify(`Cliente ${c.establishmentName} cadastrado com sucesso!`); addNotif('notifClients', { icon: Users, title: 'Novo cliente cadastrado', text: `${c.establishmentName} foi adicionado à carteira de clientes.` }) }}
           editClient={editClient}
           onUpdated={(c) => { setClientsState((prev) => prev.map((x) => x.id === c.id ? c : x)); setSelectedClient(c); fetchOrders(); notify(`Cliente ${c.establishmentName} atualizado com sucesso!`) }}
         />
@@ -841,7 +1102,8 @@ function Dashboard({ totals, orders, aiEnabled, setActive }) {
 function Orders({ orders, ordersLoading, onSelect, updateOrderStatus, createInvoice, onGerarNota, onNewOrder, onVerNota, search = '' }) {
   const [filter, setFilter] = useState('Todos')
   const activeOrders = orders.filter((o) => !o.isDeleted)
-  const byStatus = filter === 'Todos' ? activeOrders : activeOrders.filter((o) => o.status === filter)
+  const removedOrders = orders.filter((o) => o.isDeleted)
+  const byStatus = filter === 'Todos' ? activeOrders : filter === 'Removido' ? removedOrders : activeOrders.filter((o) => o.status === filter)
   const filtered = !search ? byStatus : byStatus.filter((o) => o.customer.toLowerCase().includes(search.toLowerCase()) || o.id.toLowerCase().includes(search.toLowerCase()))
   return (
     <section className="pageStack">
@@ -850,14 +1112,14 @@ function Orders({ orders, ordersLoading, onSelect, updateOrderStatus, createInvo
         <button className="btnSolid" onClick={onNewOrder}><Plus size={18} /> Novo pedido</button>
       </div>
       <div className="filtersRow">
-        {['Todos', 'Recebido', 'Separação', 'Pronto', 'Rota', 'Entregue'].map((item) => <button key={item} className={filter === item ? 'active' : ''} onClick={() => setFilter(item)}><Filter size={15} />{item}</button>)}
+        {['Todos', 'Recebido', 'Separação', 'Pronto', 'Rota', 'Entregue', 'Removido'].map((item) => <button key={item} className={filter === item ? 'active' : ''} onClick={() => setFilter(item)}><Filter size={15} />{item}</button>)}
       </div>
       {ordersLoading && <p className="loadingText">Carregando pedidos...</p>}
       <div className="ordersBoard">
         {!ordersLoading && filtered.length === 0 && <p className="emptyText">Nenhum pedido encontrado.</p>}
         {filtered.map((order) => (
           <article className="orderCard" key={order.id}>
-            <div className="orderTop"><div><b>{order.id}</b><span>{order.source}</span></div><div style={{display:'flex',gap:'6px',alignItems:'center',flexWrap:'wrap',justifyContent:'flex-end'}}><Status status={order.status} />{order.status === 'Pronto' && order.nfeData && (order.nfeData.nfeStatus === 'AUTHORIZED' ? <span className="nfeSubStatus success">Nota emitida com sucesso</span> : <span className="nfeSubStatus error">Erro na emição da nota</span>)}</div></div>
+            <div className="orderTop"><div><b>{order.id}</b><span>{order.source}</span></div><div style={{display:'flex',gap:'6px',alignItems:'center',flexWrap:'wrap',justifyContent:'flex-end'}}><Status status={filter === 'Removido' ? 'Removido' : order.status} />{order.status === 'Pronto' && order.nfeData && (order.nfeData.nfeStatus === 'AUTHORIZED' ? <span className="nfeSubStatus success">Nota emitida com sucesso</span> : <span className="nfeSubStatus error">Erro na emição da nota</span>)}</div></div>
             <h3>{order.customer}</h3>
             <p>{order.city} • {order.whatsapp}</p>
             <div className="orderProducts">{order.products.map((p) => <span key={p.name}>{p.qty} {p.unit} • {p.name}</span>)}</div>
@@ -925,7 +1187,10 @@ function Invoices({ orders, onGerarNota, onVerNota, search = '' }) {
   )
 }
 
-function NewProductModal({ onClose, onCreated, editProduct, onUpdated }) {
+const DEFAULT_GRUPOS = ['J.A Alimentos','Herança da serra',"Lanxe's",'Sabor da fruta','Garopaba','Caseirão','Longa vida','Mein haus','Ferraz','Belfoods','Mandiok','Polpa norte','Cordeiro','Saborsan','Nono paulino','Aipim','Demarchi','EasyChef']
+const DEFAULT_SUBGRUPOS = ['Padrão','J.A Alimentos','Herança da serra',"Lanxe's",'Sabor da fruta','Garopaba','Caseirão','Longa vida','Mein haus','Ferraz','Belfoods','Mandiok','Polpa norte','Cordeiro','Saborsan','Nono paulino','Aipim','Demarchi','EasyChef']
+
+function NewProductModal({ onClose, onCreated, editProduct, onUpdated, bgImport, onStartBgAnalysis, onClearBgImport }) {
   const [tab, setTab] = useState('manual')
   const [form, setForm] = useState(() => editProduct ? {
     name: editProduct.name || '',
@@ -942,30 +1207,84 @@ function NewProductModal({ onClose, onCreated, editProduct, onUpdated }) {
     idealFor: editProduct.idealFor || '',
     badge: editProduct.badge || '',
     imageUrl: editProduct.image || editProduct.imageUrl || '',
+    group: editProduct.group || '',
+    subGroup: editProduct.subGroup || '',
   } : {
     name: '', category: '', price: '', availableQuantity: '',
     packaging: '', unitQuantity: '', packagingWeight: '',
     conservation: '', description: '', details: '',
     preparation: '', idealFor: '', badge: '', imageUrl: '',
+    group: '', subGroup: '',
   })
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState('')
   const [imageFile, setImageFile] = useState(null)
   const [imagePreview, setImagePreview] = useState(editProduct ? (editProduct.image || editProduct.imageUrl || '') : '')
+
+  const [customGroups, setCustomGroups] = useState(() => { try { return JSON.parse(localStorage.getItem('saborsan_custom_grupos') || '[]') } catch { return [] } })
+  const [customSubGroups, setCustomSubGroups] = useState(() => { try { return JSON.parse(localStorage.getItem('saborsan_custom_subgrupos') || '[]') } catch { return [] } })
+  const [showAddGroup, setShowAddGroup] = useState(false)
+  const [showAddSubGroup, setShowAddSubGroup] = useState(false)
+  const [addGroupInput, setAddGroupInput] = useState('')
+  const [addSubGroupInput, setAddSubGroupInput] = useState('')
+
+  const allGrupos = [...new Set([...DEFAULT_GRUPOS, ...customGroups, ...(editProduct?.group ? [editProduct.group] : [])])]
+  const allSubGrupos = [...new Set([...DEFAULT_SUBGRUPOS, ...customSubGroups, ...(editProduct?.subGroup ? [editProduct.subGroup] : [])])]
+
+  const handleAddGroup = () => {
+    const v = addGroupInput.trim()
+    if (!v || allGrupos.includes(v)) { setShowAddGroup(false); setAddGroupInput(''); return }
+    const updated = [...customGroups, v]
+    setCustomGroups(updated)
+    localStorage.setItem('saborsan_custom_grupos', JSON.stringify(updated))
+    set('group', v)
+    setAddGroupInput('')
+    setShowAddGroup(false)
+  }
+
+  const handleAddSubGroup = () => {
+    const v = addSubGroupInput.trim()
+    if (!v || allSubGrupos.includes(v)) { setShowAddSubGroup(false); setAddSubGroupInput(''); return }
+    const updated = [...customSubGroups, v]
+    setCustomSubGroups(updated)
+    localStorage.setItem('saborsan_custom_subgrupos', JSON.stringify(updated))
+    set('subGroup', v)
+    setAddSubGroupInput('')
+    setShowAddSubGroup(false)
+  }
   const imageInputRef = useRef(null)
 
   // Upload tab state
   const [dragOver, setDragOver] = useState(false)
-  const [parsedRows, setParsedRows] = useState(null)
-  const [parseError, setParseError] = useState('')
+  const [uploadError, setUploadError] = useState('')
   const [uploadSubmitting, setUploadSubmitting] = useState(false)
   const [uploadResult, setUploadResult] = useState(null)
-  const [aiAnalyzing, setAiAnalyzing] = useState(false)
   const fileInputRef = useRef(null)
 
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }))
 
-  const canSubmit = form.name.trim() && form.category.trim() && form.price.trim() && form.packaging && form.unitQuantity.trim() && form.packagingWeight.trim()
+  const isDirty = !editProduct ||
+    imageFile !== null ||
+    form.name !== (editProduct.name || '') ||
+    form.category !== (editProduct.category || '') ||
+    form.price !== (editProduct.price ? String(editProduct.price) : '') ||
+    form.availableQuantity !== (editProduct.stock != null ? String(editProduct.stock) : '') ||
+    form.packaging !== (editProduct.unit || editProduct.packaging || '') ||
+    form.unitQuantity !== (editProduct.unitQuantity != null ? String(editProduct.unitQuantity) : '') ||
+    form.packagingWeight !== (editProduct.packagingWeight != null ? String(editProduct.packagingWeight) : '') ||
+    form.conservation !== (editProduct.temperature || editProduct.conservation || '') ||
+    form.description !== (editProduct.description || '') ||
+    form.details !== (editProduct.details || '') ||
+    form.preparation !== (editProduct.preparation || '') ||
+    form.idealFor !== (editProduct.idealFor || '') ||
+    form.badge !== (editProduct.badge || '') ||
+    form.imageUrl !== (editProduct.image || editProduct.imageUrl || '') ||
+    form.group !== (editProduct.group || '') ||
+    form.subGroup !== (editProduct.subGroup || '')
+
+  const canSubmit = editProduct
+    ? (form.name.trim() && isDirty)
+    : (form.name.trim() && form.category.trim() && form.price.trim() && form.packaging && form.unitQuantity.trim() && form.packagingWeight.trim())
 
   const submitManual = async (e) => {
     e.preventDefault()
@@ -1004,6 +1323,8 @@ function NewProductModal({ onClose, onCreated, editProduct, onUpdated }) {
             idealFor: form.idealFor || null,
             badge: form.badge || null,
             imageUrl: resolvedImageUrl,
+            group: form.group || null,
+            subGroup: form.subGroup || null,
           }),
         })
         const data = await res.json()
@@ -1030,11 +1351,13 @@ function NewProductModal({ onClose, onCreated, editProduct, onUpdated }) {
           idealFor: form.idealFor || null,
           badge: form.badge || null,
           imageUrl: resolvedImageUrl,
+          group: form.group || null,
+          subGroup: form.subGroup || null,
         }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Erro ao criar produto')
-      onCreated()
+      onCreated({ isBatch: false, name: form.name.trim() })
       onClose()
     } catch (err) {
       setSubmitError(err.message || (editProduct ? 'Erro ao atualizar produto. Tente novamente.' : 'Erro ao criar produto. Tente novamente.'))
@@ -1044,49 +1367,51 @@ function NewProductModal({ onClose, onCreated, editProduct, onUpdated }) {
   }
 
   const handleFile = (file) => {
-    setParsedRows(null)
-    setParseError('')
     setUploadResult(null)
+    setUploadError('')
     if (!file) return
-    const ext = file.name.split('.').pop().toLowerCase()
-    if (!['txt', 'csv', 'pdf'].includes(ext)) {
-      setParseError('Formato não suportado. Use TXT, CSV ou PDF.')
-      return
-    }
-    setAiAnalyzing(true)
-    const reader = new FileReader()
-    reader.onload = async (e) => {
-      try {
-        const fileContent = e.target.result
-        const res = await fetch(`${API_URL}/api/analyze-document`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ fileContent, fileName: file.name, fileType: ext }),
-        })
-        const data = await res.json()
-        if (!res.ok) throw new Error(data.error || 'Erro ao analisar documento.')
-        if (!data.products?.length) {
-          setParseError('Nenhum produto identificado no documento.')
-        } else {
-          setParsedRows(data.products)
-        }
-      } catch (err) {
-        setParseError(err.message || 'Erro ao analisar documento com IA.')
-      } finally {
-        setAiAnalyzing(false)
-      }
-    }
-    reader.onerror = () => { setParseError('Erro ao ler o arquivo.'); setAiAnalyzing(false) }
-    if (ext === 'pdf') {
-      reader.readAsDataURL(file)
-    } else {
-      reader.readAsText(file)
+    onStartBgAnalysis?.(file)
+  }
+
+  const [rowUpdatedSet, setRowUpdatedSet] = useState(new Set())
+  const [rowApplyingSet, setRowApplyingSet] = useState(new Set())
+
+  const applyNewInfo = async (row, index) => {
+    setRowApplyingSet((prev) => new Set(prev).add(index))
+    try {
+      const res = await fetch(`${API_URL}/api/products`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: row.existingId,
+          name: row.name,
+          category: row.category,
+          price: row.price,
+          availableQuantity: row.availableQuantity,
+          packaging: row.packaging,
+          unitQuantity: row.unitQuantity,
+          packagingWeight: row.packagingWeight,
+          conservation: row.conservation,
+          group: row.group,
+          subGroup: row.subGroup,
+          badge: row.badge,
+          description: row.description,
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Erro ao atualizar produto')
+      setRowUpdatedSet((prev) => new Set(prev).add(index))
+    } catch (err) {
+      setUploadError(err.message || 'Erro ao atualizar produto.')
+    } finally {
+      setRowApplyingSet((prev) => { const s = new Set(prev); s.delete(index); return s })
     }
   }
 
   const submitUpload = async () => {
+    const parsedRows = bgImport?.parsedRows
     if (!parsedRows) return
-    const valid = parsedRows.filter((r) => r.valid)
+    const valid = parsedRows.filter((r) => r.valid && !r.isExistingWithChanges && !r.isExistingNoChanges)
     if (!valid.length) return
     setUploadSubmitting(true)
     setUploadResult(null)
@@ -1099,9 +1424,10 @@ function NewProductModal({ onClose, onCreated, editProduct, onUpdated }) {
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Erro no envio')
       setUploadResult(data)
-      if (data.created?.length) onCreated()
+      const totalAffected = (data.created?.length || 0) + (data.updated?.length || 0)
+      if (totalAffected) { onCreated({ isBatch: true, count: totalAffected }); onClearBgImport?.() }
     } catch (err) {
-      setParseError(err.message || 'Erro ao enviar produtos.')
+      setUploadError(err.message || 'Erro ao enviar produtos.')
     } finally {
       setUploadSubmitting(false)
     }
@@ -1165,6 +1491,60 @@ function NewProductModal({ onClose, onCreated, editProduct, onUpdated }) {
                 </label>
                 <label>Conservação / Temperatura
                   <input placeholder="Ex: -18°C, Refrigerado" value={form.conservation} onChange={(e) => set('conservation', e.target.value)} />
+                </label>
+                <label>Grupo
+                  <div style={{ display: 'flex', gap: 6, alignItems: 'flex-start' }}>
+                    <div style={{ flex: 1 }}>
+                      <CustomSelect
+                        value={form.group}
+                        onChange={(v) => set('group', v)}
+                        placeholder="Selecionar grupo..."
+                        options={allGrupos.map((g) => ({ value: g, label: g }))}
+                      />
+                    </div>
+                    <button type="button" className="addGroupBtn" title="Adicionar novo grupo" onClick={() => { setShowAddGroup((v) => !v); setAddGroupInput('') }}>
+                      <Plus size={14} />
+                    </button>
+                  </div>
+                  {showAddGroup && (
+                    <div className="addGroupInline">
+                      <input
+                        value={addGroupInput}
+                        onChange={(e) => setAddGroupInput(e.target.value)}
+                        placeholder="Nome do novo grupo..."
+                        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleAddGroup() } }}
+                        autoFocus
+                      />
+                      <button type="button" onClick={handleAddGroup}><CheckCircle2 size={14} /></button>
+                    </div>
+                  )}
+                </label>
+                <label>Sub grupo
+                  <div style={{ display: 'flex', gap: 6, alignItems: 'flex-start' }}>
+                    <div style={{ flex: 1 }}>
+                      <CustomSelect
+                        value={form.subGroup}
+                        onChange={(v) => set('subGroup', v)}
+                        placeholder="Selecionar sub grupo..."
+                        options={allSubGrupos.map((g) => ({ value: g, label: g }))}
+                      />
+                    </div>
+                    <button type="button" className="addGroupBtn" title="Adicionar novo sub grupo" onClick={() => { setShowAddSubGroup((v) => !v); setAddSubGroupInput('') }}>
+                      <Plus size={14} />
+                    </button>
+                  </div>
+                  {showAddSubGroup && (
+                    <div className="addGroupInline">
+                      <input
+                        value={addSubGroupInput}
+                        onChange={(e) => setAddSubGroupInput(e.target.value)}
+                        placeholder="Nome do novo sub grupo..."
+                        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleAddSubGroup() } }}
+                        autoFocus
+                      />
+                      <button type="button" onClick={handleAddSubGroup}><CheckCircle2 size={14} /></button>
+                    </div>
+                  )}
                 </label>
                 <label className="full">Descrição
                   <input placeholder="Breve descrição do produto" value={form.description} onChange={(e) => set('description', e.target.value)} />
@@ -1233,9 +1613,9 @@ function NewProductModal({ onClose, onCreated, editProduct, onUpdated }) {
         {tab === 'upload' && (
           <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden', minHeight: 0 }}>
             <div className="newProductScrollArea">
-              {!parsedRows && !uploadResult && (
+              {!bgImport?.parsedRows && !uploadResult && (
                 <>
-                  {aiAnalyzing ? (
+                  {bgImport?.status === 'analyzing' ? (
                     <div className="uploadZone" style={{ cursor: 'default', pointerEvents: 'none' }}>
                       <Sparkles size={40} style={{ color: 'var(--orange)', animation: 'spin 1.5s linear infinite' }} />
                       <p style={{ fontWeight: 600 }}>Analisando documento com IA...</p>
@@ -1255,24 +1635,29 @@ function NewProductModal({ onClose, onCreated, editProduct, onUpdated }) {
                       <input ref={fileInputRef} type="file" accept=".txt,.csv,.pdf" onChange={(e) => handleFile(e.target.files[0])} />
                     </div>
                   )}
-                  {parseError && <small className="errorText" style={{ marginTop: 10, display: 'block' }}>{parseError}</small>}
-                  {!aiAnalyzing && (
+                  {bgImport?.parseError && <small className="errorText" style={{ marginTop: 10, display: 'block' }}>{bgImport.parseError}</small>}
+                  {bgImport?.status === 'analyzing' && (
+                    <div className="bgImportHint">
+                      <Info size={14} /> Você pode fechar esta tela — a análise continuará em segundo plano.
+                    </div>
+                  )}
+                  {!bgImport?.status && (
                     <div className="uploadFormatHint">
                       <b><Sparkles size={13} style={{ verticalAlign: 'middle', marginRight: 4 }} />Análise inteligente com IA</b>
                       <p style={{ margin: '6px 0 0', fontSize: '.82rem', lineHeight: 1.5 }}>
-                        Envie qualquer documento com informações de produtos: tabelas, listas, notas fiscais, planilhas exportadas (TXT/CSV) ou PDFs. A IA extrai automaticamente nome, categoria, preço, quantidade e embalagem de múltiplos produtos.
+                        Envie qualquer documento com informações de produtos: tabelas, listas, notas fiscais, planilhas exportadas (TXT/CSV) ou PDFs. A IA extrai automaticamente nome, categoria, preço, quantidade e embalagem de múltiplos produtos. Imagens dos produtos não são extraídas.
                       </p>
                     </div>
                   )}
                 </>
               )}
 
-              {parsedRows && !uploadResult && (
+              {bgImport?.parsedRows && !uploadResult && (
                 <div className="uploadPreview">
                   <div className="uploadPreviewHeader">
-                    <h4>{parsedRows.length} produto(s) identificado(s) — {parsedRows.filter((r) => r.valid).length} válido(s)</h4>
+                    <h4>{bgImport.parsedRows.length} produto(s) identificado(s) — {bgImport.parsedRows.filter((r) => r.valid).length} válido(s)</h4>
                     <div className="uploadBtnRow">
-                      <button className="btnReset" onClick={() => { setParsedRows(null); setParseError(''); fileInputRef.current && (fileInputRef.current.value = '') }}>
+                      <button className="btnReset" onClick={() => { onClearBgImport?.(); setUploadError(''); fileInputRef.current && (fileInputRef.current.value = '') }}>
                         <X size={14} /> Trocar arquivo
                       </button>
                     </div>
@@ -1285,21 +1670,32 @@ function NewProductModal({ onClose, onCreated, editProduct, onUpdated }) {
                         <th>Preço</th>
                         <th>Qtd.</th>
                         <th>Embalagem</th>
+                        <th></th>
                       </tr>
                     </thead>
                     <tbody>
-                      {parsedRows.map((row, i) => (
-                        <tr key={i} className={row.valid ? '' : 'err'}>
+                      {bgImport.parsedRows.map((row, i) => (
+                        <tr key={i} className={`${row.valid ? '' : 'err'}${row.isExistingWithChanges ? ' rowChanged' : ''}${row.isExistingNoChanges ? ' rowNoChanges' : ''}`}>
                           <td>{row.name || <em>—</em>}</td>
                           <td>{row.category || <em>—</em>}</td>
                           <td>{row.price}</td>
                           <td>{row.availableQuantity}</td>
                           <td>{row.packaging || '—'}</td>
+                          <td>
+                            {row.isExistingWithChanges && (
+                              rowUpdatedSet.has(i)
+                                ? <span className="rowUpdatedBadge">Atualizado</span>
+                                : <button className="btnApplyNewInfo" disabled={rowApplyingSet.has(i)} onClick={() => applyNewInfo(row, i)}>
+                                    {rowApplyingSet.has(i) ? 'Salvando...' : 'Usar novas informações'}
+                                  </button>
+                            )}
+                            {row.isExistingNoChanges && <span className="rowIgnoredBadge">Já existe</span>}
+                          </td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
-                  {parseError && <small className="errorText" style={{ marginTop: 8, display: 'block' }}>{parseError}</small>}
+                  {uploadError && <small className="errorText" style={{ marginTop: 8, display: 'block' }}>{uploadError}</small>}
                 </div>
               )}
 
@@ -1307,7 +1703,12 @@ function NewProductModal({ onClose, onCreated, editProduct, onUpdated }) {
                 <div style={{ padding: '16px 0' }}>
                   {uploadResult.created?.length > 0 && (
                     <div className="noteBox" style={{ background: '#f0fdf4', borderColor: '#bbf7d0' }}>
-                      <b style={{ color: '#16a34a' }}><CheckCircle2 size={16} style={{ verticalAlign: 'middle' }} /> {uploadResult.created.length} produto(s) importado(s) com sucesso</b>
+                      <b style={{ color: '#16a34a' }}><CheckCircle2 size={16} style={{ verticalAlign: 'middle' }} /> {uploadResult.created.length} produto(s) criado(s) com sucesso</b>
+                    </div>
+                  )}
+                  {uploadResult.updated?.length > 0 && (
+                    <div className="noteBox" style={{ background: '#eff6ff', borderColor: '#bfdbfe', marginTop: uploadResult.created?.length ? 10 : 0 }}>
+                      <b style={{ color: '#2563eb' }}><CheckCircle2 size={16} style={{ verticalAlign: 'middle' }} /> {uploadResult.updated.length} produto(s) atualizado(s)</b>
                     </div>
                   )}
                   {uploadResult.errors?.length > 0 && (
@@ -1322,15 +1723,18 @@ function NewProductModal({ onClose, onCreated, editProduct, onUpdated }) {
 
             <div className="newProductFooter">
               <button type="button" onClick={onClose}>Fechar</button>
-              {parsedRows && !uploadResult && (
-                <button
-                  className="btnPrimary"
-                  disabled={!parsedRows.filter((r) => r.valid).length || uploadSubmitting}
-                  onClick={submitUpload}
-                >
-                  <UploadCloud size={17} /> {uploadSubmitting ? 'Importando...' : `Importar ${parsedRows.filter((r) => r.valid).length} produto(s)`}
-                </button>
-              )}
+              {bgImport?.parsedRows && !uploadResult && (() => {
+                const importableCount = bgImport.parsedRows.filter((r) => r.valid && !r.isExistingWithChanges && !r.isExistingNoChanges).length
+                return importableCount > 0 ? (
+                  <button
+                    className="btnPrimary"
+                    disabled={uploadSubmitting}
+                    onClick={submitUpload}
+                  >
+                    <UploadCloud size={17} /> {uploadSubmitting ? 'Importando...' : `Importar ${importableCount} produto(s)`}
+                  </button>
+                ) : null
+              })()}
             </div>
           </div>
         )}
@@ -1339,19 +1743,218 @@ function NewProductModal({ onClose, onCreated, editProduct, onUpdated }) {
   )
 }
 
-function Stock({ onProduct, refreshKey, search = '' }) {
+function BgImportPanel({ bgImport, onClose, onImportDone, onClearBgImport }) {
+  const [uploadResult, setUploadResult] = useState(null)
+  const [uploadSubmitting, setUploadSubmitting] = useState(false)
+  const [uploadError, setUploadError] = useState('')
+  const [rowUpdatedSet, setRowUpdatedSet] = useState(new Set())
+  const [rowApplyingSet, setRowApplyingSet] = useState(new Set())
+
+  const parsedRows = bgImport?.parsedRows
+
+  const applyNewInfo = async (row, index) => {
+    setRowApplyingSet((prev) => new Set(prev).add(index))
+    try {
+      const res = await fetch(`${API_URL}/api/products`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: row.existingId,
+          name: row.name,
+          category: row.category,
+          price: row.price,
+          availableQuantity: row.availableQuantity,
+          packaging: row.packaging,
+          unitQuantity: row.unitQuantity,
+          packagingWeight: row.packagingWeight,
+          conservation: row.conservation,
+          group: row.group,
+          subGroup: row.subGroup,
+          badge: row.badge,
+          description: row.description,
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Erro ao atualizar produto')
+      setRowUpdatedSet((prev) => new Set(prev).add(index))
+    } catch (err) {
+      setUploadError(err.message || 'Erro ao atualizar produto.')
+    } finally {
+      setRowApplyingSet((prev) => { const s = new Set(prev); s.delete(index); return s })
+    }
+  }
+
+  const submitUpload = async () => {
+    if (!parsedRows) return
+    const valid = parsedRows.filter((r) => r.valid && !r.isExistingWithChanges && !r.isExistingNoChanges)
+    if (!valid.length) return
+    setUploadSubmitting(true)
+    setUploadResult(null)
+    try {
+      const res = await fetch(`${API_URL}/api/products`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ products: valid }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Erro no envio')
+      setUploadResult(data)
+      const totalAffected = (data.created?.length || 0) + (data.updated?.length || 0)
+      if (totalAffected) onImportDone?.({ isBatch: true, count: totalAffected })
+    } catch (err) {
+      setUploadError(err.message || 'Erro ao enviar produtos.')
+    } finally {
+      setUploadSubmitting(false)
+    }
+  }
+
+  return (
+    <div className="modalBackdrop">
+      <div className="detailModal newProductModal">
+        <button className="closeBtn" onClick={onClose}><X /></button>
+        <div className="modalHeader">
+          <div>
+            <span>Estoque</span>
+            <h2>Entrada de estoque</h2>
+            <p>{bgImport?.status === 'analyzing' ? 'Análise de documento em andamento...' : `Arquivo: ${bgImport?.fileName || ''}`}</p>
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden', minHeight: 0 }}>
+          <div className="newProductScrollArea">
+            {!parsedRows && !uploadResult && (
+              bgImport?.status === 'analyzing' ? (
+                <div className="uploadZone" style={{ cursor: 'default', pointerEvents: 'none' }}>
+                  <Sparkles size={40} style={{ color: 'var(--orange)', animation: 'spin 1.5s linear infinite' }} />
+                  <p style={{ fontWeight: 600 }}>Analisando documento com IA...</p>
+                  <small>A IA está identificando os produtos. Aguarde um momento.</small>
+                </div>
+              ) : (
+                <div className="uploadZone" style={{ cursor: 'default', pointerEvents: 'none', borderStyle: 'solid', borderColor: 'var(--red-soft, #fca5a5)' }}>
+                  <AlertTriangle size={40} style={{ color: 'var(--red, #ef4444)' }} />
+                  <p style={{ fontWeight: 600 }}>Nenhum produto identificado</p>
+                  <small>{bgImport?.parseError || 'Não foi possível extrair produtos do documento.'}</small>
+                </div>
+              )
+            )}
+
+            {parsedRows && !uploadResult && (
+              <div className="uploadPreview">
+                <div className="uploadPreviewHeader">
+                  <h4>{parsedRows.length} produto(s) identificado(s) — {parsedRows.filter((r) => r.valid).length} válido(s)</h4>
+                  <div className="uploadBtnRow">
+                    <button className="btnReset" onClick={onClearBgImport}>
+                      <X size={14} /> Cancelar importação
+                    </button>
+                  </div>
+                </div>
+                <table className="uploadPreviewTable">
+                  <thead>
+                    <tr><th>Nome</th><th>Categoria</th><th>Preço</th><th>Qtd.</th><th>Embalagem</th><th></th></tr>
+                  </thead>
+                  <tbody>
+                    {parsedRows.map((row, i) => (
+                      <tr key={i} className={`${row.valid ? '' : 'err'}${row.isExistingWithChanges ? ' rowChanged' : ''}${row.isExistingNoChanges ? ' rowNoChanges' : ''}`}>
+                        <td>{row.name || <em>—</em>}</td>
+                        <td>{row.category || <em>—</em>}</td>
+                        <td>{row.price}</td>
+                        <td>{row.availableQuantity}</td>
+                        <td>{row.packaging || '—'}</td>
+                        <td>
+                          {row.isExistingWithChanges && (
+                            rowUpdatedSet.has(i)
+                              ? <span className="rowUpdatedBadge">Atualizado</span>
+                              : <button className="btnApplyNewInfo" disabled={rowApplyingSet.has(i)} onClick={() => applyNewInfo(row, i)}>
+                                  {rowApplyingSet.has(i) ? 'Salvando...' : 'Usar novas informações'}
+                                </button>
+                          )}
+                          {row.isExistingNoChanges && <span className="rowIgnoredBadge">Já existe</span>}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {uploadError && <small className="errorText" style={{ marginTop: 8, display: 'block' }}>{uploadError}</small>}
+              </div>
+            )}
+
+            {uploadResult && (
+              <div style={{ padding: '16px 0' }}>
+                {uploadResult.created?.length > 0 && (
+                  <div className="noteBox" style={{ background: '#f0fdf4', borderColor: '#bbf7d0' }}>
+                    <b style={{ color: '#16a34a' }}><CheckCircle2 size={16} style={{ verticalAlign: 'middle' }} /> {uploadResult.created.length} produto(s) criado(s) com sucesso</b>
+                  </div>
+                )}
+                {uploadResult.updated?.length > 0 && (
+                  <div className="noteBox" style={{ background: '#eff6ff', borderColor: '#bfdbfe', marginTop: uploadResult.created?.length ? 10 : 0 }}>
+                    <b style={{ color: '#2563eb' }}><CheckCircle2 size={16} style={{ verticalAlign: 'middle' }} /> {uploadResult.updated.length} produto(s) atualizado(s)</b>
+                  </div>
+                )}
+                {uploadResult.errors?.length > 0 && (
+                  <div className="noteBox" style={{ background: '#fff5f5', borderColor: '#fecaca', marginTop: 10 }}>
+                    <b style={{ color: 'var(--red)' }}>{uploadResult.errors.length} produto(s) com erro</b>
+                    {uploadResult.errors.map((e, i) => <p key={i} style={{ fontSize: '.82rem', margin: '4px 0 0' }}>{e.name}: {e.error}</p>)}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          <div className="newProductFooter">
+            <button type="button" onClick={onClose}>Fechar</button>
+            {parsedRows && !uploadResult && (() => {
+              const importableCount = parsedRows.filter((r) => r.valid && !r.isExistingWithChanges && !r.isExistingNoChanges).length
+              return importableCount > 0 ? (
+                <button
+                  className="btnPrimary"
+                  disabled={uploadSubmitting}
+                  onClick={submitUpload}
+                >
+                  <UploadCloud size={17} /> {uploadSubmitting ? 'Importando...' : `Importar ${importableCount} produto(s)`}
+                </button>
+              ) : null
+            })()}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function Stock({ onProduct, refreshKey, search = '', addNotif, bgImport, onStartBgAnalysis, onClearBgImport }) {
   const [stockProducts, setStockProducts] = useState([])
   const [loading, setLoading] = useState(true)
   const [newProductOpen, setNewProductOpen] = useState(false)
   const [viewMode, setViewMode] = useState('grid')
   const [viewMenuOpen, setViewMenuOpen] = useState(false)
   const viewMenuRef = useRef(null)
+  const notifiedLowStockRef = useRef(new Set())
 
   const fetchProducts = () => {
     setLoading(true)
     fetch(`${API_URL}/api/products`)
       .then((r) => r.json())
-      .then((data) => { if (data.products) setStockProducts(data.products) })
+      .then((data) => {
+        if (data.products) {
+          setStockProducts(data.products)
+          if (addNotif) {
+            const alertPct = (() => { try { return parseFloat(JSON.parse(localStorage.getItem('saborsan_settings') || '{}').estoqueAlerta) || 10 } catch { return 10 } })()
+            data.products.forEach((p) => {
+              if (p.min > 0 && !notifiedLowStockRef.current.has(p.id)) {
+                const pct = (p.stock / (p.min * 2)) * 100
+                if (pct <= alertPct) {
+                  const sessionKey = `notif_stock_low_${p.id}`
+                  if (!sessionStorage.getItem(sessionKey)) {
+                    addNotif('notifStock', { icon: AlertTriangle, type: 'warning', title: 'Estoque abaixo do limite', text: `${p.name} está com estoque abaixo do mínimo configurado (${p.stock} ${p.unit || 'unid.'}).` })
+                    sessionStorage.setItem(sessionKey, '1')
+                    notifiedLowStockRef.current.add(p.id)
+                  }
+                }
+              }
+            })
+          }
+        }
+      })
       .catch(() => {})
       .finally(() => setLoading(false))
   }
@@ -1368,6 +1971,13 @@ function Stock({ onProduct, refreshKey, search = '' }) {
   }, [viewMenuOpen])
 
   const filtered = stockProducts.filter((p) => !search || p.name.toLowerCase().includes(search.toLowerCase()))
+
+  // IDs de produtos que compartilham nome e grupo com pelo menos outro produto
+  const dupIds = new Set(
+    stockProducts
+      .filter((p) => stockProducts.some((q) => q.id !== p.id && q.name === p.name && (q.group || '') === (p.group || '')))
+      .map((p) => p.id)
+  )
 
   const viewOptions = [
     { key: 'grid', icon: LayoutGrid, label: 'Cards com imagem' },
@@ -1394,7 +2004,7 @@ function Stock({ onProduct, refreshKey, search = '' }) {
               </div>
             )}
           </div>
-          <button className="btnSolid" onClick={() => setNewProductOpen(true)}><PackageCheck size={18} /> Entrada de estoque</button>
+          <button className="btnSolid" disabled={!!bgImport} onClick={() => !bgImport && setNewProductOpen(true)} title={bgImport ? 'Importação em segundo plano em andamento' : undefined}><PackageCheck size={18} /> Entrada de estoque</button>
         </div>
         {loading && <p className="loadingText">Carregando produtos...</p>}
         {viewMode !== 'list' ? (
@@ -1403,12 +2013,16 @@ function Stock({ onProduct, refreshKey, search = '' }) {
             {filtered.map((product) => {
               const percent = product.stock === 0 ? 0 : product.min > 0 ? Math.min(100, Math.round((product.stock / (product.min * 2)) * 100)) : 100
               return (
-                <article className="stockCard" key={product.id} onClick={() => onProduct(product)}>
-                  {viewMode === 'grid' && product.image && <img src={product.image} alt={product.name} />}
+                <article className="stockCard" key={product.id} onClick={() => onProduct({ ...product, showKg: dupIds.has(product.id) && !!product.packagingWeight })}>
+                  {viewMode === 'grid' && (
+                    product.image
+                      ? <img src={product.image} alt={product.name} />
+                      : <div className="stockCardNoImage"><ImageOff size={36} /><span>Sem imagem</span></div>
+                  )}
                   <div className="stockBody">
                     <span>{product.category}</span>
-                    <h3>{product.name}</h3>
-                    <p>{[product.temperature, product.description].filter(Boolean).join(' • ')}</p>
+                    <h3>{product.name}{dupIds.has(product.id) && product.packagingWeight ? <small style={{fontWeight:400,marginLeft:6}}>{product.packagingWeight}kg</small> : null}</h3>
+                    <p>{[product.group, product.description].filter(Boolean).join(' • ')}</p>
                     <div className="stockLevel"><div style={{ width: `${percent}%` }}></div></div>
                     <div className="stockMeta"><b>{product.stock}{product.unit ? ` ${product.unit}` : ''}</b><small>{product.min > 0 ? `Mínimo: ${product.min}` : 'Sem mínimo definido'}</small></div>
                   </div>
@@ -1422,11 +2036,11 @@ function Stock({ onProduct, refreshKey, search = '' }) {
             {filtered.map((product) => {
               const percent = product.stock === 0 ? 0 : product.min > 0 ? Math.min(100, Math.round((product.stock / (product.min * 2)) * 100)) : 100
               return (
-                <article className="stockListItem" key={product.id} onClick={() => onProduct(product)}>
+                <article className="stockListItem" key={product.id} onClick={() => onProduct({ ...product, showKg: dupIds.has(product.id) && !!product.packagingWeight })}>
                   <div className="stockListInfo">
                     <span>{product.category}</span>
-                    <h3>{product.name}</h3>
-                    <p>{[product.temperature, product.description].filter(Boolean).join(' • ')}</p>
+                    <h3>{product.name}{dupIds.has(product.id) && product.packagingWeight ? <small style={{fontWeight:400,marginLeft:6}}>{product.packagingWeight}kg</small> : null}</h3>
+                    <p>{[product.group, product.description].filter(Boolean).join(' • ')}</p>
                   </div>
                   <div className="stockLevel stockListLevel"><div style={{ width: `${percent}%` }}></div></div>
                   <div className="stockMeta stockListMeta">
@@ -1442,14 +2056,26 @@ function Stock({ onProduct, refreshKey, search = '' }) {
       {newProductOpen && (
         <NewProductModal
           onClose={() => setNewProductOpen(false)}
-          onCreated={() => { fetchProducts() }}
+          bgImport={bgImport}
+          onStartBgAnalysis={onStartBgAnalysis}
+          onClearBgImport={onClearBgImport}
+          onCreated={(result) => {
+            if (addNotif) {
+              if (result?.isBatch) {
+                addNotif('notifStock', { icon: Boxes, title: 'Produtos registrados via upload', text: `${result.count} produto(s) adicionados ao estoque via documento.` })
+              } else {
+                addNotif('notifStock', { icon: PackageCheck, title: 'Produto registrado', text: `${result?.name || 'Novo produto'} foi adicionado ao estoque.` })
+              }
+            }
+            fetchProducts()
+          }}
         />
       )}
     </>
   )
 }
 
-function Suppliers({ onMessage, search = '' }) {
+function Suppliers({ onMessage, search = '', addNotif }) {
   const [suppliersData, setSuppliersData] = useState([])
   const [loading, setLoading] = useState(false)
   const [scheduledCounts, setScheduledCounts] = useState({})
@@ -1458,12 +2084,30 @@ function Suppliers({ onMessage, search = '' }) {
   const [detailSupplier, setDetailSupplier] = useState(null)
   const [transcript, setTranscript] = useState(null)
   const [removeConfirmSupplier, setRemoveConfirmSupplier] = useState(null)
+  const notifiedTranscriptRef = useRef(new Set())
 
   useEffect(() => {
     setLoading(true)
     fetch(`${API_URL}/api/suppliers`)
       .then((r) => r.json())
-      .then((data) => { if (data.suppliers) setSuppliersData(data.suppliers) })
+      .then((data) => {
+        if (data.suppliers) {
+          setSuppliersData(data.suppliers)
+          if (addNotif) {
+            data.suppliers.forEach((s) => {
+              const transcript = supplierTranscripts[s.id]
+              if (transcript?.status === 'Concluída' && !notifiedTranscriptRef.current.has(s.id)) {
+                const sessionKey = `notif_supplier_concluida_${s.id}`
+                if (!sessionStorage.getItem(sessionKey)) {
+                  addNotif('notifSuppliers', { icon: Bot, title: 'Conversa IA concluída', text: `A conversa da IA com ${s.name} foi concluída com sucesso.` })
+                  sessionStorage.setItem(sessionKey, '1')
+                  notifiedTranscriptRef.current.add(s.id)
+                }
+              }
+            })
+          }
+        }
+      })
       .catch(() => {})
       .finally(() => setLoading(false))
     fetch(`${API_URL}/api/supplier-purchases`)
@@ -2351,7 +2995,7 @@ function PurchaseDetailModal({ item, getDayLabel, onClose, onRemove, onEdit, sup
   )
 }
 
-function Purchases({ notify }) {
+function Purchases({ notify, addNotif }) {
   const [planningItems, setPlanningItems] = useState([])
   const [planningLoading, setPlanningLoading] = useState(true)
   const [suppliersData, setSuppliersData] = useState([])
@@ -2362,12 +3006,35 @@ function Purchases({ notify }) {
   const [newPurchaseModal, setNewPurchaseModal] = useState(false)
   const [detailModal, setDetailModal] = useState(null)
   const [editModal, setEditModal] = useState(null)
+  const notifiedPurchaseDueRef = useRef(new Set())
 
   useEffect(() => {
     setPlanningLoading(true)
     fetch(`${API_URL}/api/purchase-planning`)
       .then((r) => r.json())
-      .then((data) => { if (data.items) setPlanningItems(data.items) })
+      .then((data) => {
+        if (data.items) {
+          setPlanningItems(data.items)
+          if (addNotif) {
+            const tomorrow = new Date()
+            tomorrow.setDate(tomorrow.getDate() + 1)
+            const tomorrowStr = tomorrow.toDateString()
+            data.items.filter((item) => !item.completed).forEach((item) => {
+              try {
+                const d = new Date(item.scheduledDate + 'T00:00:00')
+                if (d.toDateString() === tomorrowStr && !notifiedPurchaseDueRef.current.has(item.id)) {
+                  const sessionKey = `notif_purchase_due_${item.id}`
+                  if (!sessionStorage.getItem(sessionKey)) {
+                    addNotif('notifPurchases', { icon: CalendarDays, title: 'Compra agendada para amanhã', text: `${item.title} está agendada para amanhã.` })
+                    sessionStorage.setItem(sessionKey, '1')
+                    notifiedPurchaseDueRef.current.add(item.id)
+                  }
+                }
+              } catch {}
+            })
+          }
+        }
+      })
       .catch(() => {})
       .finally(() => setPlanningLoading(false))
 
@@ -2461,6 +3128,9 @@ function Purchases({ notify }) {
         setPlanningItems((prev) =>
           [...prev, newItem].sort((a, b) => new Date(a.scheduledDate) - new Date(b.scheduledDate))
         )
+        if (addNotif) {
+          addNotif('notifPurchases', { icon: ClipboardList, title: 'Compra adicionada ao planejamento', text: `${newItem.title} foi adicionada à lista de compras.` })
+        }
       }
     }
   }
@@ -3856,6 +4526,57 @@ function DateTimePicker({ value, onChange, placeholder = 'Selecionar data e hora
   )
 }
 
+function TimePickerInput({ value = '08:00', onChange }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef(null)
+  const parts = (value || '08:00').split(':')
+  const h = parseInt(parts[0]) || 0
+  const m = parseInt(parts[1]) || 0
+
+  useEffect(() => {
+    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false) }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
+
+  const update = (newH, newM) => onChange(`${String(newH).padStart(2,'0')}:${String(newM).padStart(2,'0')}`)
+
+  return (
+    <div className="dtpWrapper" ref={ref}>
+      <button
+        type="button"
+        className={`dtpTrigger${open ? ' open' : ''}`}
+        onClick={(e) => { e.preventDefault(); setOpen((v) => !v) }}
+      >
+        <Clock3 size={16} style={{ color: 'var(--orange)', flexShrink: 0 }} />
+        <span>{value || '08:00'}</span>
+        <ChevronDown size={14} style={{ marginLeft: 'auto', flexShrink: 0, transform: open ? 'rotate(180deg)' : 'none', transition: 'transform .2s' }} />
+      </button>
+      {open && (
+        <div className="dtpDropdown tpDropdown">
+          <p className="tpLabel">Selecionar horário</p>
+          <div className="tpWheels">
+            <div className="tpWheel">
+              <button type="button" className="tpArrow" onClick={() => update((h + 1) % 24, m)}><ChevronUp size={18} /></button>
+              <span className="tpVal">{String(h).padStart(2,'0')}</span>
+              <button type="button" className="tpArrow" onClick={() => update((h - 1 + 24) % 24, m)}><ChevronDown size={18} /></button>
+            </div>
+            <span className="tpColon">:</span>
+            <div className="tpWheel">
+              <button type="button" className="tpArrow" onClick={() => update(h, (m + 5) % 60)}><ChevronUp size={18} /></button>
+              <span className="tpVal">{String(m).padStart(2,'0')}</span>
+              <button type="button" className="tpArrow" onClick={() => update(h, (m - 5 + 60) % 60)}><ChevronDown size={18} /></button>
+            </div>
+          </div>
+          <button type="button" className="dtpConfirmBtn tpConfirmBtn" onClick={() => setOpen(false)}>
+            <CheckCircle2 size={14} /> Confirmar
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function CustomSelect({ value, onChange, options = [], placeholder = 'Selecione...', disabled = false }) {
   const [open, setOpen] = useState(false)
   const ref = useRef(null)
@@ -3920,7 +4641,7 @@ function ProductSelect({ value, onChange, disabled, products: productList = [] }
   )
 }
 
-function NewOrderModal({ onClose, onCreateOrder, onUpdateOrder, editOrder, clients = [], lockedEdit = false, products = [] }) {
+function NewOrderModal({ onClose, onCreateOrder, onUpdateOrder, editOrder, clients = [], lockedEdit = false, notesOnlyEdit = false, products = [] }) {
   const [selectedClientId, setSelectedClientId] = useState(() => {
     if (editOrder) {
       const match = clients.find((c) => c.establishmentName === editOrder.customer)
@@ -3988,7 +4709,7 @@ function NewOrderModal({ onClose, onCreateOrder, onUpdateOrder, editOrder, clien
 
   const total = orderProducts.reduce((sum, p) => sum + p.price * p.qty, 0)
   const hasValidProducts = items.some((item) => item.productId && item.qty > 0)
-  const canSubmit = lockedEdit ? form.delivery.trim() !== '' : (selectedClientId !== '' && form.delivery.trim() !== '' && hasValidProducts)
+  const canSubmit = notesOnlyEdit ? true : lockedEdit ? form.delivery.trim() !== '' : (selectedClientId !== '' && form.delivery.trim() !== '' && hasValidProducts)
 
   const submit = async (e) => {
     e.preventDefault()
@@ -4075,7 +4796,7 @@ function NewOrderModal({ onClose, onCreateOrder, onUpdateOrder, editOrder, clien
           <div>
             <span>Pedido {editOrder ? 'existente' : 'manual'}</span>
             <h2>{editOrder ? 'Editar pedido' : 'Novo pedido'}</h2>
-            <p>{editOrder ? 'Altere os dados do pedido e salve as modificações' : 'Preencha os dados do cliente e os produtos solicitados'}</p>
+            <p>{notesOnlyEdit ? 'Pedido entregue — apenas Observações pode ser editado' : editOrder ? 'Altere os dados do pedido e salve as modificações' : 'Preencha os dados do cliente e os produtos solicitados'}</p>
           </div>
         </div>
         <form onSubmit={submit}>
@@ -4086,7 +4807,7 @@ function NewOrderModal({ onClose, onCreateOrder, onUpdateOrder, editOrder, clien
                 <CustomSelect
                   value={selectedClientId}
                   onChange={(v) => handleClientSelect(v)}
-                  disabled={lockedEdit}
+                  disabled={lockedEdit || notesOnlyEdit}
                   placeholder={clients.length === 0 ? 'Carregando clientes...' : 'Selecione o cliente'}
                   options={clients.map((c) => ({ value: String(c.id), label: `${c.establishmentName}${c.city ? ` — ${c.city}` : ''}` }))}
                 />
@@ -4112,20 +4833,20 @@ function NewOrderModal({ onClose, onCreateOrder, onUpdateOrder, editOrder, clien
                   <div className="newOrderItem" key={idx}>
                     <ProductSelect
                       value={item.productId}
-                      disabled={lockedEdit}
+                      disabled={lockedEdit || notesOnlyEdit}
                       products={products}
                       onChange={(val) => setItems((prev) => prev.map((it, j) => j === idx ? { ...it, productId: val, qty: Math.max(1, it.qty) } : it))}
                     />
-                    <input type="number" min={item.productId ? 1 : 0} value={item.qty} disabled={lockedEdit || !item.productId} onChange={(e) => updateItem(idx, 'qty', Math.max(1, Number(e.target.value)))} />
+                    <input type="number" min={item.productId ? 1 : 0} value={item.qty} disabled={lockedEdit || notesOnlyEdit || !item.productId} onChange={(e) => updateItem(idx, 'qty', Math.max(1, Number(e.target.value)))} />
                     <span className="newOrderUnit">{product ? product.unit : ''}</span>
                     <span className="newOrderItemPrice">{product && item.qty > 0 ? money(product.price * item.qty) : ''}</span>
-                    {!lockedEdit && items.length > 1 && (
+                    {!lockedEdit && !notesOnlyEdit && items.length > 1 && (
                       <button type="button" className="newOrderRemoveBtn" onClick={() => removeItem(idx)}><X size={14} /></button>
                     )}
                   </div>
                 )
               })}
-              <button type="button" className="newOrderAddBtn" onClick={addItem} style={lockedEdit ? {display:'none'} : {}}>
+              <button type="button" className="newOrderAddBtn" onClick={addItem} style={(lockedEdit || notesOnlyEdit) ? {display:'none'} : {}}>
                 <Plus size={15} /> Adicionar produto
               </button>
             </div>
@@ -4136,6 +4857,7 @@ function NewOrderModal({ onClose, onCreateOrder, onUpdateOrder, editOrder, clien
                 <CustomSelect
                   value={form.priority}
                   onChange={(v) => set('priority', v)}
+                  disabled={notesOnlyEdit}
                   options={[
                     { value: 'Normal', label: 'Normal' },
                     { value: 'Alta', label: 'Alta' },
@@ -4143,7 +4865,7 @@ function NewOrderModal({ onClose, onCreateOrder, onUpdateOrder, editOrder, clien
                 />
               </label>
               <label>Previsão de entrega
-                <input placeholder="Hoje, 15:00" value={form.delivery} onChange={(e) => set('delivery', e.target.value)} />
+                <input placeholder="Hoje, 15:00" value={form.delivery} disabled={notesOnlyEdit} onChange={(e) => set('delivery', e.target.value)} />
               </label>
             </div>
 
@@ -4169,12 +4891,12 @@ function NewOrderModal({ onClose, onCreateOrder, onUpdateOrder, editOrder, clien
   )
 }
 
-function OrderModal({ order, onClose, updateOrderStatus, createInvoice, onRemove, onEdit, canRemove = true }) {
+function OrderModal({ order, onClose, updateOrderStatus, createInvoice, onRemove, onEdit, canRemove = true, onReactivate = null }) {
   return (
     <div className="modalBackdrop">
       <div className="detailModal orderModal">
         <button className="closeBtn" onClick={onClose}><X /></button>
-        <div className="modalHeader"><div><span>{order.id}</span><h2>{order.customer}</h2><p>{order.cnpj} • {order.city}</p></div><Status status={order.status} /></div>
+        <div className="modalHeader"><div><span>{order.id}</span><h2>{order.customer}</h2><p>{order.cnpj} • {order.city}</p></div><Status status={order.isDeleted ? 'Removido' : order.status} /></div>
         <div className="orderModalBody">
           <div className="modalSplit">
             <div>
@@ -4191,8 +4913,9 @@ function OrderModal({ order, onClose, updateOrderStatus, createInvoice, onRemove
           </div>
         </div>
         <div className="orderModalFooter">
-          {canRemove && <button className="orderModalBtn orderModalBtnDanger" onClick={onRemove}>Remover</button>}
-          <button className="orderModalBtn orderModalBtnPrimary" onClick={onEdit}>Editar</button>
+          {onReactivate && <button className="orderModalBtn orderModalBtnPrimary" style={{background:'var(--green, #22c55e)',borderColor:'var(--green, #22c55e)'}} onClick={onReactivate}>Reativar</button>}
+          {!onReactivate && canRemove && <button className="orderModalBtn orderModalBtnDanger" onClick={onRemove}>Remover</button>}
+          {!onReactivate && <button className="orderModalBtn orderModalBtnPrimary" onClick={onEdit}>Editar</button>}
         </div>
       </div>
     </div>
@@ -4205,16 +4928,20 @@ function ProductModal({ product, onClose, onRemove, onEdit }) {
       <div className="productModal">
         <button className="closeBtn" onClick={onClose}><X /></button>
         <div className="productModalBody">
-          {product.image && <img src={product.image} alt={product.name} />}
+          {product.image
+            ? <img src={product.image} alt={product.name} />
+            : <div className="productModalNoImage"><ImageOff size={48} /><span>Sem imagem</span></div>}
           <div className="productModalContent">
             <span className="badge">{product.category}</span>
-            <h2>{product.name}</h2>
+            <h2>{product.name}{product.showKg ? <small style={{fontWeight:400,marginLeft:8}}>{product.packagingWeight}kg</small> : null}</h2>
             <p>{product.description || 'Produto controlado no estoque da Saborsan com gestão de validade, temperatura, fornecedor, custo e disponibilidade para pedidos do app.'}</p>
             <div className="detailGrid">
               <div><b>Estoque</b><span>{product.stock}{product.unit ? ` ${product.unit}` : ''}</span></div>
               {product.temperature && <div><b>Conservação</b><span>{product.temperature}</span></div>}
               {product.packaging && <div><b>Embalagem</b><span>{product.packaging}</span></div>}
               <div><b>Preço base</b><span>{money(product.price)}</span></div>
+              {product.group && <div><b>Grupo</b><span>{product.group}</span></div>}
+              {product.subGroup && <div><b>Sub grupo</b><span>{product.subGroup}</span></div>}
               {product.idealFor && <div><b>Indicado para</b><span>{product.idealFor}</span></div>}
               {product.preparation && <div><b>Preparo</b><span>{product.preparation}</span></div>}
             </div>
@@ -4598,7 +5325,7 @@ function FiscalConfigSection({ notify }) {
   )
 }
 
-function Settings({ notify }) {
+function Settings({ notify, onNotifSettingChange }) {
   const [form, setForm] = useState(() => {
     try {
       const stored = localStorage.getItem('saborsan_settings')
@@ -4637,6 +5364,20 @@ function Settings({ notify }) {
         iaLigarHora: '09:00',
         iaLigarContato: '(49) 99821-4410',
         iaLigarAtivo: true,
+        estoqueIaWhatsapp: false,
+        estoqueWhatsappNumeros: [],
+        compraDatas: [],
+        iaFornecedorPrompt: 'Você é um assistente de compras da Saborsan Distribuidora. Ao contatar fornecedores, seja cordial, objetivo e profissional. Solicite cotações de preço, prazo de entrega e condições de pagamento. Priorize fornecedores com melhor custo-benefício e histórico de pontualidade. Confirme disponibilidade de estoque antes de fechar pedido.',
+        iaImportPrompt: '',
+        notifOrders: true,
+        notifSellers: true,
+        notifFiscalDocuments: true,
+        notifStock: true,
+        notifSuppliers: true,
+        notifPurchases: true,
+        notifDeliveries: true,
+        notifClients: true,
+        notifPayments: true,
         ...saved,
       }
     } catch {
@@ -4674,34 +5415,195 @@ function Settings({ notify }) {
         iaLigarHora: '09:00',
         iaLigarContato: '(49) 99821-4410',
         iaLigarAtivo: true,
+        estoqueIaWhatsapp: false,
+        estoqueWhatsappNumeros: [],
+        compraDatas: [],
+        iaFornecedorPrompt: 'Você é um assistente de compras da Saborsan Distribuidora. Ao contatar fornecedores, seja cordial, objetivo e profissional. Solicite cotações de preço, prazo de entrega e condições de pagamento. Priorize fornecedores com melhor custo-benefício e histórico de pontualidade. Confirme disponibilidade de estoque antes de fechar pedido.',
+        iaImportPrompt: '',
+        notifOrders: true,
+        notifSellers: true,
+        notifFiscalDocuments: true,
+        notifStock: true,
+        notifSuppliers: true,
+        notifPurchases: true,
+        notifDeliveries: true,
+        notifClients: true,
+        notifPayments: true,
       }
     }
   })
 
   const set = (key, value) => setForm((f) => ({ ...f, [key]: value }))
 
-  const saveSettings = () => {
+  const snapOperacao = (f) => JSON.stringify({
+    estoqueAlerta:          String(f.estoqueAlerta),
+    estoqueIaWhatsapp:      !!f.estoqueIaWhatsapp,
+    compraDatas:            f.compraDatas            || [],
+    estoqueWhatsappNumeros: f.estoqueWhatsappNumeros || [],
+    iaFornecedorPrompt:     f.iaFornecedorPrompt,
+    iaImportPrompt:         f.iaImportPrompt         || '',
+    iaLigarModo:            f.iaLigarModo            || 'ia',
+    iaLigarDia:             f.iaLigarDia             || 'segunda',
+    iaLigarHora:            f.iaLigarHora            || '09:00',
+  })
+  const [savedOperacaoSnap, setSavedOperacaoSnap] = useState(() => snapOperacao(form))
+
+  const snapRelatorios = (f) => JSON.stringify({
+    relatorioEmail: f.relatorioEmail || '',
+    relatorioFreq:  f.relatorioFreq  || 'desativado',
+    relatorioDia:   f.relatorioDia   || '1',
+    relatorioHora:  f.relatorioHora  || '08:00',
+  })
+  const [savedRelatoriosSnap, setSavedRelatoriosSnap] = useState(() => snapRelatorios(form))
+
+  useEffect(() => {
+    fetch(`${API_URL}/api/stock-purchase-config`)
+      .then((r) => r.ok ? r.json() : null)
+      .then((data) => {
+        if (!data) return;
+        setForm((f) => ({
+          ...f,
+          estoqueAlerta:          String(data.stockAlertPct ?? f.estoqueAlerta),
+          estoqueIaWhatsapp:      !!data.iaWhatsapp,
+          iaFornecedorPrompt:     data.iaPrompt        || f.iaFornecedorPrompt,
+          iaImportPrompt:         data.iaImportPrompt  || f.iaImportPrompt,
+          compraDatas:            data.purchaseSchedules ?? f.compraDatas,
+          estoqueWhatsappNumeros: data.whatsappNumbers   ?? f.estoqueWhatsappNumeros,
+          iaLigarModo:            data.iaLigarModo       ?? f.iaLigarModo,
+          iaLigarDia:             data.iaLigarDia        ?? f.iaLigarDia,
+          iaLigarHora:            data.iaLigarHora       ?? f.iaLigarHora,
+        }));
+        setSavedOperacaoSnap(JSON.stringify({
+          estoqueAlerta:          String(data.stockAlertPct),
+          estoqueIaWhatsapp:      !!data.iaWhatsapp,
+          compraDatas:            data.purchaseSchedules || [],
+          estoqueWhatsappNumeros: data.whatsappNumbers   || [],
+          iaFornecedorPrompt:     data.iaPrompt          || '',
+          iaImportPrompt:         data.iaImportPrompt    || '',
+          iaLigarModo:            data.iaLigarModo       || 'ia',
+          iaLigarDia:             data.iaLigarDia        || 'segunda',
+          iaLigarHora:            data.iaLigarHora       || '09:00',
+        }));
+      })
+      .catch(() => {});
+
+    fetch(`${API_URL}/api/notification-settings`)
+      .then((r) => r.ok ? r.json() : null)
+      .then((data) => {
+        if (!data) return;
+        setForm((f) => ({
+          ...f,
+          notifOrders:          data.notifOrders          ?? f.notifOrders,
+          notifSellers:         data.notifSellers         ?? f.notifSellers,
+          notifFiscalDocuments: data.notifFiscalDocuments ?? f.notifFiscalDocuments,
+          notifStock:           data.notifStock           ?? f.notifStock,
+          notifSuppliers:       data.notifSuppliers       ?? f.notifSuppliers,
+          notifPurchases:       data.notifPurchases       ?? f.notifPurchases,
+          notifDeliveries:      data.notifDeliveries      ?? f.notifDeliveries,
+          notifClients:         data.notifClients         ?? f.notifClients,
+        }));
+      })
+      .catch(() => {});
+
+    fetch(`${API_URL}/api/report-settings`)
+      .then((r) => r.ok ? r.json() : null)
+      .then((data) => {
+        if (!data) return;
+        setForm((f) => ({
+          ...f,
+          relatorioEmail:      data.relatorioEmail      ?? f.relatorioEmail,
+          relatorioFreq:       data.relatorioFreq       ?? f.relatorioFreq,
+          relatorioDia:        data.relatorioDia        ?? f.relatorioDia,
+          relatorioHora:       data.relatorioHora       ?? f.relatorioHora,
+          relatorioVendas:     data.relatorioVendas     ?? f.relatorioVendas,
+          relatorioEstoque:    data.relatorioEstoque    ?? f.relatorioEstoque,
+          relatorioFinanceiro: data.relatorioFinanceiro ?? f.relatorioFinanceiro,
+          relatorioEntregas:   data.relatorioEntregas   ?? f.relatorioEntregas,
+        }));
+        setSavedRelatoriosSnap(JSON.stringify({
+          relatorioEmail: data.relatorioEmail || '',
+          relatorioFreq:  data.relatorioFreq  || 'desativado',
+          relatorioDia:   data.relatorioDia   || '1',
+          relatorioHora:  data.relatorioHora  || '08:00',
+        }));
+      })
+      .catch(() => {});
+  }, []);
+
+  const saveSettings = async () => {
     try {
       localStorage.setItem('saborsan_settings', JSON.stringify(form))
       localStorage.setItem('saborsan_purchase_default_time', form.compraPadraoHora)
     } catch {}
+
+    if (activeSection === 'operacao') {
+      try {
+        const saved = JSON.parse(savedOperacaoSnap)
+        const patch = {}
+        if (String(form.estoqueAlerta) !== String(saved.estoqueAlerta))
+          patch.stockAlertPct = parseFloat(form.estoqueAlerta) || 10
+        if (!!form.estoqueIaWhatsapp !== !!saved.estoqueIaWhatsapp)
+          patch.iaWhatsapp = !!form.estoqueIaWhatsapp
+        if (form.iaFornecedorPrompt !== saved.iaFornecedorPrompt)
+          patch.iaPrompt = form.iaFornecedorPrompt
+        if (form.iaImportPrompt !== saved.iaImportPrompt)
+          patch.iaImportPrompt = form.iaImportPrompt
+        if (JSON.stringify(form.compraDatas || []) !== JSON.stringify(saved.compraDatas || []))
+          patch.purchaseSchedules = form.compraDatas || []
+        if (JSON.stringify(form.estoqueWhatsappNumeros || []) !== JSON.stringify(saved.estoqueWhatsappNumeros || []))
+          patch.whatsappNumbers = form.estoqueWhatsappNumeros || []
+        if ((form.iaLigarModo || 'ia') !== (saved.iaLigarModo || 'ia'))
+          patch.iaLigarModo = form.iaLigarModo || 'ia'
+        if ((form.iaLigarDia || 'segunda') !== (saved.iaLigarDia || 'segunda'))
+          patch.iaLigarDia = form.iaLigarDia || 'segunda'
+        if ((form.iaLigarHora || '09:00') !== (saved.iaLigarHora || '09:00'))
+          patch.iaLigarHora = form.iaLigarHora || '09:00'
+        if (Object.keys(patch).length > 0) {
+          await fetch(`${API_URL}/api/stock-purchase-config`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(patch),
+          })
+        }
+        setSavedOperacaoSnap(snapOperacao(form));
+      } catch {}
+    }
+
+    if (activeSection === 'relatorios') {
+      try {
+        const saved = JSON.parse(savedRelatoriosSnap)
+        const patch = {}
+        if (form.relatorioEmail !== saved.relatorioEmail) patch.relatorioEmail = form.relatorioEmail
+        if (form.relatorioFreq  !== saved.relatorioFreq)  patch.relatorioFreq  = form.relatorioFreq
+        if (form.relatorioDia   !== saved.relatorioDia)   patch.relatorioDia   = form.relatorioDia
+        if (form.relatorioHora  !== saved.relatorioHora)  patch.relatorioHora  = form.relatorioHora
+        if (Object.keys(patch).length > 0) {
+          await fetch(`${API_URL}/api/report-settings`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(patch),
+          })
+        }
+        setSavedRelatoriosSnap(snapRelatorios(form));
+      } catch {}
+    }
+
     notify('Configurações salvas com sucesso.')
   }
 
   const settingsSections = [
     { id: 'empresa',       label: 'Dados da empresa',      icon: Building2  },
-    { id: 'operacao',      label: 'Estoque e temperatura', icon: Boxes      },
+    { id: 'operacao',      label: 'Estoque e fornecedores', icon: Boxes      },
     { id: 'notificacoes',  label: 'Notificações',          icon: Bell       },
-    { id: 'aparencia',     label: 'Aparência',             icon: Settings2  },
-    { id: 'entregador',    label: 'Entregador',            icon: Truck      },
     { id: 'relatorios',    label: 'Relatórios',            icon: BarChart3  },
-    { id: 'ia',            label: 'IA — Ligações',         icon: Bot        },
     { id: 'fiscal',        label: 'Fiscal e NCM',          icon: ReceiptText },
   ]
 
   const [activeSection, setActiveSection] = useState('empresa')
   const active = settingsSections.find((s) => s.id === activeSection)
-  const showSaveBtn = activeSection !== 'fiscal'
+  const showSaveBtn = activeSection !== 'fiscal' && activeSection !== 'empresa' && activeSection !== 'notificacoes'
+  const operacaoDirty = activeSection !== 'operacao' || snapOperacao(form) !== savedOperacaoSnap
+  const relatoriosDirty = activeSection !== 'relatorios' || snapRelatorios(form) !== savedRelatoriosSnap
 
   return (
     <>
@@ -4723,29 +5625,104 @@ function Settings({ notify }) {
         </nav>
 
       <div className="settingsSectionContent">
-        <div className="settingsSectionInner">
+        <div className="settingsSectionInner" style={showSaveBtn ? { paddingBottom: '80px' } : undefined}>
 
           {activeSection === 'empresa' && (
             <div className="card settingsCard">
               <div className="cardHeader"><div><p>Identidade</p><h3>Dados da empresa</h3></div><Building2 size={22} /></div>
               <div className="settingsForm">
-                <label>Nome da empresa<input value={form.empresa} onChange={(e) => set('empresa', e.target.value)} /></label>
-                <label>CNPJ<input value={form.cnpj} onChange={(e) => set('cnpj', e.target.value)} /></label>
-                <label>E-mail corporativo<input value={form.email} onChange={(e) => set('email', e.target.value)} /></label>
-                <label>Telefone<input value={form.telefone} onChange={(e) => set('telefone', e.target.value)} /></label>
-                <label>Cidade / UF<input value={form.cidade} onChange={(e) => set('cidade', e.target.value)} /></label>
+                <label>Nome da empresa<input value={form.empresa} readOnly /></label>
+                <label>CNPJ<input value={form.cnpj} readOnly /></label>
+                <label>E-mail corporativo<input value={form.email} readOnly /></label>
+                <label>Telefone<input value={form.telefone} readOnly /></label>
+                <label>Cidade / UF<input value={form.cidade} readOnly /></label>
               </div>
             </div>
           )}
 
           {activeSection === 'operacao' && (
             <div className="card settingsCard">
-              <div className="cardHeader"><div><p>Operação</p><h3>Estoque e temperatura</h3></div><Boxes size={22} /></div>
+              <div className="cardHeader"><div><p>Operação</p><h3>Estoque e fornecedores</h3></div><Boxes size={22} /></div>
               <div className="settingsForm">
-                <label>Temperatura mínima (°C)<input type="number" value={form.tempMin} onChange={(e) => set('tempMin', e.target.value)} /></label>
-                <label>Temperatura máxima (°C)<input type="number" value={form.tempMax} onChange={(e) => set('tempMax', e.target.value)} /></label>
                 <label>Alertar estoque quando abaixo de (%)<input type="number" value={form.estoqueAlerta} onChange={(e) => set('estoqueAlerta', e.target.value)} /></label>
-                <label>Horário padrão de compras<input type="time" value={form.compraPadraoHora} onChange={(e) => set('compraPadraoHora', e.target.value)} /></label>
+                <div className="settingsToggleRow" style={{ borderBottom: form.estoqueIaWhatsapp ? 'none' : undefined }}>
+                  <span style={{ color: 'var(--navy)', fontWeight: 800 }}>IA notifica via WhatsApp quando estoque abaixo do limite</span>
+                  <label className="switch"><input type="checkbox" checked={form.estoqueIaWhatsapp} onChange={() => set('estoqueIaWhatsapp', !form.estoqueIaWhatsapp)} /><span></span></label>
+                </div>
+                {form.estoqueIaWhatsapp && (
+                  <label style={{ borderBottom: '1px solid var(--line)', paddingBottom: '12px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span>Números a notificar</span>
+                      <button type="button" style={{ border: 0, background: 'var(--orange)', color: '#fff', borderRadius: '999px', padding: '8px 12px', fontWeight: 900, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap' }} onClick={() => set('estoqueWhatsappNumeros', [...(form.estoqueWhatsappNumeros || []), ''])}><Plus size={14} /> Adicionar</button>
+                    </div>
+                    {(form.estoqueWhatsappNumeros || []).length === 0 && (
+                      <span style={{ fontWeight: 400, color: 'var(--muted)', fontSize: '.82rem' }}>Nenhum número configurado.</span>
+                    )}
+                    {(form.estoqueWhatsappNumeros || []).map((num, i) => (
+                      <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                        <input style={{ flex: 1 }} type="tel" placeholder="(XX) XXXXX-XXXX" value={num} onChange={(e) => { const arr = [...form.estoqueWhatsappNumeros]; arr[i] = e.target.value; set('estoqueWhatsappNumeros', arr) }} />
+                        <button type="button" onClick={() => set('estoqueWhatsappNumeros', form.estoqueWhatsappNumeros.filter((_, j) => j !== i))} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--danger, #e53935)', lineHeight: 1 }}><X size={16} /></button>
+                      </div>
+                    ))}
+                  </label>
+                )}
+                <label>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span>Horários padrão de compra com fornecedores</span>
+                    <button type="button" style={{ border: 0, background: 'var(--orange)', color: '#fff', borderRadius: '999px', padding: '8px 12px', fontWeight: 900, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap' }} onClick={() => set('compraDatas', [...(form.compraDatas || []), ''])}><Plus size={14} /> Adicionar</button>
+                  </div>
+                  {(form.compraDatas || []).length === 0 && (
+                    <span style={{ fontWeight: 400, color: 'var(--muted)', fontSize: '.82rem' }}>Nenhum horário configurado.</span>
+                  )}
+                  {(form.compraDatas || []).map((dt, i) => (
+                    <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                      <div style={{ flex: 1 }}><DateTimePicker value={dt} onChange={(v) => { const arr = [...form.compraDatas]; arr[i] = v; set('compraDatas', arr) }} /></div>
+                      <button type="button" onClick={() => set('compraDatas', form.compraDatas.filter((_, j) => j !== i))} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--danger, #e53935)', lineHeight: 1 }}><X size={16} /></button>
+                    </div>
+                  ))}
+                </label>
+                <label>Prompt de comportamento da IA com fornecedores
+                  <textarea rows={6} value={form.iaFornecedorPrompt} onChange={(e) => set('iaFornecedorPrompt', e.target.value)} onFocus={(e) => { e.target.style.borderColor = 'var(--orange)'; e.target.style.background = '#fff' }} onBlur={(e) => { e.target.style.borderColor = 'var(--line)'; e.target.style.background = '#f9fbff' }} style={{ resize: 'vertical', width: '100%', padding: '11px 14px', borderRadius: 14, border: '1.5px solid var(--line)', font: 'inherit', color: 'var(--text)', fontWeight: 700, outline: 0, background: '#f9fbff', boxSizing: 'border-box' }} />
+                </label>
+                <label>Prompt de análise de documentos para importação de produtos
+                  <textarea rows={8} value={form.iaImportPrompt} onChange={(e) => set('iaImportPrompt', e.target.value)} placeholder="Deixe em branco para usar o prompt padrão do sistema." onFocus={(e) => { e.target.style.borderColor = 'var(--orange)'; e.target.style.background = '#fff' }} onBlur={(e) => { e.target.style.borderColor = 'var(--line)'; e.target.style.background = '#f9fbff' }} style={{ resize: 'vertical', width: '100%', padding: '11px 14px', borderRadius: 14, border: '1.5px solid var(--line)', font: 'inherit', color: 'var(--text)', fontWeight: 700, outline: 0, background: '#f9fbff', boxSizing: 'border-box' }} />
+                </label>
+              </div>
+              <div className="iaModeSelector">
+                <button className={`iaModeBtn${form.iaLigarModo === 'ia' ? ' active' : ''}`} onClick={() => set('iaLigarModo', 'ia')}>
+                  <Sparkles size={18} />
+                  <div><b>Modo inteligente</b><small>A IA liga assim que detectar que o estoque está chegando ao limite crítico, sem horário fixo.</small></div>
+                </button>
+                <button className={`iaModeBtn${form.iaLigarModo === 'agendado' ? ' active' : ''}`} onClick={() => set('iaLigarModo', 'agendado')}>
+                  <CalendarDays size={18} />
+                  <div><b>Horário fixo</b><small>A IA liga em um dia e horário específico para verificar o estoque e alertar se necessário.</small></div>
+                </button>
+              </div>
+              {form.iaLigarModo === 'agendado' && (
+                <div className="settingsForm settingsTwoCols" style={{marginTop:'14px'}}>
+                  <label>Dia da semana
+                    <CustomSelect
+                      value={form.iaLigarDia}
+                      onChange={(v) => set('iaLigarDia', v)}
+                      options={[
+                        { value: 'segunda', label: 'Segunda-feira' },
+                        { value: 'terça',   label: 'Terça-feira'   },
+                        { value: 'quarta',  label: 'Quarta-feira'  },
+                        { value: 'quinta',  label: 'Quinta-feira'  },
+                        { value: 'sexta',   label: 'Sexta-feira'   },
+                        { value: 'sábado',  label: 'Sábado'        },
+                      ]}
+                    />
+                  </label>
+                  <label>Horário<TimePickerInput value={form.iaLigarHora} onChange={(v) => set('iaLigarHora', v)} /></label>
+                </div>
+              )}
+              <div className="settingsInfo" style={{marginTop:'14px'}}>
+                <Bot size={14} />
+                <span>{form.iaLigarModo === 'ia'
+                  ? 'A IA monitora o estoque em tempo real e aciona o contato assim que identificar risco de falta de produto.'
+                  : `A IA ligará toda ${form.iaLigarDia}-feira às ${form.iaLigarHora} para verificar o estoque e alertar o contato configurado.`}
+                </span>
               </div>
             </div>
           )}
@@ -4755,62 +5732,39 @@ function Settings({ notify }) {
               <div className="cardHeader"><div><p>Alertas</p><h3>Notificações</h3></div><Bell size={22} /></div>
               <div className="settingsToggles">
                 {[
-                  ['notifEmail', 'Notificações por e-mail'],
-                  ['notifApp', 'Notificações no painel'],
-                  ['notifEstoque', 'Alertas de estoque crítico'],
-                  ['notifEntregas', 'Atualizações de entregas'],
-                ].map(([key, label]) => (
+                  ['notifOrders',         'Notificações de pedidos',      'Alertas ao receber ou atualizar um novo pedido'],
+                  ['notifSellers',        'Notificações de vendedores',   'Alertas sobre atividades e ações dos vendedores'],
+                  ['notifFiscalDocuments','Notificações de notas',        'Alertas sobre emissão e status de notas fiscais'],
+                  ['notifStock',          'Notificações de estoque',      'Alertas quando produtos atingirem nível crítico de estoque'],
+                  ['notifSuppliers',      'Notificações de fornecedores', 'Alertas sobre atualizações e cadastros de fornecedores'],
+                  ['notifPurchases',      'Notificações de compras',      'Alertas sobre pedidos de compra e reposição de estoque'],
+                  ['notifDeliveries',     'Notificações de entregas',     'Alertas sobre saída, rota e conclusão de entregas'],
+                  ['notifClients',        'Notificações de clientes',     'Alertas sobre novos cadastros e atividades de clientes'],
+                  ['notifPayments',       'Notificações de pagamentos',   'Alertas sobre registro e status de pagamentos'],
+                ].map(([key, label, subtitle]) => (
                   <div className="settingsToggleRow" key={key}>
-                    <span>{label}</span>
+                    <div>
+                      <span>{label}</span>
+                      <small style={{display:'block', color:'var(--text-muted, #888)', fontSize:'12px', marginTop:'2px'}}>{subtitle}</small>
+                    </div>
                     <label className="switch">
-                      <input type="checkbox" checked={form[key]} onChange={() => set(key, !form[key])} />
+                      <input type="checkbox" checked={form[key]} onChange={async () => {
+                        const next = !form[key]
+                        set(key, next)
+                        onNotifSettingChange && onNotifSettingChange(key, next)
+                        try {
+                          await fetch(`${API_URL}/api/notification-settings`, {
+                            method: 'PATCH',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ [key.toLowerCase()]: next }),
+                          })
+                        } catch {}
+                      }} />
                       <span></span>
                     </label>
                   </div>
                 ))}
               </div>
-            </div>
-          )}
-
-          {activeSection === 'aparencia' && (
-            <div className="card settingsCard">
-              <div className="cardHeader"><div><p>Interface</p><h3>Aparência e sistema</h3></div><Settings2 size={22} /></div>
-              <div className="settingsForm">
-                <label>Tema
-                  <select value={form.tema} onChange={(e) => set('tema', e.target.value)}>
-                    <option value="claro">Claro</option>
-                    <option value="escuro">Escuro (em breve)</option>
-                  </select>
-                </label>
-                <label>Idioma
-                  <select value={form.idioma} onChange={(e) => set('idioma', e.target.value)}>
-                    <option value="pt-BR">Português (Brasil)</option>
-                    <option value="en">English (em breve)</option>
-                  </select>
-                </label>
-              </div>
-              <div className="settingsVersion"><ShieldCheck size={15} /><span>Versão {form.versao} • Sistema estável</span></div>
-            </div>
-          )}
-
-          {activeSection === 'entregador' && (
-            <div className="card settingsCard">
-              <div className="cardHeader"><div><p>Logística</p><h3>Contato do entregador</h3></div><Truck size={22} /></div>
-              <div className="settingsForm">
-                <label>Nome do entregador<input value={form.entregadorNome} onChange={(e) => set('entregadorNome', e.target.value)} /></label>
-                <label>WhatsApp / Telefone<input value={form.entregadorTelefone} onChange={(e) => set('entregadorTelefone', e.target.value)} /></label>
-              </div>
-              <div className="settingsToggles" style={{marginTop:'12px'}}>
-                <div className="settingsToggleRow">
-                  <span>Notificar ao receber pedido</span>
-                  <label className="switch"><input type="checkbox" checked={form.entregadorNotifPedido} onChange={() => set('entregadorNotifPedido', !form.entregadorNotifPedido)} /><span></span></label>
-                </div>
-                <div className="settingsToggleRow">
-                  <span>Notificar ao entrar em rota</span>
-                  <label className="switch"><input type="checkbox" checked={form.entregadorNotifRota} onChange={() => set('entregadorNotifRota', !form.entregadorNotifRota)} /><span></span></label>
-                </div>
-              </div>
-              <div className="settingsInfo"><Smartphone size={14} /><span>As notificações são enviadas via WhatsApp com os dados do pedido automaticamente.</span></div>
             </div>
           )}
 
@@ -4820,86 +5774,70 @@ function Settings({ notify }) {
               <div className="settingsForm">
                 <label>E-mail de destino<input type="email" value={form.relatorioEmail} onChange={(e) => set('relatorioEmail', e.target.value)} /></label>
                 <label>Frequência de envio
-                  <select value={form.relatorioFreq} onChange={(e) => set('relatorioFreq', e.target.value)}>
-                    <option value="diario">Diário</option>
-                    <option value="semanal">Semanal</option>
-                    <option value="mensal">Mensal</option>
-                  </select>
+                  <CustomSelect
+                    value={form.relatorioFreq}
+                    onChange={(v) => set('relatorioFreq', v)}
+                    options={[
+                      { value: 'desativado', label: 'Desativado' },
+                      { value: 'diario',     label: 'Diário'     },
+                      { value: 'semanal',    label: 'Semanal'    },
+                      { value: 'mensal',     label: 'Mensal'     },
+                    ]}
+                  />
                 </label>
-                <div className="settingsTwoCols">
-                  <label>Dia do envio
-                    <select value={form.relatorioDia} onChange={(e) => set('relatorioDia', e.target.value)}>
-                      {Array.from({length: 28}, (_, i) => <option key={i+1} value={String(i+1)}>Dia {i+1}</option>)}
-                    </select>
-                  </label>
-                  <label>Horário<input type="time" value={form.relatorioHora} onChange={(e) => set('relatorioHora', e.target.value)} /></label>
-                </div>
+                {form.relatorioFreq !== 'desativado' && (
+                  form.relatorioFreq === 'mensal' ? (
+                    <div className="settingsTwoCols">
+                      <label>Dia do envio
+                        <CustomSelect
+                          value={form.relatorioDia}
+                          onChange={(v) => set('relatorioDia', v)}
+                          placeholder="Selecione o dia"
+                          options={Array.from({length: 28}, (_, i) => ({ value: String(i + 1), label: `Dia ${i + 1}` }))}
+                        />
+                      </label>
+                      <label>Horário
+                        <TimePickerInput value={form.relatorioHora} onChange={(v) => set('relatorioHora', v)} />
+                      </label>
+                    </div>
+                  ) : (
+                    <label>Horário
+                      <TimePickerInput value={form.relatorioHora} onChange={(v) => set('relatorioHora', v)} />
+                    </label>
+                  )
+                )}
               </div>
               <div className="settingsToggles" style={{marginTop:'12px'}}>
                 <p className="settingsSub">Incluir no relatório:</p>
                 {[['relatorioVendas','Resumo de vendas'],['relatorioEstoque','Movimentação de estoque'],['relatorioFinanceiro','Visão financeira'],['relatorioEntregas','Desempenho de entregas']].map(([key, label]) => (
                   <div className="settingsToggleRow" key={key}>
                     <span>{label}</span>
-                    <label className="switch"><input type="checkbox" checked={form[key]} onChange={() => set(key, !form[key])} /><span></span></label>
+                    <label className="switch"><input type="checkbox" checked={form[key]} onChange={async () => {
+                      const next = !form[key]
+                      set(key, next)
+                      try {
+                        await fetch(`${API_URL}/api/report-settings`, {
+                          method: 'PATCH',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ [key]: next }),
+                        })
+                      } catch {}
+                    }} /><span></span></label>
                   </div>
                 ))}
               </div>
             </div>
           )}
 
-          {activeSection === 'ia' && (
-            <div className="card settingsCard">
-              <div className="cardHeader"><div><p>Inteligência artificial</p><h3>Ligação automática de alerta de estoque</h3></div><Bot size={22} /></div>
-              <div className="settingsToggleRow" style={{marginBottom:'16px'}}>
-                <span>Ativar ligação automática da IA</span>
-                <label className="switch"><input type="checkbox" checked={form.iaLigarAtivo} onChange={() => set('iaLigarAtivo', !form.iaLigarAtivo)} /><span></span></label>
-              </div>
-              {form.iaLigarAtivo && (
-                <>
-                  <div className="settingsForm">
-                    <label>Número a ser contatado (WhatsApp / telefone)<input value={form.iaLigarContato} onChange={(e) => set('iaLigarContato', e.target.value)} /></label>
-                  </div>
-                  <div className="iaModeSelector">
-                    <button className={`iaModeBtn${form.iaLigarModo === 'ia' ? ' active' : ''}`} onClick={() => set('iaLigarModo', 'ia')}>
-                      <Sparkles size={18} />
-                      <div><b>Modo inteligente</b><small>A IA liga assim que detectar que o estoque está chegando ao limite crítico, sem horário fixo.</small></div>
-                    </button>
-                    <button className={`iaModeBtn${form.iaLigarModo === 'agendado' ? ' active' : ''}`} onClick={() => set('iaLigarModo', 'agendado')}>
-                      <CalendarDays size={18} />
-                      <div><b>Horário fixo</b><small>A IA liga em um dia e horário específico para verificar o estoque e alertar se necessário.</small></div>
-                    </button>
-                  </div>
-                  {form.iaLigarModo === 'agendado' && (
-                    <div className="settingsForm settingsTwoCols" style={{marginTop:'14px'}}>
-                      <label>Dia da semana
-                        <select value={form.iaLigarDia} onChange={(e) => set('iaLigarDia', e.target.value)}>
-                          {['segunda','terça','quarta','quinta','sexta','sábado'].map(d => <option key={d} value={d}>{d.charAt(0).toUpperCase()+d.slice(1)}-feira</option>)}
-                        </select>
-                      </label>
-                      <label>Horário<input type="time" value={form.iaLigarHora} onChange={(e) => set('iaLigarHora', e.target.value)} /></label>
-                    </div>
-                  )}
-                  <div className="settingsInfo" style={{marginTop:'14px'}}>
-                    <Bot size={14} />
-                    <span>{form.iaLigarModo === 'ia'
-                      ? 'A IA monitora o estoque em tempo real e aciona o contato assim que identificar risco de falta de produto.'
-                      : `A IA ligará toda ${form.iaLigarDia}-feira às ${form.iaLigarHora} para verificar o estoque e alertar o contato configurado.`}
-                    </span>
-                  </div>
-                </>
-              )}
-            </div>
-          )}
-
           {activeSection === 'fiscal' && <FiscalConfigSection notify={notify} />}
-          {showSaveBtn && (
-            <div style={{display:'flex', justifyContent:'flex-end', marginTop:'16px'}}>
-              <button className="btnSolid" onClick={saveSettings}><CheckCircle2 size={18} /> Salvar alterações</button>
-            </div>
-          )}
         </div>
       </div>
     </div>
+    {showSaveBtn && (
+      <div className="settingsSaveFooter">
+        <button className="btnSolid" onClick={saveSettings} disabled={!operacaoDirty || !relatoriosDirty} style={{ opacity: (!operacaoDirty || !relatoriosDirty) ? 0.45 : 1, cursor: (!operacaoDirty || !relatoriosDirty) ? 'not-allowed' : 'pointer' }}><CheckCircle2 size={18} /> Salvar alterações</button>
+      </div>
+    )}
     </>
   )
 }
@@ -5085,7 +6023,7 @@ function SellerDetailModal({ seller, onClose, onToggleActive, onEdit }) {
   )
 }
 
-function Sellers({ search = '' }) {
+function Sellers({ search = '', addNotif }) {
   const [sellersData, setSellersData] = useState([])
   const [sellersLoading, setSellersLoading] = useState(false)
   const [selected, setSelected] = useState(null)
@@ -5095,12 +6033,29 @@ function Sellers({ search = '' }) {
   const seller = selected ? sellersData.find((s) => s.id === selected) : null
   const totalGeral = sellersData.reduce((a, s) => a + s.total, 0)
   const bestSeller = sellersData.length > 0 ? sellersData.reduce((a, b) => a.total > b.total ? a : b) : null
+  const notifiedSellersRef = useRef(new Set())
 
   useEffect(() => {
     setSellersLoading(true)
     fetch(`${API_URL}/api/sellers`)
       .then((r) => r.json())
-      .then((data) => { if (data.sellers) setSellersData(data.sellers) })
+      .then((data) => {
+        if (data.sellers) {
+          setSellersData(data.sellers)
+          if (addNotif) {
+            data.sellers.forEach((s) => {
+              if (s.meta > 0 && s.total >= s.meta && !notifiedSellersRef.current.has(`meta_${s.id}`)) {
+                const sessionKey = `notif_seller_meta_${s.id}`
+                if (!sessionStorage.getItem(sessionKey)) {
+                  addNotif('notifSellers', { icon: TrendingUp, title: 'Meta de vendas atingida', text: `${s.name} atingiu a meta de ${money(s.meta)} em vendas!` })
+                  sessionStorage.setItem(sessionKey, '1')
+                  notifiedSellersRef.current.add(`meta_${s.id}`)
+                }
+              }
+            })
+          }
+        }
+      })
       .catch(() => {})
       .finally(() => setSellersLoading(false))
   }, [])
@@ -5202,7 +6157,7 @@ const ncmMap = {
 
 const STEPS = ['previa', 'validacao', 'enviando', 'autorizada', 'cliente']
 
-function NotaFiscalModal({ order, onClose, updateOrderStatus, notify }) {
+function NotaFiscalModal({ order, onClose, updateOrderStatus, notify, addNotif }) {
   const [step, setStep] = useState('previa')
   const [purchasePurpose, setPurchasePurpose] = useState(order.purchasePurpose || 'consumo')
   // 0=preparando 1=enviando para Focus 2=recebido pela Focus 3=aguardando SEFAZ
@@ -5265,10 +6220,12 @@ function NotaFiscalModal({ order, onClose, updateOrderStatus, notify }) {
           setStep('autorizada')
           updateOrderStatus(order.id, 'Pronto', { nfeData: { ...data, reference: ref, nfeStatus: 'AUTHORIZED' } })
           notify(`NF-e ${data.number ? `nº ${data.number} ` : ''}autorizada para ${order.customer}.`)
+          addNotif && addNotif('notifFiscalDocuments', { icon: ReceiptText, title: 'Nota fiscal autorizada', text: `NF-e de ${order.customer} foi autorizada pelo SEFAZ.` })
         } else if (data.status === 'REJECTED' || data.status === 'SUBMISSION_FAILED') {
           setNfeError(data)
           setStep('rejeitada')
           updateOrderStatus(order.id, 'Pronto', { nfeData: { nfeStatus: data.status, errorCode: data.errorCode || null, errorMessage: data.errorMessage || null, reference: ref } })
+          addNotif && addNotif('notifFiscalDocuments', { icon: AlertTriangle, type: 'warning', title: 'Nota fiscal negada', text: `NF-e de ${order.customer} foi negada ou gerou erro pelo SEFAZ / Focus NF-e.` })
         } else {
           startPolling(ref, attempt + 1)
         }
@@ -5303,6 +6260,7 @@ function NotaFiscalModal({ order, onClose, updateOrderStatus, notify }) {
         setStep('autorizada')
         updateOrderStatus(order.id, 'Pronto', { nfeData: { ...data, nfeStatus: 'AUTHORIZED' } })
         notify(`NF-e ${data.number ? `nº ${data.number} ` : ''}autorizada para ${order.customer}.`)
+        addNotif && addNotif('notifFiscalDocuments', { icon: ReceiptText, title: 'Nota fiscal autorizada', text: `NF-e de ${order.customer} foi autorizada pelo SEFAZ.` })
         return
       }
       if ((data.status === 'PROCESSING' || data.status === 'SUBMITTING') && data.reference) {
@@ -5314,6 +6272,7 @@ function NotaFiscalModal({ order, onClose, updateOrderStatus, notify }) {
         setNfeError(data)
         setStep('rejeitada')
         updateOrderStatus(order.id, 'Pronto', { nfeData: { nfeStatus: data.status, errorCode: data.errorCode || null, errorMessage: data.errorMessage || null, reference: data.reference || null } })
+        addNotif && addNotif('notifFiscalDocuments', { icon: AlertTriangle, type: 'warning', title: 'Nota fiscal negada', text: `NF-e de ${order.customer} foi negada ou gerou erro pelo SEFAZ / Focus NF-e.` })
         return
       }
       if (data.status === 'FISCAL_RULES_ERROR' || data.status === 'VALIDATION_ERROR') {
@@ -5949,6 +6908,345 @@ function SupplierTranscriptModal({ supplier, onClose }) {
               <Smartphone size={15} /> Ligar agora
             </a>
           </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function NewPaymentModal({ onClose, onCreated }) {
+  const [form, setForm] = useState({
+    clientName: '',
+    orderId: '',
+    sellerName: '',
+    paymentDate: new Date().toISOString().slice(0, 10) + 'T08:00',
+    paymentMethod: '',
+    paymentValue: '',
+    totalPaid: '',
+    status: 'Pendente',
+  })
+  const [hasLinkedOrder, setHasLinkedOrder] = useState(true)
+  const [clientsData, setClientsData] = useState([])
+  const [clientsLoading, setClientsLoading] = useState(true)
+  const [sellersData, setSellersData] = useState([])
+  const [sellersLoading, setSellersLoading] = useState(true)
+  const [routeOrders, setRouteOrders] = useState([])
+  const [ordersLoading, setOrdersLoading] = useState(true)
+  const [submitError, setSubmitError] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+
+  const set = (k, v) => setForm((f) => ({ ...f, [k]: v }))
+
+  useEffect(() => {
+    fetch(`${API_URL}/api/clients`)
+      .then((r) => r.json())
+      .then((data) => { if (data.clients) setClientsData(data.clients) })
+      .catch(() => {})
+      .finally(() => setClientsLoading(false))
+
+    fetch(`${API_URL}/api/sellers`)
+      .then((r) => r.json())
+      .then((data) => { if (data.sellers) setSellersData(data.sellers) })
+      .catch(() => {})
+      .finally(() => setSellersLoading(false))
+
+    fetch(`${API_URL}/api/orders`)
+      .then((r) => r.json())
+      .then((data) => { if (data.orders) setRouteOrders(data.orders.filter((o) => o.status === 'Rota')) })
+      .catch(() => {})
+      .finally(() => setOrdersLoading(false))
+  }, [])
+
+  const canSubmit =
+    form.clientName.trim() !== '' &&
+    form.sellerName !== '' &&
+    form.paymentMethod !== '' &&
+    form.paymentValue !== '' &&
+    !isNaN(parseFloat(form.paymentValue))
+
+  const submit = async (e) => {
+    e.preventDefault()
+    if (!canSubmit || submitting) return
+    setSubmitError('')
+    setSubmitting(true)
+    try {
+      const payload = {
+        clientName: form.clientName.trim(),
+        orderId: hasLinkedOrder ? (form.orderId || null) : null,
+        sellerName: form.sellerName,
+        paymentDate: form.paymentDate.trim(),
+        paymentMethod: form.paymentMethod,
+        paymentValue: parseFloat(form.paymentValue),
+        totalPaid: parseFloat(form.totalPaid) || 0,
+        status: form.status,
+      }
+      const res = await fetch(`${API_URL}/api/payments`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Erro ao registrar pagamento')
+      onCreated(data.payment)
+      onClose()
+    } catch (err) {
+      setSubmitError(err.message || 'Erro ao salvar pagamento. Tente novamente.')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const sectionTitle = { gridColumn: '1 / -1', fontWeight: 600, fontSize: '.82rem', textTransform: 'uppercase', letterSpacing: '.06em', color: 'var(--muted)', marginTop: 8, marginBottom: 0 }
+
+  return (
+    <div className="modalBackdrop">
+      <div className="detailModal newProductModal">
+        <button className="closeBtn" onClick={onClose}><X /></button>
+        <div className="modalHeader">
+          <div>
+            <span>Pagamentos</span>
+            <h2>Novo pagamento</h2>
+            <p>Preencha os dados para registrar o pagamento no sistema</p>
+          </div>
+        </div>
+        <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden', minHeight: 0 }}>
+          <div className="newProductScrollArea">
+            <div className="newProductForm">
+
+              <p style={sectionTitle}>Vinculação</p>
+              <label className="full">Cliente *
+                <CustomSelect
+                  value={form.clientName}
+                  onChange={(v) => set('clientName', v)}
+                  placeholder={clientsLoading ? 'Carregando clientes...' : 'Selecione o cliente'}
+                  disabled={clientsLoading}
+                  options={clientsData.map((c) => ({ value: c.establishmentName, label: c.establishmentName }))}
+                />
+              </label>
+              <label>Vendedor *
+                <CustomSelect
+                  value={form.sellerName}
+                  onChange={(v) => set('sellerName', v)}
+                  placeholder={sellersLoading ? 'Carregando vendedores...' : 'Selecione o vendedor'}
+                  disabled={sellersLoading}
+                  options={sellersData.map((s) => ({ value: s.name, label: s.name }))}
+                />
+              </label>
+              <label>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                  <span>Pedido vinculado</span>
+                  <div className="deliverySegmented">
+                    <button type="button" className={`deliverySegBtn${hasLinkedOrder ? ' active' : ''}`} onClick={() => setHasLinkedOrder(true)}>Sim</button>
+                    <button type="button" className={`deliverySegBtn${!hasLinkedOrder ? ' active' : ''}`} onClick={() => { setHasLinkedOrder(false); set('orderId', '') }}>Não</button>
+                  </div>
+                </div>
+                {hasLinkedOrder && (
+                  <CustomSelect
+                    value={form.orderId}
+                    onChange={(v) => set('orderId', v)}
+                    placeholder={ordersLoading ? 'Carregando pedidos...' : routeOrders.length === 0 ? 'Nenhum pedido em Rota' : 'Selecione o pedido'}
+                    disabled={ordersLoading}
+                    options={routeOrders.map((o) => ({ value: o.id, label: `${o.id} — ${o.customer}` }))}
+                  />
+                )}
+              </label>
+
+              <p style={sectionTitle}>Dados do pagamento</p>
+              <label>Data do pagamento
+                <DateTimePicker value={form.paymentDate} onChange={(v) => set('paymentDate', v)} placeholder="Selecionar data e hora" />
+              </label>
+              <label>Forma de pagamento *
+                <CustomSelect
+                  value={form.paymentMethod}
+                  onChange={(v) => set('paymentMethod', v)}
+                  placeholder="Selecione a forma..."
+                  options={[
+                    { value: 'PIX', label: 'PIX' },
+                    { value: 'Boleto', label: 'Boleto' },
+                    { value: 'Cartão de débito', label: 'Cartão de débito' },
+                    { value: 'Cartão de crédito', label: 'Cartão de crédito' },
+                    { value: 'Dinheiro', label: 'Dinheiro' },
+                  ]}
+                />
+              </label>
+              <label>Valor do pagamento (R$) *
+                <input type="number" min="0" step="0.01" placeholder="0,00" value={form.paymentValue} onChange={(e) => set('paymentValue', e.target.value)} required />
+              </label>
+              <label>Total pago (R$)
+                <input type="number" min="0" step="0.01" placeholder="0,00" value={form.totalPaid} onChange={(e) => set('totalPaid', e.target.value)} />
+              </label>
+
+              <p style={sectionTitle}>Status</p>
+              <label className="full">Status do pagamento *
+                <CustomSelect
+                  value={form.status}
+                  onChange={(v) => set('status', v)}
+                  options={[
+                    { value: 'Pago', label: 'Pago' },
+                    { value: 'Pendente', label: 'Pendente' },
+                    { value: 'Parcial', label: 'Parcial' },
+                    { value: 'Atrasado', label: 'Atrasado' },
+                  ]}
+                />
+              </label>
+
+            </div>
+            {submitError && <small className="errorText" style={{ marginTop: 12, display: 'block' }}>{submitError}</small>}
+          </div>
+          <div className="newProductFooter">
+            <button type="submit" className="btnPrimary" disabled={!canSubmit || submitting}>
+              <CheckCircle2 size={17} /> {submitting ? 'Registrando...' : 'Registrar pagamento'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
+function Payments({ paymentsData = [], paymentsLoading = false, onSelectPayment, onNewPayment, search = '' }) {
+  const [viewMode, setViewMode] = useState('grid')
+  const [viewMenuOpen, setViewMenuOpen] = useState(false)
+  const viewMenuRef = useRef(null)
+
+  const filtered = !search
+    ? paymentsData
+    : paymentsData.filter((p) =>
+        (p.clientName || '').toLowerCase().includes(search.toLowerCase()) ||
+        (p.sellerName || '').toLowerCase().includes(search.toLowerCase()) ||
+        (p.id || '').toLowerCase().includes(search.toLowerCase()) ||
+        (p.paymentMethod || '').toLowerCase().includes(search.toLowerCase())
+      )
+
+  useEffect(() => {
+    if (!viewMenuOpen) return
+    const handleClick = (e) => {
+      if (viewMenuRef.current && !viewMenuRef.current.contains(e.target)) setViewMenuOpen(false)
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [viewMenuOpen])
+
+  const viewOptions = [
+    { key: 'grid', icon: LayoutGrid, label: 'Cards' },
+    { key: 'list', icon: List, label: 'Lista' },
+  ]
+
+  return (
+    <section className="pageStack">
+      <div className="sectionHeader stockSectionHeader">
+        <div><p>Registro de pagamentos</p></div>
+        <div className="viewFilterWrap" ref={viewMenuRef}>
+          <button className="viewFilterBtn" onClick={() => setViewMenuOpen(!viewMenuOpen)}>
+            <LayoutGrid size={16} /> Visualização <ChevronDown size={14} style={{ transform: viewMenuOpen ? 'rotate(180deg)' : 'none', transition: 'transform .2s' }} />
+          </button>
+          {viewMenuOpen && (
+            <div className="viewFilterDropdown">
+              {viewOptions.map(({ key, icon: Icon, label }) => (
+                <button key={key} className={viewMode === key ? 'active' : ''} onClick={() => { setViewMode(key); setViewMenuOpen(false) }}>
+                  <Icon size={16} /> {label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+        <button className="btnSolid" onClick={onNewPayment}><Plus size={18} /> Novo pagamento</button>
+      </div>
+      {paymentsLoading && <p className="loadingText">Carregando pagamentos...</p>}
+      {!paymentsLoading && filtered.length === 0 && <p className="emptyText">Nenhum pagamento encontrado.</p>}
+      {viewMode === 'grid' ? (
+        <div className="clientGrid">
+          {filtered.map((payment) => (
+            <article className="clientCard" key={payment.id}>
+              <div className="avatar"><CreditCard size={22} /></div>
+              <div>
+                <h3>{payment.clientName}</h3>
+                <p>{payment.id} • {payment.orderId}</p>
+              </div>
+              <Status status={payment.status} />
+              <div className="clientStats">
+                <span>Vendedor <b>{payment.sellerName}</b></span>
+                <span>Data <b>{payment.paymentDate}</b></span>
+                <span>Forma <b>{payment.paymentMethod}</b></span>
+                <span>Valor <b>{money(payment.paymentValue)}</b></span>
+              </div>
+              <div className="orderActions">
+                <button onClick={() => onSelectPayment && onSelectPayment(payment)}>Ver detalhes</button>
+              </div>
+            </article>
+          ))}
+        </div>
+      ) : (
+        <div className="clientListView">
+          {filtered.map((payment) => (
+            <article className="clientListItem" key={payment.id}>
+              <div className="clientListAvatar"><CreditCard size={18} /></div>
+              <div className="clientListInfo">
+                <h3>{payment.clientName}</h3>
+                <p>{payment.sellerName} • {payment.paymentMethod}</p>
+              </div>
+              <div className="clientListMeta">
+                <span>Valor <b>{money(payment.paymentValue)}</b></span>
+              </div>
+              <Status status={payment.status} />
+              <div className="clientListActions">
+                <button onClick={() => onSelectPayment && onSelectPayment(payment)}>Ver detalhes</button>
+              </div>
+            </article>
+          ))}
+        </div>
+      )}
+    </section>
+  )
+}
+
+function PaymentDetailModal({ payment, onClose }) {
+  return (
+    <div className="modalBackdrop">
+      <div className="detailModal newOrderModal supplierDetailModal">
+        <button className="closeBtn" onClick={onClose}><X /></button>
+        <div className="modalHeader">
+          <div>
+            <span>Pagamento</span>
+            <h2>{payment.id}</h2>
+            <p>Detalhes do pagamento vinculado ao pedido {payment.orderId}</p>
+          </div>
+        </div>
+        <div className="newOrderScrollArea">
+          <h3>Cliente e vendedor</h3>
+          <div className="supplierDetailGrid">
+            <div className="supplierDetailItem"><span>Cliente</span><b>{payment.clientName}</b></div>
+            <div className="supplierDetailItem"><span>Vendedor</span><b>{payment.sellerName}</b></div>
+          </div>
+
+          <div className="supplierDetailDivider" />
+
+          <h3>Informações do pagamento</h3>
+          <div className="supplierDetailGrid">
+            <div className="supplierDetailItem">
+              <span>Data do pagamento</span>
+              <b>{payment.paymentDate}</b>
+            </div>
+            <div className="supplierDetailItem">
+              <span>Forma de pagamento</span>
+              <b>{payment.paymentMethod}</b>
+            </div>
+            <div className="supplierDetailItem">
+              <span>Valor do pagamento</span>
+              <b>{money(payment.paymentValue)}</b>
+            </div>
+            <div className="supplierDetailItem">
+              <span>Total pago</span>
+              <b>{money(payment.totalPaid)}</b>
+            </div>
+            <div className="supplierDetailItem">
+              <span>Status do pagamento</span>
+              <b><Status status={payment.status} /></b>
+            </div>
+          </div>
+        </div>
+        <div className="modalFooter">
+          <button className="nfBtnGhost" onClick={onClose}>Fechar</button>
         </div>
       </div>
     </div>
