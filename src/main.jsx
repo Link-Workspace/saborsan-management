@@ -58,6 +58,7 @@ import {
   Wand2,
   Database,
   ImageOff,
+  Printer,
 } from 'lucide-react'
 import './styles.css'
 
@@ -1140,6 +1141,8 @@ function Invoices({ orders, onGerarNota, onVerNota, search = '' }) {
   const fiscalHistory = orders.filter((o) => o.nfeData && (!search || o.customer.toLowerCase().includes(search.toLowerCase())))
   const readyToEmit = orders.filter((o) => !o.isDeleted && o.status === 'Pronto' && o.nfeData?.nfeStatus !== 'AUTHORIZED' && (!search || o.customer.toLowerCase().includes(search.toLowerCase())))
 
+  const [printOrder, setPrintOrder] = useState(null)
+
   const formatNfeDate = (o) => {
     const iso = o.nfeData?.authorizedAt
     if (!iso) return null
@@ -1148,8 +1151,9 @@ function Invoices({ orders, onGerarNota, onVerNota, search = '' }) {
   }
 
   return (
-    <section className="pageStack">
-      <div className="sectionHeader"><div><p>Geração e acompanhamento fiscal</p></div></div>
+    <>
+      <section className="pageStack">
+        <div className="sectionHeader"><div><p>Geração e acompanhamento fiscal</p></div></div>
       <div className="contentGrid twoCols">
         <div className="card">
           <div className="cardHeader"><div><p>Notas geradas</p><h3>Histórico fiscal</h3></div><ReceiptText /></div>
@@ -1163,6 +1167,11 @@ function Invoices({ orders, onGerarNota, onVerNota, search = '' }) {
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <Status status={o.nfeData.nfeStatus === 'AUTHORIZED' ? 'Emitida' : 'Erro'} />
                   <button onClick={() => onVerNota(o)}>Ver nota</button>
+                  {o.nfeData.nfeStatus === 'AUTHORIZED' && (
+                    <button className="printDanfeBtn" onClick={() => setPrintOrder(o)} title="Imprimir DANFE">
+                      <Printer size={20} />
+                    </button>
+                  )}
                 </div>
               </div>
             ))}
@@ -1184,6 +1193,8 @@ function Invoices({ orders, onGerarNota, onVerNota, search = '' }) {
         </div>
       </div>
     </section>
+    {printOrder && <PrintDanfeModal order={printOrder} onClose={() => setPrintOrder(null)} />}
+    </>
   )
 }
 
@@ -6828,6 +6839,111 @@ function VerNotaModal({ order, onClose, onSendToClient, onGerarNota, updateOrder
             <small>Para acessar os documentos, utilize o painel da Focus NFe ou gere a nota novamente para este pedido.</small>
           </div>
         )}
+      </div>
+    </div>
+  )
+}
+
+function PrintDanfeModal({ order, onClose }) {
+  const [printing, setPrinting] = useState(false)
+  const [error, setError] = useState(null)
+  const [printers, setPrinters] = useState([])
+  const [selectedPrinter, setSelectedPrinter] = useState('')
+  const [printersLoading, setPrintersLoading] = useState(true)
+  const nfe = order.nfeData
+
+  useEffect(() => {
+    fetch(`${API_URL}/api/print-danfe`)
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.printers?.length) {
+          setPrinters(data.printers)
+          setSelectedPrinter(data.default || data.printers[0])
+        }
+      })
+      .catch(() => {})
+      .finally(() => setPrintersLoading(false))
+  }, [])
+
+  const handlePrint = async () => {
+    if (!nfe?.reference) return
+    setPrinting(true)
+    setError(null)
+    try {
+      const res = await fetch(`${API_URL}/api/print-danfe`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reference: nfe.reference, printer: selectedPrinter || undefined }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Erro ao imprimir')
+      onClose()
+    } catch (err) {
+      setError(err.message || 'Erro ao enviar para impressora.')
+    } finally {
+      setPrinting(false)
+    }
+  }
+
+  return (
+    <div className="modalBackdrop">
+      <div className="detailModal printDanfeModal">
+        <div className="modalHeader">
+          <div>
+            <span>Impressão</span>
+            <h2>Imprimir DANFE</h2>
+            <p>{order.customer}{nfe?.number ? ` • NF-e nº ${nfe.number}` : ''}</p>
+          </div>
+          <Printer size={30} style={{ color: 'var(--navy)', opacity: .35, flexShrink: 0 }} />
+        </div>
+        <div className="printDanfeBody">
+          {nfe?.number && (
+            <div className="printDanfeInfoCard">
+              <small>Documento</small>
+              <b>NF-e nº {nfe.number}{nfe.series ? ` — Série ${nfe.series}` : ''}</b>
+              <span>{order.customer}</span>
+            </div>
+          )}
+          <div className="printDanfePrinterSelect">
+            <label className="printDanfePrinterLabel"><Printer size={13} /> Impressora</label>
+            {printersLoading ? (
+              <div className="printDanfePrinterLoading">
+                <Loader2 size={14} className="verNotaDetailsSpinner" /> Detectando impressoras...
+              </div>
+            ) : printers.length === 0 ? (
+              <div className="printDanfeError">
+                <AlertTriangle size={15} /> Nenhuma impressora encontrada. Verifique se o servidor está rodando localmente.
+              </div>
+            ) : (
+              <select
+                className="printDanfePrinterDropdown"
+                value={selectedPrinter}
+                onChange={(e) => setSelectedPrinter(e.target.value)}
+              >
+                {printers.map((p) => <option key={p} value={p}>{p}</option>)}
+              </select>
+            )}
+          </div>
+          {error && (
+            <div className="printDanfeError">
+              <AlertTriangle size={15} /> {error}
+            </div>
+          )}
+        </div>
+        <div className="orderModalFooter">
+          <button className="nfBtnGhost" onClick={onClose} disabled={printing}>Cancelar</button>
+          <button
+            className="btnSolid"
+            onClick={handlePrint}
+            disabled={printing || printersLoading || printers.length === 0}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}
+          >
+            {printing
+              ? <><Loader2 size={16} className="verNotaDetailsSpinner" /> Imprimindo...</>
+              : <><Printer size={16} /> Imprimir</>
+            }
+          </button>
+        </div>
       </div>
     </div>
   )
