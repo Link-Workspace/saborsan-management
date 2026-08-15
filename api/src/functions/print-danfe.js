@@ -35,7 +35,7 @@ app.http('print-danfe', {
       }
     }
 
-    const { print, getPrinters } = printerLib
+    const { print, getPrinters } = printerLib.default || printerLib
 
     // ── GET: lista impressoras do sistema ─────────────────────────────────
     if (request.method === 'GET') {

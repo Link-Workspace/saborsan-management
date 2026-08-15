@@ -5,14 +5,17 @@
   "main": "src/functions/*.js",
   "scripts": {
     "start": "func start",
+    "start:standalone": "node server.js",
     "test": "echo \"No tests yet...\""
   },
   "dependencies": {
     "@azure/functions": "^4.0.0",
     "@azure/storage-blob": "^12.33.0",
     "bcryptjs": "^3.0.3",
+    "express": "^4.21.2",
     "firebase-admin": "^14.1.0",
     "mssql": "^12.6.0",
+    "multer": "^2.0.1",
     "openai": "^6.45.0",
     "pdf-parse": "^2.4.5",
     "pdf-to-printer": "^5.0.0"

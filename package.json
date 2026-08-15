@@ -3,10 +3,13 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
+  "main": "electron/main.js",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "build": "vite build",
-    "preview": "vite preview --host 0.0.0.0"
+    "preview": "vite preview --host 0.0.0.0",
+    "electron:dev": "cross-env ELECTRON_BUILD=true concurrently -n vite,electron -c blue,green \"vite\" \"wait-on tcp:5174 && electron .\"",
+    "electron:build": "cross-env ELECTRON_BUILD=true vite build && electron-builder"
   },
   "dependencies": {
     "@vitejs/plugin-react": "latest",
@@ -15,5 +18,40 @@
     "react-dom": "latest",
     "lucide-react": "latest"
   },
-  "devDependencies": {}
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "cross-env": "^7.0.3",
+    "electron": "^31.0.0",
+    "electron-builder": "^24.13.3",
+    "wait-on": "^7.2.0"
+  },
+  "build": {
+    "appId": "com.saborsan.gestao",
+    "productName": "Saborsan Gestão",
+    "asar": false,
+    "directories": {
+      "output": "dist-electron"
+    },
+    "files": [
+      "electron/**/*",
+      "dist/**/*",
+      "api/server.js",
+      "api/local.settings.json",
+      "api/host.json",
+      "api/src/**/*",
+      "api/node_modules/**/*",
+      "!api/node_modules/.cache/**",
+      "!**/*.log",
+      "!**/.git/**"
+    ],
+    "win": {
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "installerLanguages": ["pt_BR"],
+      "language": "1046"
+    }
+  }
 }
