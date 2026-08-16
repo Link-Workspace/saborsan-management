@@ -88,7 +88,7 @@ async function notifyDriverAboutOrders(sellerId, orderIds, deliveryCode) {
           await messaging.send({
             token,
             notification: { title: msgTitle, body: msgBody },
-            data: { type: 'order_ready_check', orderId: String(order.id), deliveryCode: String(deliveryCode) },
+            data: { type: 'order_ready_check', orderId: String(order.id), deliveryCode: String(deliveryCode), sellerId: String(sellerId) },
             android: { priority: 'high' },
             apns: { payload: { aps: { sound: 'default' } } },
           });
@@ -102,6 +102,57 @@ async function notifyDriverAboutOrders(sellerId, orderIds, deliveryCode) {
   } catch {
     // Silenciar erros de notificação para não quebrar o fluxo principal
   }
+}
+
+// Nega a entrega para o vendedor atual e reatribui para outro disponível ou remove a entrega
+async function denyDelivery(deliveryCode, denyingSellerId) {
+  // Buscar a entrega
+  const deliveryResult = await sql.query`
+    SELECT id, seller_id FROM Deliveries WHERE code = ${deliveryCode} AND status NOT IN (N'Cancelada', N'Concluída')
+  `;
+  if (!deliveryResult.recordset.length) return { success: false, reason: 'not_found' };
+  const delivery = deliveryResult.recordset[0];
+
+  // Buscar pedidos da entrega
+  const ordersResult = await sql.query`SELECT order_id FROM DeliveryOrders WHERE delivery_id = ${delivery.id}`;
+  const orderIds = ordersResult.recordset.map((r) => r.order_id);
+
+  // Buscar vendedores disponíveis: ativos, diferentes do atual e sem entrega ativa vinculada
+  const availableResult = await sql.query`
+    SELECT s.id FROM Sellers s
+    WHERE s.isActive = 1
+      AND s.id != ${denyingSellerId}
+      AND NOT EXISTS (
+        SELECT 1 FROM Deliveries d
+        WHERE d.seller_id = s.id
+          AND d.status NOT IN (N'Cancelada', N'Concluída')
+      )
+  `;
+
+  if (!availableResult.recordset.length) {
+    // Sem vendedor disponível: remover entrega e voltar pedidos para Recebido
+    if (orderIds.length) {
+      for (const orderId of orderIds) {
+        await sql.query`UPDATE GestaoOrders SET status = N'Recebido', updatedAt = GETUTCDATE() WHERE id = ${orderId}`;
+      }
+    }
+    await sql.query`DELETE FROM DeliveryOrders WHERE delivery_id = ${delivery.id}`;
+    await sql.query`DELETE FROM DeliveryClients WHERE delivery_id = ${delivery.id}`;
+    await sql.query`DELETE FROM Deliveries WHERE id = ${delivery.id}`;
+    return { success: true, action: 'removed' };
+  }
+
+  // Reatribuir para o primeiro vendedor disponível
+  const newSellerId = availableResult.recordset[0].id;
+  await sql.query`
+    UPDATE Deliveries
+    SET seller_id = ${newSellerId}, confirmation_sent = 0, updated_at = GETUTCDATE()
+    WHERE id = ${delivery.id}
+  `;
+
+  // Notificar o novo vendedor
+  await notifyDriverAboutOrders(newSellerId, orderIds, deliveryCode);
+  return { success: true, action: 'reassigned', newSellerId };
 }
 
 // Garante que a coluna confirmation_sent existe na tabela Deliveries
@@ -245,6 +296,15 @@ app.http('deliveries', {
       if (request.method === 'PATCH') {
         const body = await request.json();
         const { deliveryId, status, route, sellerId, vehicle, temperature, departureDate, arrivalDate, notes, stops, orderIds, fullUpdate } = body;
+
+        if (body.denyDelivery) {
+          const { deliveryCode: denyCode, sellerId: denyingSellerId } = body.denyDelivery;
+          if (!denyCode || !denyingSellerId) {
+            return { status: 400, jsonBody: { error: 'deliveryCode e sellerId são obrigatórios para negar entrega' } };
+          }
+          const result = await denyDelivery(denyCode, denyingSellerId);
+          return { jsonBody: result };
+        }
 
         if (!deliveryId) {
           return { status: 400, jsonBody: { error: 'deliveryId é obrigatório' } };

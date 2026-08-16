@@ -306,6 +306,7 @@ app.http('orders', {
           // Soft delete: keep the order and its fiscal document for fiscal history
           await sql.query`UPDATE GestaoOrders SET deletedAt = GETUTCDATE() WHERE id = ${orderId}`;
         } else {
+          await sql.query`DELETE FROM DeliveryOrders WHERE order_id = ${orderId}`;
           await sql.query`DELETE FROM GestaoFiscalDocuments WHERE orderId = ${orderId}`;
           await sql.query`DELETE FROM GestaoOrders WHERE id = ${orderId}`;
         }

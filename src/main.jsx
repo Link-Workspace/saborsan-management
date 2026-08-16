@@ -5075,7 +5075,7 @@ function FiscalConfigSection({ notify }) {
   }
 
   function openEdit(product) {
-    const cfg = configs.find(c => c.productId === product.id || c.productName === product.name)
+    const cfg = configs.find(c => String(c.productId) === String(product.id) || c.productName?.trim() === product.name?.trim())
     const ncmData = classifyProducts.find(cp => cp.id === product.id || cp.name === product.name)
     const suggestedNcm = ncmData?.ncm || '21069090'
     const nextForm = cfg ? {
@@ -5136,8 +5136,8 @@ function FiscalConfigSection({ notify }) {
 
   const rows = products.map(p => ({
     product: p,
-    config: configs.find(c => c.productId === p.id || c.productName === p.name),
-    ncmData: classifyProducts.find(cp => cp.id === p.id || cp.name === p.name),
+    config: configs.find(c => String(c.productId) === String(p.id) || c.productName?.trim() === p.name?.trim()),
+    ncmData: classifyProducts.find(cp => String(cp.id) === String(p.id) || cp.name?.trim() === p.name?.trim()),
   }))
 
   const pendingNcmCount = rows.filter(({ config, ncmData }) => {
@@ -5249,13 +5249,13 @@ function FiscalConfigSection({ notify }) {
               {rows.length === 0 && <div style={{ padding: '12px 0', color: 'var(--text-light)', fontSize: '.88rem' }}>Nenhum produto cadastrado.</div>}
               {rows.map(({ product, config, ncmData }) => {
                 const fiscalOk = config && config.ibsCbsCst
-                const effectiveNcm = config?.ncm || ncmData?.ncm
+                const effectiveNcm = config?.ncm || ncmData?.ncm || '21069090'
                 const effectiveNcmSource = config?.ncmSource || ncmData?.ncmSource
                 const effectiveNcmConfidence = config?.ncmConfidence || ncmData?.ncmConfidence
                 return (
                   <div key={product.id} className="fiscalConfigRow">
                     <span className="fiscalProdName">{product.name}</span>
-                    <span className="fiscalCode">{effectiveNcm || '—'}</span>
+                    <span className="fiscalCode" style={!config?.ncm && !ncmData?.ncm ? { color: 'var(--text-light)' } : undefined}>{effectiveNcm}</span>
                     <span><NcmSourceBadge source={effectiveNcmSource} confidence={effectiveNcmConfidence} /></span>
                     <span className="fiscalCode">{config?.ibsCbsCst || '—'}</span>
                     <span className="fiscalCode">{config?.ibsCbsClassTrib || '—'}</span>
