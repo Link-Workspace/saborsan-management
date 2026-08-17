@@ -4417,6 +4417,8 @@ function AutomationAdjustModal({ onClose, onActivate, isActive, notify }) {
     timeEnd: '18:00',
   })
   const [bindings, setBindings] = useState([])
+  const [savedConfig, setSavedConfig] = useState(null)
+  const [savedBindings, setSavedBindings] = useState(null)
   const [bindingForm, setBindingForm] = useState({ sellerId: '', type: 'city', value: '' })
   const [citySearch, setCitySearch] = useState('')
   const [clientSearch, setClientSearch] = useState('')
@@ -4438,7 +4440,7 @@ function AutomationAdjustModal({ onClose, onActivate, isActive, notify }) {
         if (clientsRes.clients) setClients(clientsRes.clients)
         if (cfgRes?.config) {
           const c = cfgRes.config
-          setConfig({
+          const loadedConfig = {
             minOrders: c.minOrders ?? 1,
             maxOrders: c.maxOrders ?? 10,
             maxCities: c.maxCities ?? 5,
@@ -4446,8 +4448,16 @@ function AutomationAdjustModal({ onClose, onActivate, isActive, notify }) {
             timeIntervalMinutes: c.timeIntervalMinutes ?? 30,
             timeStart: c.timeStart ?? '07:00',
             timeEnd: c.timeEnd ?? '18:00',
-          })
-          if (cfgRes.bindings) setBindings(cfgRes.bindings)
+          }
+          const loadedBindings = cfgRes.bindings ?? []
+          setConfig(loadedConfig)
+          setBindings(loadedBindings)
+          setSavedConfig(loadedConfig)
+          setSavedBindings(loadedBindings)
+        } else {
+          // No config in DB yet — treat current defaults as the saved baseline
+          setSavedConfig({ minOrders: 1, maxOrders: 10, maxCities: 5, includeRouteCities: false, timeIntervalMinutes: 30, timeStart: '07:00', timeEnd: '18:00' })
+          setSavedBindings([])
         }
       } catch { /* ignore */ }
       finally { setLoading(false) }
@@ -4456,6 +4466,12 @@ function AutomationAdjustModal({ onClose, onActivate, isActive, notify }) {
   }, [])
 
   const setC = (k, v) => setConfig((p) => ({ ...p, [k]: v }))
+
+  const isDirty = savedConfig !== null && (
+    JSON.stringify(config) !== JSON.stringify(savedConfig) ||
+    JSON.stringify(bindings.map(({ sellerId, bindingType, bindingValue }) => ({ sellerId, bindingType, bindingValue }))) !==
+    JSON.stringify((savedBindings ?? []).map(({ sellerId, bindingType, bindingValue }) => ({ sellerId, bindingType, bindingValue })))
+  )
 
   const citySugg = citySearch.trim().length >= 2
     ? SC_CITIES.filter((c) =>
@@ -4484,7 +4500,7 @@ function AutomationAdjustModal({ onClose, onActivate, isActive, notify }) {
 
   const removeBinding = (idx) => setBindings((prev) => prev.filter((_, i) => i !== idx))
 
-  const handleSave = async () => {
+  const handleSave = async (silent = false) => {
     setSaving(true)
     try {
       const res = await fetch(`${API_URL}/api/automation-config`, {
@@ -4492,17 +4508,24 @@ function AutomationAdjustModal({ onClose, onActivate, isActive, notify }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ key: 'receive_orders', config, bindings }),
       })
-      if (res.ok) notify('Configurações salvas com sucesso.')
-      else notify('Erro ao salvar configurações.')
-    } catch { notify('Erro ao salvar configurações.') }
-    finally { setSaving(false) }
+      if (res.ok) {
+        if (!silent) notify('Configurações salvas com sucesso.')
+        setSavedConfig(config)
+        setSavedBindings(bindings)
+      } else if (!silent) notify('Erro ao salvar configurações.')
+      return res.ok
+    } catch {
+      if (!silent) notify('Erro ao salvar configurações.')
+      return false
+    } finally { setSaving(false) }
   }
 
   const handleActivate = async () => {
     setActivating(true)
     try {
-      await handleSave()
-      await onActivate()
+      const saved = await handleSave(true)
+      if (saved) await onActivate()
+      else notify('Erro ao salvar configurações.')
     } finally { setActivating(false) }
   }
 
@@ -4511,9 +4534,9 @@ function AutomationAdjustModal({ onClose, onActivate, isActive, notify }) {
       <div className="autoAdjustModal">
         <div className="autoAdjustHeader">
           <div className="autoAdjustHeaderInfo">
-            <div className="autoAdjustIcon"><Settings2 size={20} /></div>
             <div>
-              <h3>Receber pedidos do app</h3>
+              <span>Automação</span>
+              <h2>Receber pedidos do app</h2>
               <p>Configure como esta automação deve funcionar</p>
             </div>
           </div>
@@ -4575,13 +4598,11 @@ function AutomationAdjustModal({ onClose, onActivate, isActive, notify }) {
                 </label>
                 <label>
                   <span>Início</span>
-                  <input type="time" value={config.timeStart}
-                    onChange={(e) => setC('timeStart', e.target.value)} />
+                  <TimePickerInput value={config.timeStart} onChange={(v) => setC('timeStart', v)} />
                 </label>
                 <label>
                   <span>Fim</span>
-                  <input type="time" value={config.timeEnd}
-                    onChange={(e) => setC('timeEnd', e.target.value)} />
+                  <TimePickerInput value={config.timeEnd} onChange={(v) => setC('timeEnd', v)} />
                 </label>
               </div>
             </div>
@@ -4594,10 +4615,13 @@ function AutomationAdjustModal({ onClose, onActivate, isActive, notify }) {
               </p>
 
               <div className="autoAdjustBindingForm">
-                <select value={bindingForm.sellerId} onChange={(e) => setBindingForm((p) => ({ ...p, sellerId: e.target.value }))}>
-                  <option value="">Vendedor</option>
-                  {sellers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-                </select>
+                <CustomSelect
+                  value={bindingForm.sellerId}
+                  onChange={(v) => setBindingForm((p) => ({ ...p, sellerId: v }))}
+                  placeholder="Vendedor"
+                  options={sellers.map((s) => ({ value: String(s.id), label: s.name }))}
+                  dropUp
+                />
                 <div className="autoAdjustBindingType">
                   <button className={bindingForm.type === 'city' ? 'active' : ''} onClick={() => setBindingForm((p) => ({ ...p, type: 'city' }))}>Cidade</button>
                   <button className={bindingForm.type === 'client' ? 'active' : ''} onClick={() => setBindingForm((p) => ({ ...p, type: 'client' }))}>Cliente</button>
@@ -4648,7 +4672,7 @@ function AutomationAdjustModal({ onClose, onActivate, isActive, notify }) {
         )}
 
         <div className="autoAdjustFooter">
-          <button className="autoAdjustSaveBtn" onClick={handleSave} disabled={saving || loading}>
+          <button className="autoAdjustSaveBtn" onClick={handleSave} disabled={saving || loading || !isDirty}>
             {saving ? <><Loader2 size={15} className="verNotaDetailsSpinner" /> Salvando...</> : 'Salvar'}
           </button>
           <button className="autoAdjustActivateBtn" onClick={handleActivate} disabled={activating || loading}>
@@ -4939,7 +4963,7 @@ function TimePickerInput({ value = '08:00', onChange }) {
   )
 }
 
-function CustomSelect({ value, onChange, options = [], placeholder = 'Selecione...', disabled = false }) {
+function CustomSelect({ value, onChange, options = [], placeholder = 'Selecione...', disabled = false, dropUp = false }) {
   const [open, setOpen] = useState(false)
   const ref = useRef(null)
   const selected = options.find((o) => String(o.value) === String(value))
@@ -4957,7 +4981,7 @@ function CustomSelect({ value, onChange, options = [], placeholder = 'Selecione.
         <ChevronDown size={14} style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform .2s', flexShrink: 0 }} />
       </button>
       {open && (
-        <div className="productSelectDropdown">
+        <div className="productSelectDropdown" style={dropUp ? { top: 'auto', bottom: 'calc(100% + 6px)' } : undefined}>
           {options.length === 0 && <p className="productSelectEmpty">Nenhuma opção disponível</p>}
           {options.map((o) => (
             <button key={o.value} type="button" className={String(value) === String(o.value) ? 'active' : ''} onClick={() => { onChange(o.value); setOpen(false) }}>

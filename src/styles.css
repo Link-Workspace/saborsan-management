@@ -477,11 +477,11 @@ p{margin:0}.appShell{min-height:100vh;display:grid;grid-template-columns:300px 1
 .autoActionBtnActivate:hover{filter:brightness(1.07)}
 /* Automation Adjust Modal */
 .autoAdjustModal{background:#fff;border-radius:32px;width:100%;max-width:680px;max-height:90vh;display:flex;flex-direction:column;box-shadow:0 40px 120px rgba(6,54,111,.22);overflow:hidden}
-.autoAdjustHeader{display:flex;align-items:center;justify-content:space-between;padding:22px 26px;border-bottom:1px solid var(--line);gap:12px}
+.autoAdjustHeader{display:flex;align-items:center;justify-content:space-between;padding:22px 26px;gap:12px}
 .autoAdjustHeaderInfo{display:flex;align-items:center;gap:12px}
 .autoAdjustIcon{width:40px;height:40px;border-radius:13px;background:linear-gradient(135deg,var(--navy-dark),var(--navy));color:#fff;display:grid;place-items:center;flex-shrink:0}
-.autoAdjustHeader h3{font-size:1.05rem;color:var(--navy-dark);margin-bottom:2px}
-.autoAdjustHeader p{color:var(--muted);font-size:.82rem;font-weight:600}
+.autoAdjustHeader span{color:var(--orange-strong);font-weight:900;text-transform:uppercase;letter-spacing:.12em;font-size:.8rem;display:block;margin-bottom:2px}.autoAdjustHeader h2{color:var(--navy-dark);margin-bottom:0}
+.autoAdjustHeader p{color:var(--muted);font-weight:800;margin-top:6px}
 .autoAdjustBody{flex:1;overflow-y:auto;padding:20px 26px;display:flex;flex-direction:column;gap:20px}
 .autoAdjustSection{background:#f9fbff;border:1px solid var(--line);border-radius:18px;padding:16px 18px;display:flex;flex-direction:column;gap:12px}
 .autoAdjustSectionTitle{display:flex;align-items:center;gap:7px;font-size:.78rem;font-weight:900;text-transform:uppercase;letter-spacing:.07em;color:var(--orange-strong)}
@@ -503,7 +503,7 @@ p{margin:0}.appShell{min-height:100vh;display:grid;grid-template-columns:300px 1
 .autoAdjustCityWrap{flex:1;min-width:140px;position:relative}
 .autoAdjustCityWrap input{border:1.5px solid var(--line);border-radius:11px;padding:9px 12px;background:#fff;color:var(--navy);font-weight:700;outline:none;transition:.15s;width:100%}
 .autoAdjustCityWrap input:focus{border-color:var(--orange)}
-.autoAdjustSugg{position:absolute;top:calc(100% + 4px);left:0;right:0;background:#fff;border:1px solid var(--line);border-radius:13px;padding:5px;box-shadow:0 12px 32px rgba(6,54,111,.12);z-index:50;display:flex;flex-direction:column;gap:2px;max-height:200px;overflow-y:auto}
+.autoAdjustSugg{position:absolute;bottom:calc(100% + 4px);top:auto;left:0;right:0;background:#fff;border:1px solid var(--line);border-radius:13px;padding:5px;box-shadow:0 12px 32px rgba(6,54,111,.12);z-index:50;display:flex;flex-direction:column;gap:2px;max-height:200px;overflow-y:auto}
 .autoAdjustSugg button{border:0;background:transparent;text-align:left;padding:8px 12px;border-radius:8px;font-weight:700;font-size:.85rem;color:var(--navy);cursor:pointer;transition:.12s}
 .autoAdjustSugg button:hover{background:var(--orange-soft);color:var(--orange-strong)}
 .autoAdjustAddBinding{border:0;background:var(--orange);color:#fff;width:36px;height:36px;border-radius:11px;display:grid;place-items:center;cursor:pointer;flex-shrink:0;transition:.15s}
