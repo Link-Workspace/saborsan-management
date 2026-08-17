@@ -316,8 +316,6 @@ app.http('orders', {
     } catch (error) {
       context.error('Erro na função orders:', error);
       return { status: 500, jsonBody: { error: 'Erro interno do servidor' } };
-    } finally {
-      await sql.close();
     }
   },
 });

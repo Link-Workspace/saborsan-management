@@ -1,14 +1,7 @@
 const { app } = require('@azure/functions');
 const sql = require('mssql');
 const bcrypt = require('bcryptjs');
-
-const sqlConfig = {
-  server: process.env.SQL_SERVER,
-  database: process.env.SQL_DATABASE,
-  user: process.env.SQL_USER,
-  password: process.env.SQL_PASSWORD,
-  options: { encrypt: true, trustServerCertificate: false },
-};
+const { getPool } = require('../db');
 
 app.http('employee-login', {
   methods: ['POST'],
@@ -21,9 +14,9 @@ app.http('employee-login', {
         return { status: 400, jsonBody: { error: 'E-mail e senha são obrigatórios.' } };
       }
 
-      await sql.connect(sqlConfig);
+      const pool = await getPool();
 
-      const result = await sql.query`
+      const result = await pool.request().query`
         SELECT id, email, passwordHash, role
         FROM Employees
         WHERE email = ${email.toLowerCase()}
@@ -45,8 +38,6 @@ app.http('employee-login', {
     } catch (error) {
       context.error('Erro na função employee-login:', error);
       return { status: 500, jsonBody: { error: 'Erro interno do servidor.' } };
-    } finally {
-      await sql.close();
     }
   },
 });

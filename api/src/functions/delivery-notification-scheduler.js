@@ -91,8 +91,6 @@ app.timer('deliveryNotificationScheduler', {
       context.log(`Notificações de entrega enviadas: ${result.recordset.length}`);
     } catch (error) {
       context.error('Erro no scheduler de notificações de entrega:', error);
-    } finally {
-      await sql.close();
     }
   },
 });

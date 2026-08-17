@@ -162,8 +162,6 @@ app.http('automation-config', {
     } catch (error) {
       context.error('Erro na função automation-config:', error);
       return { status: 500, jsonBody: { error: 'Erro interno do servidor' } };
-    } finally {
-      await sql.close();
     }
   },
 });

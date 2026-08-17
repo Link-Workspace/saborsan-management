@@ -427,6 +427,7 @@ function App() {
   const [apiProductsState, setApiProductsState] = useState([])
   const [bgImport, setBgImport] = useState(null)
   const [bgImportPanelOpen, setBgImportPanelOpen] = useState(false)
+  const [receiveOrdersActive, setReceiveOrdersActive] = useState(false)
 
   const [systemNotifications, setSystemNotifications] = useState([])
   const [notifSettings, setNotifSettings] = useState(() => {
@@ -519,6 +520,12 @@ function App() {
 
   useEffect(() => { fetchOrders() }, [])
   useEffect(() => { fetchDeliveries() }, [])
+  useEffect(() => {
+    fetch(`${API_URL}/api/automation-config?key=receive_orders`)
+      .then((r) => r.json())
+      .then((data) => { setReceiveOrdersActive(!!(data?.config?.isActive)) })
+      .catch((err) => { console.error('Falha ao carregar status da automação:', err) })
+  }, [])
   useEffect(() => { fetchVehicles() }, [])
   useEffect(() => { fetchClients() }, [])
   useEffect(() => { fetchPayments() }, [])
@@ -811,7 +818,7 @@ function App() {
         </section>
 
         {active === 'dashboard' && <Dashboard totals={totals} orders={orders} aiEnabled={aiEnabled} setActive={setActive} />}
-        {active === 'pedidos' && <Orders orders={orders} ordersLoading={ordersLoading} onSelect={setSelectedOrder} updateOrderStatus={updateOrderStatus} createInvoice={createInvoice} onGerarNota={openGerarNota} onNewOrder={() => setNewOrderOpen(true)} onVerNota={setVerNotaOrder} search={topbarSearch} />}
+        {active === 'pedidos' && <Orders orders={orders} ordersLoading={ordersLoading} onSelect={setSelectedOrder} updateOrderStatus={updateOrderStatus} createInvoice={createInvoice} onGerarNota={openGerarNota} onNewOrder={() => setNewOrderOpen(true)} onVerNota={setVerNotaOrder} search={topbarSearch} receiveOrdersActive={receiveOrdersActive} />}
         {active === 'vendedores' && <Sellers search={topbarSearch} addNotif={addNotif} />}
         {active === 'notas' && <Invoices orders={orders} onGerarNota={openGerarNota} onVerNota={setVerNotaOrder} search={topbarSearch} />}
         {active === 'estoque' && <Stock onProduct={setSelectedProduct} refreshKey={stockRefreshKey} search={topbarSearch} addNotif={addNotif} bgImport={bgImport} onStartBgAnalysis={startBackgroundAnalysis} onClearBgImport={() => setBgImport(null)} />}
@@ -822,7 +829,7 @@ function App() {
         {active === 'pagamentos' && <Payments paymentsData={paymentsState} paymentsLoading={paymentsLoading} onSelectPayment={setSelectedPayment} onNewPayment={() => setNewPaymentOpen(true)} search={topbarSearch} />}
         {active === 'financeiro' && <Finance />}
         {active === 'relatorios' && <Reports />}
-        {active === 'automacao' && <Automation aiEnabled={aiEnabled} setAiEnabled={setAiEnabled} notify={notify} />}
+        {active === 'automacao' && <Automation aiEnabled={aiEnabled} setAiEnabled={setAiEnabled} notify={notify} receiveOrdersActive={receiveOrdersActive} setReceiveOrdersActive={setReceiveOrdersActive} />}
         {active === 'configuracoes' && <Settings notify={notify} onNotifSettingChange={(key, val) => setNotifSettings((p) => ({ ...p, [key]: val }))} />}
       </main>
 
@@ -859,7 +866,7 @@ function App() {
       {selectedOrder && (() => {
         const _linkedDelivery = deliveriesState.find((d) => d.orderIds?.includes(selectedOrder.id))
         const _canRemove = !selectedOrder.isDeleted && selectedOrder.status !== 'Entregue' && selectedOrder.status !== 'Rota'
-        return <OrderModal order={selectedOrder} onClose={() => setSelectedOrder(null)} updateOrderStatus={updateOrderStatus} createInvoice={createInvoice} onRemove={_canRemove ? () => setRemoveConfirmOrder(selectedOrder) : null} canRemove={_canRemove} onReactivate={selectedOrder.isDeleted ? () => setReactivateConfirmOrder(selectedOrder) : null} onEdit={() => { setEditOrder(selectedOrder); setSelectedOrder(null) }} />
+        return <OrderModal order={selectedOrder} onClose={() => setSelectedOrder(null)} updateOrderStatus={updateOrderStatus} createInvoice={createInvoice} onRemove={_canRemove ? () => setRemoveConfirmOrder(selectedOrder) : null} canRemove={_canRemove} onReactivate={selectedOrder.isDeleted ? () => setReactivateConfirmOrder(selectedOrder) : null} onEdit={() => { setEditOrder(selectedOrder); setSelectedOrder(null) }} receiveOrdersActive={receiveOrdersActive} />
       })()}
       {vehiclesOpen && <VehiclesModal
         onClose={() => setVehiclesOpen(false)}
@@ -895,7 +902,7 @@ function App() {
         const _linkedDelivery = editOrder ? deliveriesState.find((d) => d.orderIds?.includes(editOrder.id)) : null
         const _lockedEdit = !!(editOrder && editOrder.status === 'Rota' && _linkedDelivery?.status === 'Em rota')
         const _notesOnlyEdit = !!(editOrder && editOrder.status === 'Entregue')
-        return <NewOrderModal onClose={() => { setNewOrderOpen(false); setEditOrder(null) }} onCreateOrder={createOrder} onUpdateOrder={updateOrder} editOrder={editOrder} clients={clientsState} lockedEdit={_lockedEdit} notesOnlyEdit={_notesOnlyEdit} products={apiProductsState} />
+        return <NewOrderModal onClose={() => { setNewOrderOpen(false); setEditOrder(null) }} onCreateOrder={createOrder} onUpdateOrder={updateOrder} editOrder={editOrder} clients={clientsState} lockedEdit={_lockedEdit} notesOnlyEdit={_notesOnlyEdit} products={apiProductsState} automationLockClient={!!(receiveOrdersActive && editOrder && editOrder.status === 'Recebido')} />
       })()}
       {editProduct && <NewProductModal editProduct={editProduct} onClose={() => setEditProduct(null)} onCreated={() => {}} onUpdated={() => { setStockRefreshKey((k) => k + 1); notify('Produto atualizado com sucesso!') }} />}
       {removeConfirmOrder && (
@@ -1100,7 +1107,7 @@ function Dashboard({ totals, orders, aiEnabled, setActive }) {
   )
 }
 
-function Orders({ orders, ordersLoading, onSelect, updateOrderStatus, createInvoice, onGerarNota, onNewOrder, onVerNota, search = '' }) {
+function Orders({ orders, ordersLoading, onSelect, updateOrderStatus, createInvoice, onGerarNota, onNewOrder, onVerNota, search = '', receiveOrdersActive = false }) {
   const [filter, setFilter] = useState('Todos')
   const activeOrders = orders.filter((o) => !o.isDeleted)
   const removedOrders = orders.filter((o) => o.isDeleted)
@@ -1127,7 +1134,11 @@ function Orders({ orders, ordersLoading, onSelect, updateOrderStatus, createInvo
             <div className="orderFooter"><strong>{money(order.value)}</strong><small>Entrega: {order.delivery}</small></div>
             <div className="orderActions">
               <button onClick={() => onSelect(order)}>Detalhes</button>
-              {order.status === 'Recebido' && <button style={{background:'var(--orange)',color:'#fff'}} onClick={() => updateOrderStatus(order.id, 'Separação')}>Separar</button>}
+              {order.status === 'Recebido' && (
+                receiveOrdersActive
+                  ? <button style={{background:'var(--orange)',color:'#fff',opacity:0.5,cursor:'not-allowed'}} disabled title="Desabilitado porque a automação 'Receber pedidos do app' está ativada">Separar</button>
+                  : <button style={{background:'var(--orange)',color:'#fff'}} onClick={() => updateOrderStatus(order.id, 'Separação')}>Separar</button>
+              )}
               {order.status === 'Pronto' && order.nfeData?.nfeStatus !== 'AUTHORIZED' && <button onClick={() => onGerarNota(order)}>Gerar nota</button>}
             </div>
           </article>
@@ -4672,7 +4683,7 @@ function AutomationAdjustModal({ onClose, onActivate, isActive, notify }) {
         )}
 
         <div className="autoAdjustFooter">
-          <button className="autoAdjustSaveBtn" onClick={handleSave} disabled={saving || loading || !isDirty}>
+          <button className="autoAdjustSaveBtn" onClick={() => handleSave()} disabled={saving || loading || !isDirty}>
             {saving ? <><Loader2 size={15} className="verNotaDetailsSpinner" /> Salvando...</> : 'Salvar'}
           </button>
           <button className="autoAdjustActivateBtn" onClick={handleActivate} disabled={activating || loading}>
@@ -4687,17 +4698,9 @@ function AutomationAdjustModal({ onClose, onActivate, isActive, notify }) {
   )
 }
 
-function Automation({ aiEnabled, setAiEnabled, notify }) {
+function Automation({ aiEnabled, setAiEnabled, notify, receiveOrdersActive, setReceiveOrdersActive }) {
   const [dialogOpen, setDialogOpen] = useState(false)
   const [adjustOpen, setAdjustOpen] = useState(false)
-  const [receiveOrdersActive, setReceiveOrdersActive] = useState(false)
-
-  useEffect(() => {
-    fetch(`${API_URL}/api/automation-config?key=receive_orders`)
-      .then((r) => r.json())
-      .then((data) => { if (data?.config?.isActive) setReceiveOrdersActive(true) })
-      .catch(() => {})
-  }, [])
 
   const automations = [
     ['Receber pedidos do app', 'Captura solicitações, organiza itens e direciona para separação.', true],
@@ -5027,7 +5030,7 @@ function ProductSelect({ value, onChange, disabled, products: productList = [] }
   )
 }
 
-function NewOrderModal({ onClose, onCreateOrder, onUpdateOrder, editOrder, clients = [], lockedEdit = false, notesOnlyEdit = false, products = [] }) {
+function NewOrderModal({ onClose, onCreateOrder, onUpdateOrder, editOrder, clients = [], lockedEdit = false, notesOnlyEdit = false, products = [], automationLockClient = false }) {
   const [selectedClientId, setSelectedClientId] = useState(() => {
     if (editOrder) {
       const match = clients.find((c) => c.establishmentName === editOrder.customer)
@@ -5193,10 +5196,11 @@ function NewOrderModal({ onClose, onCreateOrder, onUpdateOrder, editOrder, clien
                 <CustomSelect
                   value={selectedClientId}
                   onChange={(v) => handleClientSelect(v)}
-                  disabled={lockedEdit || notesOnlyEdit}
+                  disabled={lockedEdit || notesOnlyEdit || automationLockClient}
                   placeholder={clients.length === 0 ? 'Carregando clientes...' : 'Selecione o cliente'}
                   options={clients.map((c) => ({ value: String(c.id), label: `${c.establishmentName}${c.city ? ` — ${c.city}` : ''}` }))}
                 />
+                {automationLockClient && <small style={{color:'var(--muted)',fontWeight:600,marginTop:4,display:'block'}}>Campo desabilitado — automação 'Receber pedidos do app' está ativada</small>}
               </label>
             </div>
             {selectedClientId && (() => {
@@ -5277,7 +5281,7 @@ function NewOrderModal({ onClose, onCreateOrder, onUpdateOrder, editOrder, clien
   )
 }
 
-function OrderModal({ order, onClose, updateOrderStatus, createInvoice, onRemove, onEdit, canRemove = true, onReactivate = null }) {
+function OrderModal({ order, onClose, updateOrderStatus, createInvoice, onRemove, onEdit, canRemove = true, onReactivate = null, receiveOrdersActive = false }) {
   return (
     <div className="modalBackdrop">
       <div className="detailModal orderModal">
@@ -5300,7 +5304,11 @@ function OrderModal({ order, onClose, updateOrderStatus, createInvoice, onRemove
         </div>
         <div className="orderModalFooter">
           {onReactivate && <button className="orderModalBtn orderModalBtnPrimary" style={{background:'var(--green, #22c55e)',borderColor:'var(--green, #22c55e)'}} onClick={onReactivate}>Reativar</button>}
-          {!onReactivate && canRemove && <button className="orderModalBtn orderModalBtnDanger" onClick={onRemove}>Remover</button>}
+          {!onReactivate && canRemove && (
+            receiveOrdersActive && order.status === 'Recebido'
+              ? <button className="orderModalBtn orderModalBtnDanger" disabled style={{opacity:0.5,cursor:'not-allowed'}} title="Desabilitado porque a automação 'Receber pedidos do app' está ativada">Remover</button>
+              : <button className="orderModalBtn orderModalBtnDanger" onClick={onRemove}>Remover</button>
+          )}
           {!onReactivate && <button className="orderModalBtn orderModalBtnPrimary" onClick={onEdit}>Editar</button>}
         </div>
       </div>

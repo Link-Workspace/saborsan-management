@@ -384,8 +384,6 @@ app.http('auto-delivery', {
     } catch (error) {
       context.error('Erro na função auto-delivery:', error);
       return { status: 500, jsonBody: { error: 'Erro interno do servidor' } };
-    } finally {
-      await sql.close();
     }
   },
 });

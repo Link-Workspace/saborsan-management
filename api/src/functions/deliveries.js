@@ -393,8 +393,6 @@ app.http('deliveries', {
     } catch (error) {
       context.error('Erro na função deliveries:', error);
       return { status: 500, jsonBody: { error: 'Erro interno do servidor' } };
-    } finally {
-      await sql.close();
     }
   },
 });

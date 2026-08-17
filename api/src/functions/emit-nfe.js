@@ -1230,8 +1230,6 @@ app.http('emit-nfe', {
       }
       context.error('Erro em emit-nfe:', err);
       return { status: 500, jsonBody: { error: 'Erro interno do servidor' } };
-    } finally {
-      try { await sql.close(); } catch (_) {}
     }
   },
 });
