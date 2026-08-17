@@ -4382,7 +4382,299 @@ function Reports() {
   )
 }
 
+function AutomationActionDialog({ automation, isActive, onClose, onActivate, onAdjust }) {
+  return (
+    <div className="nfOverlay" onClick={(e) => e.target.classList.contains('nfOverlay') && onClose()}>
+      <div className="autoActionDialog">
+        <button className="nfClose" onClick={onClose}><X size={16} /></button>
+        <div className="autoActionIcon"><Settings2 size={28} /></div>
+        <h3>{automation}</h3>
+        <p>O que deseja fazer com esta automação?</p>
+        <div className="autoActionButtons">
+          <button className="autoActionBtnAdjust" onClick={onAdjust}><Settings2 size={16} /> Ajustar</button>
+          <button className="autoActionBtnActivate" onClick={onActivate}>
+            {isActive ? <><X size={16} /> Desativar</> : <><Sparkles size={16} /> Ativar</>}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function AutomationAdjustModal({ onClose, onActivate, isActive, notify }) {
+  const [sellers, setSellers] = useState([])
+  const [clients, setClients] = useState([])
+  const [saving, setSaving] = useState(false)
+  const [activating, setActivating] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [config, setConfig] = useState({
+    minOrders: 1,
+    maxOrders: 10,
+    maxCities: 5,
+    includeRouteCities: false,
+    timeIntervalMinutes: 30,
+    timeStart: '07:00',
+    timeEnd: '18:00',
+  })
+  const [bindings, setBindings] = useState([])
+  const [bindingForm, setBindingForm] = useState({ sellerId: '', type: 'city', value: '' })
+  const [citySearch, setCitySearch] = useState('')
+  const [clientSearch, setClientSearch] = useState('')
+  const [showCitySugg, setShowCitySugg] = useState(false)
+  const [showClientSugg, setShowClientSugg] = useState(false)
+  const cityRef = useRef(null)
+  const clientRef = useRef(null)
+
+  useEffect(() => {
+    const fetchAll = async () => {
+      setLoading(true)
+      try {
+        const [sellersRes, clientsRes, cfgRes] = await Promise.all([
+          fetch(`${API_URL}/api/sellers`).then((r) => r.json()).catch(() => ({ sellers: [] })),
+          fetch(`${API_URL}/api/clients`).then((r) => r.json()).catch(() => ({ clients: [] })),
+          fetch(`${API_URL}/api/automation-config?key=receive_orders`).then((r) => r.json()).catch(() => null),
+        ])
+        if (sellersRes.sellers) setSellers(sellersRes.sellers.filter((s) => s.status === 'Ativo'))
+        if (clientsRes.clients) setClients(clientsRes.clients)
+        if (cfgRes?.config) {
+          const c = cfgRes.config
+          setConfig({
+            minOrders: c.minOrders ?? 1,
+            maxOrders: c.maxOrders ?? 10,
+            maxCities: c.maxCities ?? 5,
+            includeRouteCities: !!c.includeRouteCities,
+            timeIntervalMinutes: c.timeIntervalMinutes ?? 30,
+            timeStart: c.timeStart ?? '07:00',
+            timeEnd: c.timeEnd ?? '18:00',
+          })
+          if (cfgRes.bindings) setBindings(cfgRes.bindings)
+        }
+      } catch { /* ignore */ }
+      finally { setLoading(false) }
+    }
+    fetchAll()
+  }, [])
+
+  const setC = (k, v) => setConfig((p) => ({ ...p, [k]: v }))
+
+  const citySugg = citySearch.trim().length >= 2
+    ? SC_CITIES.filter((c) =>
+        c.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').includes(
+          citySearch.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+        )
+      ).slice(0, 8)
+    : []
+
+  const clientSugg = clientSearch.trim().length >= 2
+    ? clients.filter((c) =>
+        (c.establishmentName || '').toLowerCase().includes(clientSearch.toLowerCase())
+      ).slice(0, 8)
+    : []
+
+  const addBinding = () => {
+    const val = bindingForm.type === 'city' ? citySearch.trim() : clientSearch.trim()
+    if (!bindingForm.sellerId || !val) return
+    const seller = sellers.find((s) => String(s.id) === String(bindingForm.sellerId))
+    if (!seller) return
+    if (bindings.find((b) => b.sellerId === Number(bindingForm.sellerId) && b.bindingType === bindingForm.type && b.bindingValue === val)) return
+    setBindings((prev) => [...prev, { sellerId: Number(bindingForm.sellerId), sellerName: seller.name, bindingType: bindingForm.type, bindingValue: val }])
+    setCitySearch('')
+    setClientSearch('')
+  }
+
+  const removeBinding = (idx) => setBindings((prev) => prev.filter((_, i) => i !== idx))
+
+  const handleSave = async () => {
+    setSaving(true)
+    try {
+      const res = await fetch(`${API_URL}/api/automation-config`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: 'receive_orders', config, bindings }),
+      })
+      if (res.ok) notify('Configurações salvas com sucesso.')
+      else notify('Erro ao salvar configurações.')
+    } catch { notify('Erro ao salvar configurações.') }
+    finally { setSaving(false) }
+  }
+
+  const handleActivate = async () => {
+    setActivating(true)
+    try {
+      await handleSave()
+      await onActivate()
+    } finally { setActivating(false) }
+  }
+
+  return (
+    <div className="nfOverlay" onClick={(e) => e.target.classList.contains('nfOverlay') && onClose()}>
+      <div className="autoAdjustModal">
+        <div className="autoAdjustHeader">
+          <div className="autoAdjustHeaderInfo">
+            <div className="autoAdjustIcon"><Settings2 size={20} /></div>
+            <div>
+              <h3>Receber pedidos do app</h3>
+              <p>Configure como esta automação deve funcionar</p>
+            </div>
+          </div>
+          <button className="nfClose" style={{ position: 'static' }} onClick={onClose}><X size={16} /></button>
+        </div>
+
+        {loading ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '32px 28px', color: 'var(--muted)', fontWeight: 700 }}>
+            <Loader2 size={18} className="verNotaDetailsSpinner" /> Carregando configurações...
+          </div>
+        ) : (
+          <div className="autoAdjustBody">
+
+            {/* Quantidade de pedidos */}
+            <div className="autoAdjustSection">
+              <div className="autoAdjustSectionTitle"><Package size={15} /> Quantidade de pedidos por entrega</div>
+              <div className="autoAdjustRow">
+                <label>
+                  <span>Mínimo</span>
+                  <input type="number" min={1} max={config.maxOrders} value={config.minOrders}
+                    onChange={(e) => setC('minOrders', Math.max(1, Number(e.target.value)))} />
+                </label>
+                <label>
+                  <span>Máximo</span>
+                  <input type="number" min={config.minOrders} max={100} value={config.maxOrders}
+                    onChange={(e) => setC('maxOrders', Math.max(config.minOrders, Number(e.target.value)))} />
+                </label>
+              </div>
+            </div>
+
+            {/* Cidades */}
+            <div className="autoAdjustSection">
+              <div className="autoAdjustSectionTitle"><MapPin size={15} /> Cidades por entrega</div>
+              <div className="autoAdjustRow">
+                <label style={{ flex: 1 }}>
+                  <span>Máximo de cidades</span>
+                  <input type="number" min={1} max={50} value={config.maxCities}
+                    onChange={(e) => setC('maxCities', Math.max(1, Number(e.target.value)))} />
+                </label>
+              </div>
+              <label className="autoAdjustCheckRow">
+                <input type="checkbox" checked={config.includeRouteCities}
+                  onChange={(e) => setC('includeRouteCities', e.target.checked)} />
+                <div>
+                  <span>Incluir cidades no caminho</span>
+                  <small>Ao criar a entrega, selecionar automaticamente todas as cidades que ficam no trajeto até a cidade mais distante selecionada</small>
+                </div>
+              </label>
+            </div>
+
+            {/* Período */}
+            <div className="autoAdjustSection">
+              <div className="autoAdjustSectionTitle"><Clock3 size={15} /> Período de execução</div>
+              <div className="autoAdjustRow">
+                <label>
+                  <span>Intervalo (minutos)</span>
+                  <input type="number" min={5} max={1440} value={config.timeIntervalMinutes}
+                    onChange={(e) => setC('timeIntervalMinutes', Math.max(5, Number(e.target.value)))} />
+                </label>
+                <label>
+                  <span>Início</span>
+                  <input type="time" value={config.timeStart}
+                    onChange={(e) => setC('timeStart', e.target.value)} />
+                </label>
+                <label>
+                  <span>Fim</span>
+                  <input type="time" value={config.timeEnd}
+                    onChange={(e) => setC('timeEnd', e.target.value)} />
+                </label>
+              </div>
+            </div>
+
+            {/* Vínculos vendedor-cliente/cidade */}
+            <div className="autoAdjustSection">
+              <div className="autoAdjustSectionTitle"><UserRound size={15} /> Vínculo vendedor → cliente / cidade</div>
+              <p style={{ fontSize: '.83rem', color: 'var(--muted)', fontWeight: 600, margin: '0 0 12px' }}>
+                Defina quais clientes ou cidades são sempre atendidos por um vendedor específico
+              </p>
+
+              <div className="autoAdjustBindingForm">
+                <select value={bindingForm.sellerId} onChange={(e) => setBindingForm((p) => ({ ...p, sellerId: e.target.value }))}>
+                  <option value="">Vendedor</option>
+                  {sellers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
+                <div className="autoAdjustBindingType">
+                  <button className={bindingForm.type === 'city' ? 'active' : ''} onClick={() => setBindingForm((p) => ({ ...p, type: 'city' }))}>Cidade</button>
+                  <button className={bindingForm.type === 'client' ? 'active' : ''} onClick={() => setBindingForm((p) => ({ ...p, type: 'client' }))}>Cliente</button>
+                </div>
+                {bindingForm.type === 'city' ? (
+                  <div className="autoAdjustCityWrap" ref={cityRef}>
+                    <input placeholder="Buscar cidade..." value={citySearch}
+                      onChange={(e) => { setCitySearch(e.target.value); setShowCitySugg(true) }}
+                      onFocus={() => setShowCitySugg(true)}
+                      onBlur={() => setTimeout(() => setShowCitySugg(false), 150)} />
+                    {showCitySugg && citySugg.length > 0 && (
+                      <div className="autoAdjustSugg">
+                        {citySugg.map((c) => <button key={c} type="button" onMouseDown={() => { setCitySearch(c); setShowCitySugg(false) }}>{c}</button>)}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="autoAdjustCityWrap" ref={clientRef}>
+                    <input placeholder="Buscar cliente..." value={clientSearch}
+                      onChange={(e) => { setClientSearch(e.target.value); setShowClientSugg(true) }}
+                      onFocus={() => setShowClientSugg(true)}
+                      onBlur={() => setTimeout(() => setShowClientSugg(false), 150)} />
+                    {showClientSugg && clientSugg.length > 0 && (
+                      <div className="autoAdjustSugg">
+                        {clientSugg.map((c) => <button key={c.id} type="button" onMouseDown={() => { setClientSearch(c.establishmentName); setShowClientSugg(false) }}>{c.establishmentName}</button>)}
+                      </div>
+                    )}
+                  </div>
+                )}
+                <button className="autoAdjustAddBinding" onClick={addBinding}><Plus size={15} /></button>
+              </div>
+
+              {bindings.length > 0 && (
+                <div className="autoAdjustBindingList">
+                  {bindings.map((b, i) => (
+                    <div key={i} className="autoAdjustBindingItem">
+                      <UserRound size={13} />
+                      <span className="autoAdjustBindingSellerName">{b.sellerName}</span>
+                      <span className="autoAdjustBindingArrow">→</span>
+                      <span className={`autoAdjustBindingBadge ${b.bindingType}`}>{b.bindingType === 'city' ? <MapPin size={11} /> : <Building2 size={11} />}{b.bindingValue}</span>
+                      <button onClick={() => removeBinding(i)}><X size={13} /></button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        <div className="autoAdjustFooter">
+          <button className="autoAdjustSaveBtn" onClick={handleSave} disabled={saving || loading}>
+            {saving ? <><Loader2 size={15} className="verNotaDetailsSpinner" /> Salvando...</> : 'Salvar'}
+          </button>
+          <button className="autoAdjustActivateBtn" onClick={handleActivate} disabled={activating || loading}>
+            {activating
+              ? <><Loader2 size={15} className="verNotaDetailsSpinner" /> {isActive ? 'Desativando...' : 'Ativando...'}</>
+              : isActive ? <><X size={15} /> Desativar automação</> : <><Sparkles size={15} /> Ativar automação</>
+            }
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function Automation({ aiEnabled, setAiEnabled, notify }) {
+  const [dialogOpen, setDialogOpen] = useState(false)
+  const [adjustOpen, setAdjustOpen] = useState(false)
+  const [receiveOrdersActive, setReceiveOrdersActive] = useState(false)
+
+  useEffect(() => {
+    fetch(`${API_URL}/api/automation-config?key=receive_orders`)
+      .then((r) => r.json())
+      .then((data) => { if (data?.config?.isActive) setReceiveOrdersActive(true) })
+      .catch(() => {})
+  }, [])
+
   const automations = [
     ['Receber pedidos do app', 'Captura solicitações, organiza itens e direciona para separação.', true],
     ['Sugerir reposição de estoque', 'Analisa mínimo, giro e produtos em atenção.', true],
@@ -4391,17 +4683,76 @@ function Automation({ aiEnabled, setAiEnabled, notify }) {
     ['Comunicar fornecedores', 'Monta mensagens de cotação e reposição.', false],
     ['Acompanhar clientes parados', 'Identifica clientes que podem receber nova oferta.', true],
   ]
+
+  const handleCardClick = (title) => {
+    if (title === 'Receber pedidos do app') setDialogOpen(true)
+  }
+
+  const handleActivateToggle = async () => {
+    const newVal = !receiveOrdersActive
+    try {
+      const res = await fetch(`${API_URL}/api/automation-config`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: 'receive_orders', config: { isActive: newVal } }),
+      })
+      if (res.ok) {
+        setReceiveOrdersActive(newVal)
+        notify(newVal ? 'Automação "Receber pedidos do app" ativada.' : 'Automação desativada.')
+      }
+    } catch { notify('Erro ao alterar status da automação.') }
+    setDialogOpen(false)
+    setAdjustOpen(false)
+  }
+
+  const isCardActive = (title) => {
+    if (title === 'Receber pedidos do app') return receiveOrdersActive
+    return aiEnabled
+  }
+
   return (
-    <section className="pageStack">
-      <div className="sectionHeader"><div><p>Configurações inteligentes do sistema</p></div><label className="switch big"><input type="checkbox" checked={aiEnabled} onChange={() => setAiEnabled(!aiEnabled)} /><span></span></label></div>
-      <div className="automationHero">
-        <div><Bot size={34} /><h2>{aiEnabled ? 'Automação ativa na operação' : 'Operação manual ativada'}</h2><p>Controle como o painel apoia pedidos, estoque, compras, notas, fornecedores, clientes e entregas.</p></div>
-        <button onClick={() => notify('Rotina demonstrativa executada com sucesso.')}>Executar rotina agora</button>
-      </div>
-      <div className="automationGrid">
-        {automations.map(([title, text, active]) => <article key={title} className={active && aiEnabled ? 'on' : ''}><Settings2 size={22} /><div><h3>{title}</h3><p>{text}</p></div><span>{active && aiEnabled ? 'Ativo' : 'Manual'}</span></article>)}
-      </div>
-    </section>
+    <>
+      <section className="pageStack">
+        <div className="sectionHeader"><div><p>Configurações inteligentes do sistema</p></div><label className="switch big"><input type="checkbox" checked={aiEnabled} onChange={() => setAiEnabled(!aiEnabled)} /><span></span></label></div>
+        <div className="automationHero">
+          <div><Bot size={34} /><h2>{aiEnabled ? 'Automação ativa na operação' : 'Operação manual ativada'}</h2><p>Controle como o painel apoia pedidos, estoque, compras, notas, fornecedores, clientes e entregas.</p></div>
+          <button onClick={() => notify('Rotina demonstrativa executada com sucesso.')}>Executar rotina agora</button>
+        </div>
+        <div className="automationGrid">
+          {automations.map(([title, text, available]) => (
+            <article
+              key={title}
+              className={isCardActive(title) ? 'on' : ''}
+              style={{ cursor: title === 'Receber pedidos do app' ? 'pointer' : undefined }}
+              onClick={() => handleCardClick(title)}
+            >
+              <Settings2 size={22} />
+              <div><h3>{title}</h3><p>{text}</p></div>
+              <span>{isCardActive(title) ? 'Ativo' : 'Manual'}</span>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      {dialogOpen && (
+        <AutomationActionDialog
+          automation="Receber pedidos do app"
+          isActive={receiveOrdersActive}
+          onClose={() => setDialogOpen(false)}
+          onActivate={handleActivateToggle}
+          onAdjust={() => { setDialogOpen(false); setAdjustOpen(true) }}
+        />
+      )}
+
+      {adjustOpen && (
+        <AutomationAdjustModal
+          isActive={receiveOrdersActive}
+          onClose={() => setAdjustOpen(false)}
+          onActivate={handleActivateToggle}
+          notify={notify}
+        />
+      )}
+    </>
   )
 }
 
