@@ -1215,7 +1215,7 @@ function Invoices({ orders, onGerarNota, onVerNota, search = '', generateNfeActi
             {fiscalHistory.length === 0 && <p className="emptyText">Nenhuma nota emitida ainda.</p>}
             {fiscalHistory.map((o) => (
               <div key={o.id}>
-                <b>{o.nfeData.number ? `NF-e ${o.nfeData.number}` : o.id}{formatNfeDate(o) ? ` • ${formatNfeDate(o)}` : ''}</b>
+                <b>{o.id}{o.nfeData.number ? ` · ${o.nfeData.documentType || (String(o.nfeData.reference || '').toUpperCase().startsWith('NFCE') ? 'NFC-e' : 'NF-e')} ${o.nfeData.number}` : ''}{formatNfeDate(o) ? ` • ${formatNfeDate(o)}` : ''}</b>
                 <span>{o.customer}</span>
                 <strong>{money(o.value)}</strong>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -7410,6 +7410,8 @@ function NotaFiscalModal({ order, onClose, updateOrderStatus, notify, addNotif }
 function VerNotaModal({ order, onClose, onSendToClient, onGerarNota, updateOrderStatus }) {
   const nfe = order.nfeData
   const hasSent = !!order.nfeSentAt
+  // derive from stored field first; fallback to reference prefix (NFCE... = NFC-e)
+  const docType = nfe?.documentType || (String(nfe?.reference || '').toUpperCase().startsWith('NFCE') ? 'NFC-e' : 'NF-e')
 
   const [showDetails, setShowDetails] = useState(false)
   const [nfeDetails, setNfeDetails] = useState(null)
@@ -7482,7 +7484,7 @@ function VerNotaModal({ order, onClose, onSendToClient, onGerarNota, updateOrder
         <div className="modalHeader">
           <div>
             <span>{order.id}</span>
-            <h2>Nota Fiscal Eletrônica</h2>
+            <h2>{docType === 'NFC-e' ? 'Nota Fiscal de Consumidor' : 'Nota Fiscal Eletrônica'}</h2>
             <p>{order.customer} • {order.city}</p>
           </div>
           <div className="verNotaHeaderBadges">
@@ -7493,7 +7495,7 @@ function VerNotaModal({ order, onClose, onSendToClient, onGerarNota, updateOrder
                 : (nfe?.nfeStatus === 'PROCESSING' || nfe?.nfeStatus === 'SUBMITTING') ? 'Processando'
                 : 'Erro na nota'
             } />
-            {nfe?.number && <small className="verNotaNum">NF-e nº {nfe.number}</small>}
+            {nfe?.number && <small className="verNotaNum">{docType} nº {nfe.number}</small>}
           </div>
         </div>
 
@@ -7606,7 +7608,7 @@ function VerNotaModal({ order, onClose, onSendToClient, onGerarNota, updateOrder
                 <ReceiptText size={17} /> Gerar nova nota
               </button>
             )}
-            {nfe.nfeStatus === 'AUTHORIZED' && (
+            {nfe.nfeStatus === 'AUTHORIZED' && docType !== 'NFC-e' && (
             <div className="verNotaGrid">
               {nfe.number && <div className="verNotaInfo"><small>Número</small><b>{nfe.number}</b></div>}
               {nfe.series && <div className="verNotaInfo"><small>Série</small><b>{nfe.series}</b></div>}
@@ -7618,7 +7620,7 @@ function VerNotaModal({ order, onClose, onSendToClient, onGerarNota, updateOrder
             {nfe.nfeStatus === 'AUTHORIZED' && <div className="verNotaActions">
               <button className="verNotaActionBtn" onClick={openNfeDetails} disabled={!nfe.reference}>
                 <div className="verNotaActionIcon"><FileText size={20} /></div>
-                <div className="verNotaActionText"><b>Ver NF-e</b><span>Detalhes completos via Focus NFe</span></div>
+                <div className="verNotaActionText"><b>Ver {docType}</b><span>Detalhes completos via Focus NFe</span></div>
                 <ChevronRight size={15} />
               </button>
 
@@ -7630,7 +7632,7 @@ function VerNotaModal({ order, onClose, onSendToClient, onGerarNota, updateOrder
 
               <button className="verNotaActionBtn" onClick={() => downloadFile('danfe')} disabled={!nfe.reference}>
                 <div className="verNotaActionIcon"><ReceiptText size={20} /></div>
-                <div className="verNotaActionText"><b>Baixar DANFE</b><span>Documento auxiliar em PDF</span></div>
+                <div className="verNotaActionText"><b>Baixar {docType === 'NFC-e' ? 'DANFC-e' : 'DANFE'}</b><span>Documento auxiliar em PDF</span></div>
                 <ChevronRight size={15} />
               </button>
 
@@ -7645,7 +7647,7 @@ function VerNotaModal({ order, onClose, onSendToClient, onGerarNota, updateOrder
 
               <button className="verNotaActionBtn verNotaDanger">
                 <div className="verNotaActionIcon"><Ban size={20} /></div>
-                <div className="verNotaActionText"><b>Cancelar NF-e</b><span>Disponível nas primeiras 24h após emissão</span></div>
+                <div className="verNotaActionText"><b>Cancelar {docType}</b><span>Disponível nas primeiras 24h após emissão</span></div>
                 <ChevronRight size={15} />
               </button>
             </div>}

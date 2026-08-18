@@ -62,6 +62,15 @@ function createWindow() {
     return { action: 'deny' }
   })
 
+  // PDFs e outros arquivos baixados abrem com o visualizador nativo (evita erro file:// no frame)
+  mainWindow.webContents.session.on('will-download', (_event, item) => {
+    item.once('done', (_e, state) => {
+      if (state === 'completed') {
+        shell.openPath(item.getSavePath())
+      }
+    })
+  })
+
   mainWindow.on('closed', () => { mainWindow = null })
 }
 

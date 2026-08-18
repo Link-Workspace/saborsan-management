@@ -637,10 +637,8 @@ function buildNfcePayload(order, items, payment, { purchasePurpose = 'consumo', 
   delete base.data_entrada_saida;
   base.natureza_operacao = 'VENDA AO CONSUMIDOR';
   base.presenca_comprador = 4;
-  const focusPaymentCode = payment ? mapPaymentMethodToFocus(payment.paymentMethod) : '90';
-  const paymentValue = payment ? round2(Number(payment.paymentValue)) : base.valor_total;
   base.formas_pagamento = [
-    { indicador_pagamento: 0, forma_pagamento: focusPaymentCode, valor_pagamento: paymentValue },
+    { indicador_pagamento: 1, forma_pagamento: '91', valor_pagamento: base.valor_total },
   ];
   return base;
 }
@@ -831,6 +829,7 @@ app.http('emit-nfe', {
               series: doc.nfeSeries,
               accessKey: doc.accessKey,
               protocol: doc.protocol,
+              documentType: doc.documentType,
             },
           };
         }
@@ -880,6 +879,7 @@ app.http('emit-nfe', {
                 series: mapped.series,
                 accessKey: mapped.accessKey,
                 protocol: mapped.protocol,
+                documentType: doc.documentType,
               },
             };
           }
@@ -1264,6 +1264,7 @@ app.http('emit-nfe', {
                 series: mapped.series,
                 accessKey: mapped.accessKey,
                 protocol: mapped.protocol,
+                documentType: docType,
               },
             };
           }
