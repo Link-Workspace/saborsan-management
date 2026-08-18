@@ -331,8 +331,9 @@ function buildNfePayload(order, items, { stateRegistrationIndicator = 9, stateRe
       icms_situacao_tributaria: f.icmsCst,
     };
 
+    // cBenef obrigatório quando resolvido para o CST do produto (independente do valor do CST)
     const cBenef = codigosBenef[item.productName];
-    if (String(f.icmsCst).trim() === '41' && cBenef) itemObj.codigo_beneficio_fiscal = cBenef;
+    if (cBenef) itemObj.codigo_beneficio_fiscal = cBenef;
 
     if (String(f.icmsCst).trim() === '00') {
       const icmsAliqEfetiva = Number(f.icmsAliq) > 0 ? Number(f.icmsAliq) : (Number(base.icmsAliq) || 0);
@@ -733,7 +734,7 @@ async function emitirNfeParaPedido(orderId, context) {
     }
 
     await sql.query`UPDATE GestaoFiscalDocuments SET status = 'PROCESSING', responsePayload = ${JSON.stringify(focusRes.data)}, updatedAt = GETUTCDATE() WHERE id = ${docId}`;
-    return { success: false, error: 'NF-e em processamento', orderId, reference, processing: true };
+    return { success: false, error: 'NF-e em processamento', orderId, reference, docId, processing: true };
   } catch (focusErr) {
     const isDataError = focusErr.httpStatus === 400 || focusErr.httpStatus === 422;
     const docStatus = isDataError ? 'REJECTED' : 'SUBMISSION_FAILED';
@@ -852,7 +853,7 @@ async function runAutoNfe(context) {
         }
       } else if (result.processing && result.reference) {
         // Tenta polling para aguardar autorização
-        const pollResult = await pollProcessingNfe(result.reference, null, orderId, context);
+        const pollResult = await pollProcessingNfe(result.reference, result.docId, orderId, context);
         if (pollResult.authorized) {
           successOrders.push(orderId);
           if (printDanfeAuto && result.reference) await printDanfe(result.reference, context).catch(() => {});

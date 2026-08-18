@@ -650,7 +650,7 @@ function App() {
           setSelectedDelivery((d) => d?.id === linkedDelivery.id ? { ...d, status: 'Carregando', progress: 25 } : d)
         }
       }
-      addNotif('notifDeliveries', { icon: CheckCircle2, title: 'Pedidos prontos para rota', text: `Os pedidos foram confirmados como prontos. Nota fiscal gerada com sucesso.` })
+      addNotif('notifDeliveries', { icon: CheckCircle2, title: 'Pedidos prontos para rota', text: `Os pedidos foram confirmados como prontos.` })
     }
 
     notify(`Pedido ${id} atualizado para ${status}.`)

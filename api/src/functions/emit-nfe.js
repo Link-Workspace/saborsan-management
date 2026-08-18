@@ -345,9 +345,9 @@ function buildNfePayload(order, items, { stateRegistrationIndicator = 9, stateRe
       icms_situacao_tributaria: f.icmsCst,
     };
 
-    // CST 41 obriga o envio do cBenef à Focus NF-e
+    // cBenef obrigatório quando resolvido para o CST do produto (independente do valor do CST)
     const cBenef = codigosBenef[item.productName];
-    if (String(f.icmsCst).trim() === '41' && cBenef) {
+    if (cBenef) {
       itemObj.codigo_beneficio_fiscal = cBenef;
     }
 
