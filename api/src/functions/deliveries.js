@@ -174,6 +174,85 @@ app.http('deliveries', {
       await sql.connect(sqlConfig);
 
       if (request.method === 'GET') {
+        const url = new URL(request.url);
+        const ordersForDelivery = url.searchParams.get('ordersForDelivery');
+        const availableOrders = url.searchParams.get('availableOrders');
+
+        // Retorna todos os pedidos vinculados a uma entrega com detalhes completos
+        if (ordersForDelivery) {
+          const deliveryRow = await sql.query`SELECT id FROM Deliveries WHERE code = ${ordersForDelivery}`;
+          if (!deliveryRow.recordset.length) return { status: 404, jsonBody: { error: 'Entrega não encontrada' } };
+          const deliveryDbId = deliveryRow.recordset[0].id;
+
+          const result = await sql.query`
+            SELECT o.id, o.clientName, o.clientCnpj, o.clientCity, o.clientPhone,
+                   o.status, o.totalValue, o.deliveryAt, o.observations,
+                   i.productName, i.quantity, i.unit, i.unitPrice
+            FROM GestaoOrders o
+            INNER JOIN DeliveryOrders dor ON dor.order_id = o.id
+            LEFT JOIN GestaoOrderItems i ON i.orderId = o.id
+            WHERE dor.delivery_id = ${deliveryDbId}
+            ORDER BY o.id, i.id
+          `;
+
+          const ordersMap = new Map();
+          for (const row of result.recordset) {
+            if (!ordersMap.has(row.id)) {
+              ordersMap.set(row.id, {
+                id: row.id,
+                clientName: row.clientName,
+                clientCnpj: row.clientCnpj || '',
+                clientCity: row.clientCity || '',
+                clientPhone: row.clientPhone || '',
+                status: row.status,
+                totalValue: row.totalValue || 0,
+                deliveryAt: row.deliveryAt ? new Date(row.deliveryAt).toISOString() : null,
+                observations: row.observations || '',
+                items: [],
+              });
+            }
+            if (row.productName) {
+              ordersMap.get(row.id).items.push({
+                productName: row.productName,
+                quantity: row.quantity,
+                unit: row.unit,
+                unitPrice: row.unitPrice,
+              });
+            }
+          }
+          return { jsonBody: { orders: Array.from(ordersMap.values()) } };
+        }
+
+        // Retorna pedidos disponíveis para adição: Recebido ou Separação, sem entrega ativa vinculada
+        if (availableOrders === 'true') {
+          const result = await sql.query`
+            SELECT o.id, o.clientName, o.clientCnpj, o.clientCity, o.clientPhone,
+                   o.status, o.totalValue, o.deliveryAt, o.observations
+            FROM GestaoOrders o
+            WHERE o.status IN (N'Recebido', N'Separação')
+              AND (o.deletedAt IS NULL)
+              AND NOT EXISTS (
+                SELECT 1 FROM DeliveryOrders dor
+                INNER JOIN Deliveries d ON d.id = dor.delivery_id
+                WHERE dor.order_id = o.id
+                  AND d.status NOT IN (N'Cancelada', N'Concluída')
+              )
+            ORDER BY o.id DESC
+          `;
+          const orders = result.recordset.map((o) => ({
+            id: o.id,
+            clientName: o.clientName,
+            clientCnpj: o.clientCnpj || '',
+            clientCity: o.clientCity || '',
+            clientPhone: o.clientPhone || '',
+            status: o.status,
+            totalValue: o.totalValue || 0,
+            deliveryAt: o.deliveryAt ? new Date(o.deliveryAt).toISOString() : null,
+            observations: o.observations || '',
+          }));
+          return { jsonBody: { orders } };
+        }
+
         const deliveriesResult = await sql.query`
           SELECT d.id, d.code, d.route, d.seller_id, d.status,
                  d.cold_chamber_number, d.stops_count, d.temperature,
@@ -296,6 +375,53 @@ app.http('deliveries', {
       if (request.method === 'PATCH') {
         const body = await request.json();
         const { deliveryId, status, route, sellerId, vehicle, temperature, departureDate, arrivalDate, notes, stops, orderIds, fullUpdate } = body;
+
+        if (body.confirmDeliveryRoute) {
+          const { deliveryCode, removeOrderIds = [], addOrderIds = [] } = body.confirmDeliveryRoute;
+          if (!deliveryCode) return { status: 400, jsonBody: { error: 'deliveryCode é obrigatório' } };
+
+          const deliveryRow = await sql.query`
+            SELECT id FROM Deliveries
+            WHERE code = ${deliveryCode} AND status NOT IN (N'Cancelada', N'Concluída')
+          `;
+          if (!deliveryRow.recordset.length) return { status: 404, jsonBody: { error: 'Entrega não encontrada' } };
+          const deliveryDbId = deliveryRow.recordset[0].id;
+
+          // Remover pedidos solicitados da entrega e reverter status para Recebido
+          for (const orderId of removeOrderIds) {
+            await sql.query`DELETE FROM DeliveryOrders WHERE delivery_id = ${deliveryDbId} AND order_id = ${orderId}`;
+            await sql.query`
+              UPDATE GestaoOrders SET status = N'Recebido', updatedAt = GETUTCDATE()
+              WHERE id = ${orderId} AND status IN (N'Recebido', N'Separação', N'Pronto')
+            `;
+          }
+
+          // Adicionar novos pedidos à entrega (sem duplicatas)
+          for (const orderId of addOrderIds) {
+            const existing = await sql.query`
+              SELECT 1 AS found FROM DeliveryOrders WHERE delivery_id = ${deliveryDbId} AND order_id = ${orderId}
+            `;
+            if (!existing.recordset.length) {
+              await sql.query`INSERT INTO DeliveryOrders (delivery_id, order_id) VALUES (${deliveryDbId}, ${orderId})`;
+            }
+          }
+
+          // Confirmar: mover todos os pedidos restantes para Rota e a entrega para Em rota
+          const remaining = await sql.query`SELECT order_id FROM DeliveryOrders WHERE delivery_id = ${deliveryDbId}`;
+          for (const row of remaining.recordset) {
+            await sql.query`
+              UPDATE GestaoOrders SET status = N'Rota', updatedAt = GETUTCDATE()
+              WHERE id = ${row.order_id} AND status IN (N'Recebido', N'Separação', N'Pronto')
+            `;
+          }
+
+          await sql.query`
+            UPDATE Deliveries SET status = N'Em rota', updated_at = GETUTCDATE()
+            WHERE id = ${deliveryDbId}
+          `;
+
+          return { jsonBody: { success: true } };
+        }
 
         if (body.denyDelivery) {
           const { deliveryCode: denyCode, sellerId: denyingSellerId } = body.denyDelivery;
