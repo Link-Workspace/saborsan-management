@@ -504,6 +504,19 @@ async function notifySellerAboutNfeError(sellerId, orderId, errorMessage, contex
 
 // ── Impressão DANFE ───────────────────────────────────────────────────────────
 
+async function loadDevicePrinters() {
+  try {
+    const result = await sql.query`SELECT TOP 1 defaultPrinter, defaultThermalPrinter FROM DeviceSettings ORDER BY id ASC`;
+    if (!result.recordset.length) return { defaultPrinter: null, defaultThermalPrinter: null };
+    return {
+      defaultPrinter: result.recordset[0].defaultPrinter || null,
+      defaultThermalPrinter: result.recordset[0].defaultThermalPrinter || null,
+    };
+  } catch {
+    return { defaultPrinter: null, defaultThermalPrinter: null };
+  }
+}
+
 async function printDanfe(reference, context) {
   if (process.platform !== 'win32') return;
   try {
@@ -519,7 +532,22 @@ async function printDanfe(reference, context) {
     const path = require('path');
     const tempPath = path.join(os.tmpdir(), `auto_danfe_${Date.now()}_${reference.replace(/[^a-z0-9]/gi, '_').slice(0, 30)}.pdf`);
     require('fs').writeFileSync(tempPath, pdfBuffer);
-    await print(tempPath);
+
+    const { defaultPrinter, defaultThermalPrinter } = await loadDevicePrinters();
+
+    // Collect distinct configured printers; fall back to OS default if none configured
+    const printers = [];
+    if (defaultPrinter) printers.push(defaultPrinter);
+    if (defaultThermalPrinter && defaultThermalPrinter !== defaultPrinter) printers.push(defaultThermalPrinter);
+
+    if (printers.length === 0) {
+      await print(tempPath);
+    } else {
+      for (const printerName of printers) {
+        await print(tempPath, { printer: printerName });
+      }
+    }
+
     try { require('fs').unlinkSync(tempPath); } catch (_) {}
   } catch (err) {
     context?.error('[auto-nfe] printDanfe error:', err);

@@ -5643,6 +5643,71 @@ function ReportCard({ icon: Icon, title, value, text }) {
   return <article className="reportCard"><Icon size={28} /><span>{title}</span><h3>{value}</h3><p>{text}</p></article>
 }
 
+function DispositivosSection({ form, set, printerList, setPrinterList, printersLoading, setPrintersLoading }) {
+  useEffect(() => {
+    if (printerList.length > 0) return
+    setPrintersLoading(true)
+    fetch(`${API_URL}/api/print-danfe`)
+      .then((r) => r.ok ? r.json() : null)
+      .then((data) => {
+        if (data?.printers?.length) setPrinterList(data.printers)
+      })
+      .catch(() => {})
+      .finally(() => setPrintersLoading(false))
+  }, [])
+
+  const printerOptions = printerList.map((p) => ({ value: p, label: p }))
+
+  return (
+    <div className="card settingsCard">
+      <div className="cardHeader">
+        <div><p>Hardware</p><h3>Dispositivos conectados</h3></div>
+        <Printer size={22} />
+      </div>
+      <div className="settingsForm">
+        <label>
+          Impressora padrão
+          {printersLoading ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 0', color: 'var(--muted)', fontSize: '.88rem' }}>
+              <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> Carregando impressoras...
+            </div>
+          ) : printerList.length === 0 ? (
+            <span style={{ display: 'block', color: 'var(--muted)', fontSize: '.84rem', marginTop: 6 }}>Nenhuma impressora encontrada no sistema.</span>
+          ) : (
+            <CustomSelect
+              value={form.impressoraPadrao}
+              onChange={(v) => set('impressoraPadrao', v)}
+              options={printerOptions}
+              placeholder="Selecione a impressora padrão"
+            />
+          )}
+        </label>
+        <label>
+          Impressora térmica padrão
+          {printersLoading ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 0', color: 'var(--muted)', fontSize: '.88rem' }}>
+              <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> Carregando impressoras...
+            </div>
+          ) : printerList.length === 0 ? (
+            <span style={{ display: 'block', color: 'var(--muted)', fontSize: '.84rem', marginTop: 6 }}>Nenhuma impressora encontrada no sistema.</span>
+          ) : (
+            <CustomSelect
+              value={form.impressoraTermica}
+              onChange={(v) => set('impressoraTermica', v)}
+              options={printerOptions}
+              placeholder="Selecione a impressora térmica"
+            />
+          )}
+        </label>
+      </div>
+      <div className="settingsInfo" style={{ marginTop: 14 }}>
+        <Printer size={14} />
+        <span>As impressoras listadas são as disponíveis no sistema operacional desta máquina. Clique em <strong>Salvar alterações</strong> para confirmar.</span>
+      </div>
+    </div>
+  )
+}
+
 function FiscalConfigSection({ notify }) {
   const [loading, setLoading] = useState(false)
   const [configs, setConfigs] = useState([])
@@ -6036,6 +6101,8 @@ function Settings({ notify, onNotifSettingChange }) {
         notifDeliveries: true,
         notifClients: true,
         notifPayments: true,
+        impressoraPadrao: '',
+        impressoraTermica: '',
         ...saved,
       }
     } catch {
@@ -6078,6 +6145,8 @@ function Settings({ notify, onNotifSettingChange }) {
         compraDatas: [],
         iaFornecedorPrompt: 'Você é um assistente de compras da Saborsan Distribuidora. Ao contatar fornecedores, seja cordial, objetivo e profissional. Solicite cotações de preço, prazo de entrega e condições de pagamento. Priorize fornecedores com melhor custo-benefício e histórico de pontualidade. Confirme disponibilidade de estoque antes de fechar pedido.',
         iaImportPrompt: '',
+        impressoraPadrao: '',
+        impressoraTermica: '',
         notifOrders: true,
         notifSellers: true,
         notifFiscalDocuments: true,
@@ -6113,6 +6182,15 @@ function Settings({ notify, onNotifSettingChange }) {
     relatorioHora:  f.relatorioHora  || '08:00',
   })
   const [savedRelatoriosSnap, setSavedRelatoriosSnap] = useState(() => snapRelatorios(form))
+
+  const snapDispositivos = (f) => JSON.stringify({
+    impressoraPadrao:  f.impressoraPadrao  || '',
+    impressoraTermica: f.impressoraTermica || '',
+  })
+  const [savedDispositivosSnap, setSavedDispositivosSnap] = useState(() => snapDispositivos(form))
+
+  const [printerList, setPrinterList] = useState([])
+  const [printersLoading, setPrintersLoading] = useState(false)
 
   useEffect(() => {
     fetch(`${API_URL}/api/stock-purchase-config`)
@@ -6186,6 +6264,22 @@ function Settings({ notify, onNotifSettingChange }) {
         }));
       })
       .catch(() => {});
+
+    fetch(`${API_URL}/api/device-settings`)
+      .then((r) => r.ok ? r.json() : null)
+      .then((data) => {
+        if (!data) return;
+        setForm((f) => ({
+          ...f,
+          impressoraPadrao:  data.defaultPrinter        ?? f.impressoraPadrao,
+          impressoraTermica: data.defaultThermalPrinter ?? f.impressoraTermica,
+        }));
+        setSavedDispositivosSnap(JSON.stringify({
+          impressoraPadrao:  data.defaultPrinter        || '',
+          impressoraTermica: data.defaultThermalPrinter || '',
+        }));
+      })
+      .catch(() => {});
   }, []);
 
   const saveSettings = async () => {
@@ -6246,22 +6340,41 @@ function Settings({ notify, onNotifSettingChange }) {
       } catch {}
     }
 
+    if (activeSection === 'dispositivos') {
+      try {
+        const saved = JSON.parse(savedDispositivosSnap)
+        const patch = {}
+        if ((form.impressoraPadrao  || '') !== (saved.impressoraPadrao  || '')) patch.defaultPrinter        = form.impressoraPadrao  || ''
+        if ((form.impressoraTermica || '') !== (saved.impressoraTermica || '')) patch.defaultThermalPrinter = form.impressoraTermica || ''
+        if (Object.keys(patch).length > 0) {
+          await fetch(`${API_URL}/api/device-settings`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(patch),
+          })
+        }
+        setSavedDispositivosSnap(snapDispositivos(form))
+      } catch {}
+    }
+
     notify('Configurações salvas com sucesso.')
   }
 
   const settingsSections = [
-    { id: 'empresa',       label: 'Dados da empresa',      icon: Building2  },
-    { id: 'operacao',      label: 'Estoque e fornecedores', icon: Boxes      },
-    { id: 'notificacoes',  label: 'Notificações',          icon: Bell       },
-    { id: 'relatorios',    label: 'Relatórios',            icon: BarChart3  },
-    { id: 'fiscal',        label: 'Fiscal e NCM',          icon: ReceiptText },
+    { id: 'empresa',       label: 'Dados da empresa',        icon: Building2  },
+    { id: 'operacao',      label: 'Estoque e fornecedores',  icon: Boxes      },
+    { id: 'notificacoes',  label: 'Notificações',            icon: Bell       },
+    { id: 'relatorios',    label: 'Relatórios',              icon: BarChart3  },
+    { id: 'fiscal',        label: 'Fiscal e NCM',            icon: ReceiptText },
+    { id: 'dispositivos',  label: 'Dispositivos conectados', icon: Printer    },
   ]
 
   const [activeSection, setActiveSection] = useState('empresa')
   const active = settingsSections.find((s) => s.id === activeSection)
   const showSaveBtn = activeSection !== 'fiscal' && activeSection !== 'empresa' && activeSection !== 'notificacoes'
-  const operacaoDirty = activeSection !== 'operacao' || snapOperacao(form) !== savedOperacaoSnap
-  const relatoriosDirty = activeSection !== 'relatorios' || snapRelatorios(form) !== savedRelatoriosSnap
+  const operacaoDirty    = activeSection !== 'operacao'     || snapOperacao(form)    !== savedOperacaoSnap
+  const relatoriosDirty  = activeSection !== 'relatorios'   || snapRelatorios(form)  !== savedRelatoriosSnap
+  const dispositivosDirty = activeSection !== 'dispositivos' || snapDispositivos(form) !== savedDispositivosSnap
 
   return (
     <>
@@ -6488,12 +6601,23 @@ function Settings({ notify, onNotifSettingChange }) {
           )}
 
           {activeSection === 'fiscal' && <FiscalConfigSection notify={notify} />}
+
+          {activeSection === 'dispositivos' && (
+            <DispositivosSection
+              form={form}
+              set={set}
+              printerList={printerList}
+              setPrinterList={setPrinterList}
+              printersLoading={printersLoading}
+              setPrintersLoading={setPrintersLoading}
+            />
+          )}
         </div>
       </div>
     </div>
     {showSaveBtn && (
       <div className="settingsSaveFooter">
-        <button className="btnSolid" onClick={saveSettings} disabled={!operacaoDirty || !relatoriosDirty} style={{ opacity: (!operacaoDirty || !relatoriosDirty) ? 0.45 : 1, cursor: (!operacaoDirty || !relatoriosDirty) ? 'not-allowed' : 'pointer' }}><CheckCircle2 size={18} /> Salvar alterações</button>
+        <button className="btnSolid" onClick={saveSettings} disabled={!operacaoDirty || !relatoriosDirty || !dispositivosDirty} style={{ opacity: (!operacaoDirty || !relatoriosDirty || !dispositivosDirty) ? 0.45 : 1, cursor: (!operacaoDirty || !relatoriosDirty || !dispositivosDirty) ? 'not-allowed' : 'pointer' }}><CheckCircle2 size={18} /> Salvar alterações</button>
       </div>
     )}
     </>
@@ -7562,13 +7686,12 @@ function PrintDanfeModal({ order, onClose }) {
                 <AlertTriangle size={15} /> Nenhuma impressora encontrada. Verifique se o servidor está rodando localmente.
               </div>
             ) : (
-              <select
-                className="printDanfePrinterDropdown"
+              <CustomSelect
                 value={selectedPrinter}
-                onChange={(e) => setSelectedPrinter(e.target.value)}
-              >
-                {printers.map((p) => <option key={p} value={p}>{p}</option>)}
-              </select>
+                onChange={(v) => setSelectedPrinter(v)}
+                options={printers.map((p) => ({ value: p, label: p }))}
+                placeholder="Selecione a impressora"
+              />
             )}
           </div>
           {error && (
