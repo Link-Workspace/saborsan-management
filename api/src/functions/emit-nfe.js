@@ -81,8 +81,8 @@ async function notifyDriverNfeAuthorized(orderId, context) {
       ? `Notas fiscais da entrega ${deliveryCode} emitidas`
       : `Nota fiscal do pedido ${orderId} emitida`;
     const msgBody = isMultiple
-      ? `Todas as NF-e da entrega ${deliveryCode} foram autorizadas pelo SEFAZ. Confirme para colocar em rota.`
-      : `A NF-e do pedido ${orderId} (entrega ${deliveryCode}) foi autorizada pelo SEFAZ. Confirme para colocar em rota.`;
+      ? `Todas as notas fiscais da entrega ${deliveryCode} foram autorizadas pelo SEFAZ. Confirme para colocar em rota.`
+      : `A nota fiscal do pedido ${orderId} (entrega ${deliveryCode}) foi autorizada pelo SEFAZ. Confirme para colocar em rota.`;
 
     for (const token of tokens) {
       try {
@@ -172,6 +172,12 @@ function createNfeReference(fiscalDocumentId) {
   return `NFE${normalized}`.toUpperCase();
 }
 
+function createNfceReference(fiscalDocumentId) {
+  const normalized = String(fiscalDocumentId).replace(/[^a-zA-Z0-9]/g, '');
+  if (!normalized) throw new Error('Não foi possível gerar referência da NFC-e');
+  return `NFCE${normalized}`.toUpperCase();
+}
+
 // ── Status mapper ─────────────────────────────────────────────────────────────
 
 function mapFocusStatus(response) {
@@ -188,7 +194,7 @@ function mapFocusStatus(response) {
       accessKey: response.chave_nfe || response.chave || response.chave_acesso,
       protocol: response.protocolo || response.numero_protocolo,
       xmlPath: response.caminho_xml_nota_fiscal || response.caminho_xml,
-      danfePath: response.caminho_danfe || response.caminho_pdf,
+      danfePath: response.caminho_danfe || response.caminho_danfce || response.caminho_pdf,
     };
   }
   if (sefazCode) {
@@ -214,7 +220,7 @@ function mapFocusStatus(response) {
       accessKey: response.chave_nfe || response.chave || response.chave_acesso,
       protocol: response.protocolo || response.numero_protocolo,
       xmlPath: response.caminho_xml_nota_fiscal || response.caminho_xml,
-      danfePath: response.caminho_danfe || response.caminho_pdf,
+      danfePath: response.caminho_danfe || response.caminho_danfce || response.caminho_pdf,
     };
   }
   if (raw.includes('process') || raw.includes('fila') || raw.includes('em processamento') || raw.includes('recebido')) {
@@ -540,10 +546,19 @@ async function ensureTable() {
         responsePayload NVARCHAR(MAX)  NULL,
         issuedAt        DATETIME2      NULL,
         authorizedAt    DATETIME2      NULL,
+        documentType    NVARCHAR(10)   NOT NULL DEFAULT 'NF-e',
         createdAt       DATETIME2      NOT NULL DEFAULT GETUTCDATE(),
         updatedAt       DATETIME2      NOT NULL DEFAULT GETUTCDATE(),
         CONSTRAINT UQ_FiscalDoc_Env_Ref UNIQUE (environment, focusReference)
       )
+    END
+    ELSE
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_NAME = 'GestaoFiscalDocuments' AND COLUMN_NAME = 'documentType'
+      )
+        ALTER TABLE GestaoFiscalDocuments ADD documentType NVARCHAR(10) NOT NULL DEFAULT 'NF-e';
     END
   `;
 }
@@ -583,6 +598,53 @@ async function loadFiscalBenefits() {
   }
 }
 
+// ── NFC-e helpers ─────────────────────────────────────────────────────────────
+
+function mapPaymentMethodToFocus(method) {
+  const m = String(method || '').toLowerCase();
+  if (m.includes('pix')) return '17';
+  if (m.includes('crédito') || m.includes('credito') || m.includes('credit')) return '03';
+  if (m.includes('débito') || m.includes('debito') || m.includes('debit')) return '04';
+  if (m.includes('dinheiro') || m.includes('espécie') || m.includes('especie') || m.includes('cash')) return '01';
+  if (m.includes('boleto')) return '15';
+  if (m.includes('voucher')) return '05';
+  return '90'; // sem pagamento / outros
+}
+
+async function loadOrderPayment(orderId) {
+  try {
+    const result = await sql.query`
+      SELECT TOP 1 paymentMethod, paymentValue
+      FROM Payments WHERE orderId = ${orderId}
+      ORDER BY createdAt DESC
+    `;
+    return result.recordset[0] || null;
+  } catch {
+    return null;
+  }
+}
+
+function buildNfcePayload(order, items, payment, { purchasePurpose = 'consumo', fiscalConfigs = {}, codigosBenef = {} } = {}) {
+  const base = buildNfePayload(order, items, {
+    stateRegistrationIndicator: 9,
+    stateRegistration: null,
+    purchasePurpose,
+    fiscalConfigs,
+    codigosBenef,
+  });
+  delete base.tipo_documento;
+  delete base.finalidade_emissao;
+  delete base.data_entrada_saida;
+  base.natureza_operacao = 'VENDA AO CONSUMIDOR';
+  base.presenca_comprador = 4;
+  const focusPaymentCode = payment ? mapPaymentMethodToFocus(payment.paymentMethod) : '90';
+  const paymentValue = payment ? round2(Number(payment.paymentValue)) : base.valor_total;
+  base.formas_pagamento = [
+    { indicador_pagamento: 0, forma_pagamento: focusPaymentCode, valor_pagamento: paymentValue },
+  ];
+  return base;
+}
+
 // ── Azure Function handler ────────────────────────────────────────────────────
 
 app.http('emit-nfe', {
@@ -604,7 +666,7 @@ app.http('emit-nfe', {
         }
 
         const docResult = await sql.query`
-          SELECT xmlPath, danfePath FROM GestaoFiscalDocuments
+          SELECT xmlPath, danfePath, documentType FROM GestaoFiscalDocuments
           WHERE focusReference = ${ref} AND status = 'AUTHORIZED'
         `;
         const doc = docResult.recordset[0];
@@ -613,12 +675,13 @@ app.http('emit-nfe', {
         }
 
         const { baseUrl, token } = getFocusConfig();
+        const downloadDocEndpoint = doc.documentType === 'NFC-e' ? 'nfce' : 'nfe';
 
         // Se o caminho não estiver salvo no banco, busca o status atual na Focus NFe
         let filePath = download === 'xml' ? doc.xmlPath : doc.danfePath;
         if (!filePath) {
           try {
-            const statusRes = await focusRequest(`/v2/nfe/${encodeURIComponent(ref)}?completa=1`);
+            const statusRes = await focusRequest(`/v2/${downloadDocEndpoint}/${encodeURIComponent(ref)}?completa=1`);
             const mapped = mapFocusStatus(statusRes.data);
             if (mapped.status === 'AUTHORIZED') {
               // Atualiza o banco para futuras consultas
@@ -637,8 +700,8 @@ app.http('emit-nfe', {
         // Fallback: construir URL direta da Focus NFe pelo padrão de endpoint
         if (!filePath) {
           filePath = download === 'xml'
-            ? `${baseUrl}/v2/nfe/${encodeURIComponent(ref)}.xml`
-            : `${baseUrl}/v2/nfe/${encodeURIComponent(ref)}.pdf`;
+            ? `${baseUrl}/v2/${downloadDocEndpoint}/${encodeURIComponent(ref)}.xml`
+            : `${baseUrl}/v2/${downloadDocEndpoint}/${encodeURIComponent(ref)}.pdf`;
         }
 
         const fileUrl = filePath.startsWith('http') ? filePath : `${baseUrl}${filePath}`;
@@ -667,7 +730,13 @@ app.http('emit-nfe', {
       // ── Full NF-e details from Focus NFe ─────────────────────────────────
       if (request.method === 'GET' && ref && url.searchParams.get('details') === '1') {
         try {
-          const focusRes = await focusRequest(`/v2/nfe/${encodeURIComponent(ref)}?completa=1`);
+          let detailsDocType = 'NF-e';
+          try {
+            const dtRes = await sql.query`SELECT TOP 1 documentType FROM GestaoFiscalDocuments WHERE focusReference = ${ref}`;
+            if (dtRes.recordset[0]?.documentType) detailsDocType = dtRes.recordset[0].documentType;
+          } catch (_) {}
+          const detailsDocEndpoint = detailsDocType === 'NFC-e' ? 'nfce' : 'nfe';
+          const focusRes = await focusRequest(`/v2/${detailsDocEndpoint}/${encodeURIComponent(ref)}?completa=1`);
           const d = focusRes.data;
 
           // Corrige divergência: se o BD tem AUTHORIZED mas o SEFAZ retornou rejeição
@@ -744,7 +813,7 @@ app.http('emit-nfe', {
       if (request.method === 'GET' && ref) {
         const docResult = await sql.query`
           SELECT id, orderId, status, focusReference, nfeNumber, nfeSeries,
-                 accessKey, protocol, errorCode, errorMessage
+                 accessKey, protocol, errorCode, errorMessage, documentType
           FROM GestaoFiscalDocuments WHERE focusReference = ${ref}
         `;
         const doc = docResult.recordset[0];
@@ -778,7 +847,8 @@ app.http('emit-nfe', {
 
         // Query Focus NFe for current status (completa=1 inclui caminho_xml e caminho_danfe)
         try {
-          const focusRes = await focusRequest(`/v2/nfe/${encodeURIComponent(ref)}?completa=1`);
+          const statusDocEndpoint = doc.documentType === 'NFC-e' ? 'nfce' : 'nfe';
+          const focusRes = await focusRequest(`/v2/${statusDocEndpoint}/${encodeURIComponent(ref)}?completa=1`);
           const mapped = mapFocusStatus(focusRes.data);
 
           if (mapped.status === 'AUTHORIZED') {
@@ -1099,16 +1169,29 @@ app.http('emit-nfe', {
           return { jsonBody: { status: ex.status, reference: ex.focusReference } };
         }
 
+        // Determina tipo de documento: NFC-e para não contribuintes do ICMS
+        const isNfce = stateRegistrationIndicator === 9;
+        const docType = isNfce ? 'NFC-e' : 'NF-e';
+        const focusDocEndpoint = isNfce ? 'nfce' : 'nfe';
+
         // Create new FiscalDocument
         const env = process.env.NODE_ENV === 'production' ? 'PRODUCTION' : 'HOMOLOGATION';
         const createRes = await sql.query`
-          INSERT INTO GestaoFiscalDocuments (orderId, environment, status)
+          INSERT INTO GestaoFiscalDocuments (orderId, environment, status, documentType)
           OUTPUT INSERTED.id
-          VALUES (${orderId}, ${env}, 'SUBMITTING')
+          VALUES (${orderId}, ${env}, 'SUBMITTING', ${docType})
         `;
         const docId = createRes.recordset[0].id;
-        const reference = createNfeReference(docId);
-        const payload = buildNfePayload(order, items, { stateRegistrationIndicator, stateRegistration, purchasePurpose, fiscalConfigs, codigosBenef });
+
+        let reference, payload;
+        if (isNfce) {
+          const payment = await loadOrderPayment(orderId);
+          reference = createNfceReference(docId);
+          payload = buildNfcePayload(order, items, payment, { purchasePurpose, fiscalConfigs, codigosBenef });
+        } else {
+          reference = createNfeReference(docId);
+          payload = buildNfePayload(order, items, { stateRegistrationIndicator, stateRegistration, purchasePurpose, fiscalConfigs, codigosBenef });
+        }
 
         await sql.query`
           UPDATE GestaoFiscalDocuments
@@ -1119,10 +1202,10 @@ app.http('emit-nfe', {
           WHERE id = ${docId}
         `;
 
-        // Send to Focus NFe
+        // Send to Focus NFe / NFC-e
         try {
           const focusRes = await focusRequest(
-            `/v2/nfe?ref=${encodeURIComponent(reference)}`,
+            `/v2/${focusDocEndpoint}?ref=${encodeURIComponent(reference)}`,
             { method: 'POST', body: payload }
           );
 

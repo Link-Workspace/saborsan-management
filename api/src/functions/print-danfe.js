@@ -67,7 +67,8 @@ app.http('print-danfe', {
       }
 
       // Baixa o PDF do DANFE da Focus NFe
-      const danfeUrl = `${focusConfig.baseUrl}/v2/nfe/${encodeURIComponent(reference)}.pdf`
+      const nfEndpoint = String(reference).toUpperCase().startsWith('NFCE') ? 'nfce' : 'nfe';
+      const danfeUrl = `${focusConfig.baseUrl}/v2/${nfEndpoint}/${encodeURIComponent(reference)}.pdf`
       let pdfBuffer
       try {
         const res = await fetch(danfeUrl, {
