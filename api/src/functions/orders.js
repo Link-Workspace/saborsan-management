@@ -62,10 +62,10 @@ app.http('orders', {
           sql.query`
             SELECT orderId, focusReference, nfeNumber, nfeSeries, accessKey, protocol, authorizedAt, sentToClientAt, status, errorCode, errorMessage
             FROM GestaoFiscalDocuments
-            WHERE status IN ('AUTHORIZED', 'REJECTED', 'SUBMISSION_FAILED')
+            WHERE status IN ('AUTHORIZED', 'REJECTED', 'SUBMISSION_FAILED', 'PROCESSING', 'SUBMITTING', 'MANUAL_REVIEW')
               AND id IN (
                 SELECT MAX(id) FROM GestaoFiscalDocuments
-                WHERE status IN ('AUTHORIZED', 'REJECTED', 'SUBMISSION_FAILED')
+                WHERE status IN ('AUTHORIZED', 'REJECTED', 'SUBMISSION_FAILED', 'PROCESSING', 'SUBMITTING', 'MANUAL_REVIEW')
                 GROUP BY orderId
               )
           `.catch(() => ({ recordset: [] })),

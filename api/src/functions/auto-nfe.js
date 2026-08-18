@@ -797,7 +797,8 @@ async function runAutoNfe(context) {
 
   // Carrega config da automação
   const cfgResult = await sql.query`
-    SELECT is_active, nfe_notify_on_error, nfe_notify_seller_id, nfe_print_danfe_auto
+    SELECT is_active, nfe_notify_on_error, nfe_notify_seller_id, nfe_print_danfe_auto,
+           time_interval_minutes, time_start, time_end
     FROM AutomationConfig WHERE automation_key = 'generate_nfe'
   `.catch(() => ({ recordset: [] }));
 
@@ -809,6 +810,16 @@ async function runAutoNfe(context) {
   const notifyOnError = !!cfg.nfe_notify_on_error;
   const notifySellerId = cfg.nfe_notify_seller_id;
   const printDanfeAuto = !!cfg.nfe_print_danfe_auto;
+
+  // Check time window
+  const now = new Date();
+  const nowBRT = new Date(now.getTime() - 3 * 60 * 60 * 1000);
+  const currentTime = `${String(nowBRT.getHours()).padStart(2, '0')}:${String(nowBRT.getMinutes()).padStart(2, '0')}`;
+  if (cfg.time_start && cfg.time_end) {
+    if (currentTime < cfg.time_start || currentTime > cfg.time_end) {
+      return { skipped: true, reason: 'Fora do horário configurado.' };
+    }
+  }
 
   // Busca pedidos Pronto sem NF-e autorizada ou com SUBMISSION_FAILED
   const pendingOrdersResult = await sql.query`
@@ -972,7 +983,21 @@ async function runAutoNfe(context) {
     }
   }
 
-  context?.log(`[auto-nfe] Resultado: ${successOrders.length} autorizado(s), ${aiResolvedOrders.length} corrigido(s) pela IA, ${needsIntervention.length} requer(em) intervenção.`);
+  const resultMessage = `${successOrders.length} NF-e autorizada(s), ${aiResolvedOrders.length} corrigida(s) pela IA, ${needsIntervention.length} requer(em) intervenção.`;
+  context?.log(`[auto-nfe] Resultado: ${resultMessage}`);
+
+  await sql.query`
+    IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'AutomationRunLog')
+    CREATE TABLE AutomationRunLog (
+      id INT PRIMARY KEY IDENTITY,
+      automation_key NVARCHAR(100) NOT NULL,
+      result_message NVARCHAR(500),
+      created_at DATETIME DEFAULT GETUTCDATE()
+    )
+  `.catch(() => {});
+  await sql.query`
+    INSERT INTO AutomationRunLog (automation_key, result_message) VALUES ('generate_nfe', ${resultMessage})
+  `.catch(() => {});
 
   return {
     success: true,
@@ -980,6 +1005,7 @@ async function runAutoNfe(context) {
     aiResolved: aiResolvedOrders.length,
     needsIntervention: needsIntervention.length,
     interventionOrders: needsIntervention.map((f) => ({ orderId: f.orderId, error: f.error, errorCode: f.errorCode })),
+    message: resultMessage,
   };
 }
 
@@ -999,13 +1025,37 @@ app.http('auto-nfe', {
   },
 });
 
-// ── Timer trigger (a cada 5 minutos) ─────────────────────────────────────────
+// ── Timer trigger (a cada minuto, executa conforme intervalo configurado) ────
 
 app.timer('auto-nfe-timer', {
-  schedule: '0 */5 * * * *',
+  schedule: '0 * * * * *',
   handler: async (myTimer, context) => {
     try {
-      await runAutoNfe(context);
+      await sql.connect(sqlConfig);
+
+      const cfgResult = await sql.query`
+        SELECT is_active, time_interval_minutes
+        FROM AutomationConfig WHERE automation_key = 'generate_nfe'
+      `.catch(() => ({ recordset: [] }));
+
+      if (!cfgResult.recordset.length || !cfgResult.recordset[0].is_active) return;
+
+      const intervalMinutes = cfgResult.recordset[0].time_interval_minutes || 5;
+
+      const lastRunResult = await sql.query`
+        SELECT TOP 1 created_at FROM AutomationRunLog
+        WHERE automation_key = 'generate_nfe'
+        ORDER BY id DESC
+      `.catch(() => ({ recordset: [] }));
+
+      if (lastRunResult.recordset.length) {
+        const lastRun = new Date(lastRunResult.recordset[0].created_at);
+        const minutesSinceLastRun = (Date.now() - lastRun.getTime()) / 60000;
+        if (minutesSinceLastRun < intervalMinutes) return;
+      }
+
+      const result = await runAutoNfe(context);
+      context.log('[auto-nfe] timer:', result.message || result.reason || JSON.stringify(result));
     } catch (err) {
       context.error('[auto-nfe] Erro no timer:', err);
     }

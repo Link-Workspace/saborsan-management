@@ -472,7 +472,26 @@ function App() {
     setOrdersLoading(true)
     fetch(`${API_URL}/api/orders`)
       .then((r) => r.json())
-      .then((data) => { if (data.orders) setOrders(data.orders) })
+      .then((data) => {
+        if (data.orders) {
+          setOrders(data.orders)
+          // Auto-resolve any NF-e documents still stuck in processing state
+          data.orders
+            .filter((o) => o.nfeData?.reference && (o.nfeData.nfeStatus === 'PROCESSING' || o.nfeData.nfeStatus === 'SUBMITTING' || o.nfeData.nfeStatus === 'MANUAL_REVIEW'))
+            .forEach((o) => {
+              fetch(`${API_URL}/api/emit-nfe?ref=${encodeURIComponent(o.nfeData.reference)}`)
+                .then((r) => r.json())
+                .then((statusData) => {
+                  if (statusData.status === 'AUTHORIZED') {
+                    updateOrderStatus(o.id, o.status, { nfeData: { ...statusData, reference: o.nfeData.reference, nfeStatus: 'AUTHORIZED' } })
+                  } else if (statusData.status === 'REJECTED' || statusData.status === 'SUBMISSION_FAILED') {
+                    updateOrderStatus(o.id, o.status, { nfeData: { nfeStatus: statusData.status, errorCode: statusData.errorCode || null, errorMessage: statusData.errorMessage || null, reference: o.nfeData.reference } })
+                  }
+                })
+                .catch(() => {})
+            })
+        }
+      })
       .catch(() => {})
       .finally(() => setOrdersLoading(false))
   }
@@ -1147,7 +1166,7 @@ function Orders({ orders, ordersLoading, onSelect, updateOrderStatus, createInvo
         {!ordersLoading && filtered.length === 0 && <p className="emptyText">Nenhum pedido encontrado.</p>}
         {filtered.map((order) => (
           <article className="orderCard" key={order.id}>
-            <div className="orderTop"><div><b>{order.id}</b><span>{order.source}</span></div><div style={{display:'flex',gap:'6px',alignItems:'center',flexWrap:'wrap',justifyContent:'flex-end'}}><Status status={filter === 'Removido' ? 'Removido' : order.status} />{order.status === 'Pronto' && order.nfeData && (order.nfeData.nfeStatus === 'AUTHORIZED' ? <span className="nfeSubStatus success">Nota emitida com sucesso</span> : <span className="nfeSubStatus error">Erro na emição da nota</span>)}</div></div>
+            <div className="orderTop"><div><b>{order.id}</b><span>{order.source}</span></div><div style={{display:'flex',gap:'6px',alignItems:'center',flexWrap:'wrap',justifyContent:'flex-end'}}><Status status={filter === 'Removido' ? 'Removido' : order.status} />{order.status === 'Pronto' && order.nfeData && (order.nfeData.nfeStatus === 'AUTHORIZED' ? <span className="nfeSubStatus success">Nota emitida com sucesso</span> : (order.nfeData.nfeStatus === 'PROCESSING' || order.nfeData.nfeStatus === 'SUBMITTING') ? <span className="nfeSubStatus info">Nota em processamento</span> : <span className="nfeSubStatus error">Erro na emição da nota</span>)}</div></div>
             <h3>{order.customer}</h3>
             <p>{order.city} • {order.whatsapp}</p>
             <div className="orderProducts">{order.products.map((p) => <span key={p.name}>{p.qty} {p.unit} • {p.name}</span>)}</div>
@@ -1159,7 +1178,7 @@ function Orders({ orders, ordersLoading, onSelect, updateOrderStatus, createInvo
                   ? <button style={{background:'var(--orange)',color:'#fff',opacity:0.5,cursor:'not-allowed'}} disabled title="Desabilitado porque a automação 'Receber pedidos do app' está ativada">Separar</button>
                   : <button style={{background:'var(--orange)',color:'#fff'}} onClick={() => updateOrderStatus(order.id, 'Separação')}>Separar</button>
               )}
-              {order.status === 'Pronto' && order.nfeData?.nfeStatus !== 'AUTHORIZED' && (
+              {order.status === 'Pronto' && (!order.nfeData || (order.nfeData.nfeStatus !== 'AUTHORIZED' && order.nfeData.nfeStatus !== 'PROCESSING' && order.nfeData.nfeStatus !== 'SUBMITTING' && order.nfeData.nfeStatus !== 'MANUAL_REVIEW')) && (
                 generateNfeActive
                   ? <button style={{opacity:0.5,cursor:'not-allowed'}} disabled title="Desabilitado porque a automação 'Gerar nota fiscal' está ativada">Gerar nota</button>
                   : <button onClick={() => onGerarNota(order)}>Gerar nota</button>
@@ -1174,7 +1193,7 @@ function Orders({ orders, ordersLoading, onSelect, updateOrderStatus, createInvo
 
 function Invoices({ orders, onGerarNota, onVerNota, search = '', generateNfeActive = false }) {
   const fiscalHistory = orders.filter((o) => o.nfeData && (!search || o.customer.toLowerCase().includes(search.toLowerCase())))
-  const readyToEmit = orders.filter((o) => !o.isDeleted && o.status === 'Pronto' && o.nfeData?.nfeStatus !== 'AUTHORIZED' && (!search || o.customer.toLowerCase().includes(search.toLowerCase())))
+  const readyToEmit = orders.filter((o) => !o.isDeleted && o.status === 'Pronto' && (!o.nfeData || (o.nfeData.nfeStatus !== 'AUTHORIZED' && o.nfeData.nfeStatus !== 'PROCESSING' && o.nfeData.nfeStatus !== 'SUBMITTING' && o.nfeData.nfeStatus !== 'MANUAL_REVIEW')) && (!search || o.customer.toLowerCase().includes(search.toLowerCase())))
 
   const [printOrder, setPrintOrder] = useState(null)
 
@@ -1200,7 +1219,7 @@ function Invoices({ orders, onGerarNota, onVerNota, search = '', generateNfeActi
                 <span>{o.customer}</span>
                 <strong>{money(o.value)}</strong>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <Status status={o.nfeData.nfeStatus === 'AUTHORIZED' ? 'Emitida' : 'Erro'} />
+                  <Status status={o.nfeData.nfeStatus === 'AUTHORIZED' ? 'Emitida' : (o.nfeData.nfeStatus === 'PROCESSING' || o.nfeData.nfeStatus === 'SUBMITTING') ? 'Processando' : 'Erro'} />
                   <button onClick={() => onVerNota(o)}>Ver nota</button>
                   {o.nfeData.nfeStatus === 'AUTHORIZED' && (
                     <button className="printDanfeBtn" onClick={() => setPrintOrder(o)} title="Imprimir DANFE">
@@ -4896,6 +4915,9 @@ function AutomationNfeAdjustModal({ onClose, onActivate, isActive, notify }) {
     nfeNotifyOnError: false,
     nfeNotifySellerId: null,
     nfePrintDanfeAuto: false,
+    timeIntervalMinutes: 5,
+    timeStart: '07:00',
+    timeEnd: '22:00',
   })
   const [savedConfig, setSavedConfig] = useState(null)
 
@@ -4913,11 +4935,14 @@ function AutomationNfeAdjustModal({ onClose, onActivate, isActive, notify }) {
             nfeNotifyOnError: !!cfgRes.config.nfeNotifyOnError,
             nfeNotifySellerId: cfgRes.config.nfeNotifySellerId ?? null,
             nfePrintDanfeAuto: !!cfgRes.config.nfePrintDanfeAuto,
+            timeIntervalMinutes: cfgRes.config.timeIntervalMinutes ?? 5,
+            timeStart: cfgRes.config.timeStart ?? '07:00',
+            timeEnd: cfgRes.config.timeEnd ?? '22:00',
           }
           setConfig(loaded)
           setSavedConfig(loaded)
         } else {
-          const def = { nfeNotifyOnError: false, nfeNotifySellerId: null, nfePrintDanfeAuto: false }
+          const def = { nfeNotifyOnError: false, nfeNotifySellerId: null, nfePrintDanfeAuto: false, timeIntervalMinutes: 5, timeStart: '07:00', timeEnd: '22:00' }
           setSavedConfig(def)
         }
       } catch { /* ignore */ }
@@ -5026,6 +5051,26 @@ function AutomationNfeAdjustModal({ onClose, onActivate, isActive, notify }) {
                   <small>Ao ser autorizada pelo SEFAZ, o DANFE da nota fiscal será enviado automaticamente para a impressora padrão do sistema</small>
                 </div>
               </label>
+            </div>
+
+            {/* Período de execução */}
+            <div className="autoAdjustSection">
+              <div className="autoAdjustSectionTitle"><Clock3 size={15} /> Período de execução</div>
+              <div className="autoAdjustRow">
+                <label>
+                  <span>Intervalo (minutos)</span>
+                  <input type="number" min={1} max={1440} value={config.timeIntervalMinutes}
+                    onChange={(e) => setC('timeIntervalMinutes', Math.max(1, Number(e.target.value)))} />
+                </label>
+                <label>
+                  <span>Início</span>
+                  <TimePickerInput value={config.timeStart} onChange={(v) => setC('timeStart', v)} dropUp />
+                </label>
+                <label>
+                  <span>Fim</span>
+                  <TimePickerInput value={config.timeEnd} onChange={(v) => setC('timeEnd', v)} dropUp />
+                </label>
+              </div>
             </div>
 
           </div>
@@ -5179,7 +5224,7 @@ function DateTimePicker({ value, onChange, placeholder = 'Selecionar data e hora
   )
 }
 
-function TimePickerInput({ value = '08:00', onChange }) {
+function TimePickerInput({ value = '08:00', onChange, dropUp = false }) {
   const [open, setOpen] = useState(false)
   const ref = useRef(null)
   const parts = (value || '08:00').split(':')
@@ -5206,7 +5251,7 @@ function TimePickerInput({ value = '08:00', onChange }) {
         <ChevronDown size={14} style={{ marginLeft: 'auto', flexShrink: 0, transform: open ? 'rotate(180deg)' : 'none', transition: 'transform .2s' }} />
       </button>
       {open && (
-        <div className="dtpDropdown tpDropdown">
+        <div className="dtpDropdown tpDropdown" style={dropUp ? { top: 'auto', bottom: 'calc(100% + 6px)' } : undefined}>
           <p className="tpLabel">Selecionar horário</p>
           <div className="tpWheels">
             <div className="tpWheel">
@@ -7444,7 +7489,9 @@ function VerNotaModal({ order, onClose, onSendToClient, onGerarNota, updateOrder
             <Status status={
               (nfeDetails && nfeDetails.statusSefaz && nfeDetails.statusSefaz !== '100')
                 ? 'Erro na nota'
-                : nfe?.nfeStatus === 'AUTHORIZED' ? 'Nota emitida' : 'Erro na nota'
+                : nfe?.nfeStatus === 'AUTHORIZED' ? 'Nota emitida'
+                : (nfe?.nfeStatus === 'PROCESSING' || nfe?.nfeStatus === 'SUBMITTING') ? 'Processando'
+                : 'Erro na nota'
             } />
             {nfe?.number && <small className="verNotaNum">NF-e nº {nfe.number}</small>}
           </div>
@@ -7547,14 +7594,14 @@ function VerNotaModal({ order, onClose, onSendToClient, onGerarNota, updateOrder
           </div>
         ) : nfe ? (
           <>
-            {nfe.nfeStatus !== 'AUTHORIZED' && (
+            {nfe.nfeStatus !== 'AUTHORIZED' && nfe.nfeStatus !== 'PROCESSING' && nfe.nfeStatus !== 'SUBMITTING' && (
               <div className="verNotaErrorBox">
                 <div className="verNotaErrorTitle"><AlertTriangle size={17} /> Erro na emissão da nota fiscal</div>
                 {nfe.errorCode && <span className="verNotaErrorCode">Código: {nfe.errorCode}</span>}
                 <p className="verNotaErrorMsg">{nfe.errorMessage || 'Ocorreu um erro ao emitir esta nota fiscal. Verifique os dados e tente gerar uma nova nota.'}</p>
               </div>
             )}
-            {nfe.nfeStatus !== 'AUTHORIZED' && onGerarNota && (
+            {nfe.nfeStatus !== 'AUTHORIZED' && nfe.nfeStatus !== 'PROCESSING' && nfe.nfeStatus !== 'SUBMITTING' && onGerarNota && (
               <button className="verNotaGerarBtn" onClick={() => onGerarNota(order)}>
                 <ReceiptText size={17} /> Gerar nova nota
               </button>
