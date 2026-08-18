@@ -630,6 +630,18 @@ function App() {
     }
 
     if (status === 'Pronto') {
+      const linkedDelivery = deliveriesState.find((d) => d.orderIds?.includes(id))
+      if (linkedDelivery) {
+        const updatedOrders = orders.map((item) => item.id === id ? { ...item, status } : item)
+        const allReady = linkedDelivery.orderIds.every((oid) => {
+          const o = updatedOrders.find((x) => x.id === oid)
+          return o && ['Pronto', 'Rota', 'Em rota', 'Entregue'].includes(o.status)
+        })
+        if (allReady) {
+          setDeliveriesState((prev) => prev.map((d) => d.id === linkedDelivery.id ? { ...d, status: 'Carregando', progress: 25 } : d))
+          setSelectedDelivery((d) => d?.id === linkedDelivery.id ? { ...d, status: 'Carregando', progress: 25 } : d)
+        }
+      }
       addNotif('notifDeliveries', { icon: CheckCircle2, title: 'Pedidos prontos para rota', text: `Os pedidos foram confirmados como prontos. Nota fiscal gerada com sucesso.` })
     }
 

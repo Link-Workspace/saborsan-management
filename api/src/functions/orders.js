@@ -141,6 +141,30 @@ app.http('orders', {
               )
             `;
           }
+
+          if (status === 'Pronto') {
+            const deliveryResult = await sql.query`
+              SELECT d.id FROM Deliveries d
+              INNER JOIN DeliveryOrders dor ON dor.delivery_id = d.id
+              WHERE dor.order_id = ${orderId}
+                AND d.status NOT IN (N'Cancelada', N'Concluída', N'Em rota')
+            `;
+            for (const delivery of deliveryResult.recordset) {
+              const pending = await sql.query`
+                SELECT COUNT(*) AS cnt FROM DeliveryOrders dor
+                INNER JOIN GestaoOrders o ON o.id = dor.order_id
+                WHERE dor.delivery_id = ${delivery.id}
+                  AND o.status NOT IN (N'Pronto', N'Rota', N'Em rota', N'Entregue')
+                  AND o.deletedAt IS NULL
+              `;
+              if (pending.recordset[0].cnt === 0) {
+                await sql.query`
+                  UPDATE Deliveries SET status = N'Carregando', updated_at = GETUTCDATE()
+                  WHERE id = ${delivery.id}
+                `;
+              }
+            }
+          }
         }
 
         if (sentToClient) {

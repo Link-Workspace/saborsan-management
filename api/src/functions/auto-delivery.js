@@ -1,5 +1,17 @@
 const { app } = require('@azure/functions');
 const sql = require('mssql');
+const { initializeApp: initFirebase, cert, getApps } = require('firebase-admin/app');
+const { getMessaging } = require('firebase-admin/messaging');
+
+if (!getApps().length) {
+  initFirebase({
+    credential: cert({
+      projectId: process.env.FIREBASE_PROJECT_ID,
+      clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+      privateKey: (process.env.FIREBASE_PRIVATE_KEY || '').replace(/\\n/g, '\n'),
+    }),
+  });
+}
 
 const sqlConfig = {
   server: process.env.SQL_SERVER,
@@ -131,6 +143,285 @@ function getFarthestCity(refCity, cities) {
   return farthest || cities[0];
 }
 
+async function notifySellerAboutDelivery(sellerId, orderIds, deliveryCode, context) {
+  if (!sellerId || !orderIds.length) return;
+  try {
+    const sellerRow = await sql.query`SELECT userId FROM Sellers WHERE id = ${sellerId}`;
+    if (!sellerRow.recordset.length) {
+      context?.log(`[auto-delivery] notificação ignorada: vendedor ${sellerId} não encontrado`);
+      return;
+    }
+    const { userId } = sellerRow.recordset[0];
+
+    const tokensResult = await sql.query`SELECT token FROM PushTokens WHERE userId = ${userId}`;
+    const tokens = tokensResult.recordset.map((r) => r.token).filter(Boolean);
+    if (!tokens.length) {
+      context?.log(`[auto-delivery] notificação ignorada: nenhum token FCM para userId ${userId}`);
+      return;
+    }
+
+    const separacaoOrders = [];
+    for (const orderId of orderIds) {
+      const r = await sql.query`SELECT id, clientName FROM GestaoOrders WHERE id = ${orderId} AND status = N'Separação'`;
+      if (r.recordset.length) separacaoOrders.push(r.recordset[0]);
+    }
+    if (!separacaoOrders.length) {
+      context?.log(`[auto-delivery] notificação ignorada: nenhum pedido em Separação para os ids ${orderIds}`);
+      return;
+    }
+
+    const messaging = getMessaging();
+    for (const order of separacaoOrders) {
+      const msgTitle = `Pedido ${order.id} em separação`;
+      const msgBody = `Confirme quando o pedido de ${order.clientName} (entrega ${deliveryCode}) estiver pronto para entrar em rota.`;
+      for (const token of tokens) {
+        try {
+          await messaging.send({
+            token,
+            notification: { title: msgTitle, body: msgBody },
+            data: { type: 'order_ready_check', orderId: String(order.id), deliveryCode: String(deliveryCode), sellerId: String(sellerId) },
+            android: { priority: 'high' },
+            apns: { payload: { aps: { sound: 'default' } } },
+          });
+          context?.log(`[auto-delivery] order_ready_check enviado: pedido ${order.id}, entrega ${deliveryCode}, token ...${token.slice(-6)}`);
+        } catch (err) {
+          if (err.code === 'messaging/invalid-registration-token' || err.code === 'messaging/registration-token-not-registered') {
+            await sql.query`DELETE FROM PushTokens WHERE token = ${token}`;
+            context?.log(`[auto-delivery] token inválido removido: ...${token.slice(-6)}`);
+          } else {
+            context?.error(`[auto-delivery] erro ao enviar FCM para token ...${token.slice(-6)}:`, err);
+          }
+        }
+      }
+    }
+  } catch (err) {
+    context?.error('Erro ao notificar vendedor (auto-delivery):', err);
+  }
+}
+
+// Core automation logic — shared between HTTP trigger and timer trigger
+async function runAutoDelivery(context) {
+  await sql.connect(sqlConfig);
+
+  const cfgResult = await sql.query`
+    SELECT is_active, min_orders, max_orders, max_cities, include_route_cities,
+           time_interval_minutes, time_start, time_end
+    FROM AutomationConfig WHERE automation_key = 'receive_orders'
+  `.catch(() => ({ recordset: [] }));
+
+  if (!cfgResult.recordset.length || !cfgResult.recordset[0].is_active) {
+    return { skipped: true, reason: 'Automação não está ativa.' };
+  }
+
+  const cfg = cfgResult.recordset[0];
+  const minOrders = cfg.min_orders || 1;
+  const maxOrders = cfg.max_orders || 10;
+  const maxCities = cfg.max_cities || 5;
+  const includeRouteCities = !!cfg.include_route_cities;
+
+  // Check time window
+  const now = new Date();
+  const nowUTC3 = new Date(now.getTime() - 3 * 60 * 60 * 1000); // approximate BRT
+  const currentTime = `${String(nowUTC3.getHours()).padStart(2, '0')}:${String(nowUTC3.getMinutes()).padStart(2, '0')}`;
+  if (cfg.time_start && cfg.time_end) {
+    if (currentTime < cfg.time_start || currentTime > cfg.time_end) {
+      return { skipped: true, reason: 'Fora do horário configurado.' };
+    }
+  }
+
+  // Load seller bindings
+  const bindingsResult = await sql.query`
+    SELECT seller_id, binding_type, binding_value
+    FROM AutomationSellerBindings
+    WHERE automation_key = 'receive_orders'
+  `.catch(() => ({ recordset: [] }));
+  const bindings = bindingsResult.recordset;
+
+  // Load pending orders with status 'Recebido'
+  const ordersResult = await sql.query`
+    SELECT o.id, o.clientName, o.clientCity, o.totalValue
+    FROM GestaoOrders o
+    WHERE o.status = N'Recebido'
+      AND (o.deletedAt IS NULL)
+      AND NOT EXISTS (
+        SELECT 1 FROM DeliveryOrders dor
+        INNER JOIN Deliveries d ON dor.delivery_id = d.id
+        WHERE dor.order_id = o.id AND d.status NOT IN (N'Cancelada', N'Concluída')
+      )
+    ORDER BY o.createdAt ASC
+  `;
+
+  const pendingOrders = ordersResult.recordset;
+  if (pendingOrders.length < minOrders) {
+    return { skipped: true, reason: `Pedidos pendentes (${pendingOrders.length}) abaixo do mínimo configurado (${minOrders}).` };
+  }
+
+  // Find available sellers (active, no active delivery)
+  const availableSellersResult = await sql.query`
+    SELECT s.id, u.name, s.city AS sellerCity
+    FROM Sellers s
+    INNER JOIN Users u ON s.userId = u.id
+    WHERE s.isActive = 1
+      AND NOT EXISTS (
+        SELECT 1 FROM Deliveries d
+        WHERE d.seller_id = s.id AND d.status NOT IN (N'Cancelada', N'Concluída')
+      )
+    ORDER BY u.name ASC
+  `;
+  const availableSellers = availableSellersResult.recordset;
+
+  if (!availableSellers.length) {
+    return { skipped: true, reason: 'Nenhum vendedor disponível no momento.' };
+  }
+
+  // Find available vehicles (not in active delivery)
+  const vehiclesResult = await sql.query`
+    SELECT v.id, v.name
+    FROM Vehicles v
+    WHERE NOT EXISTS (
+      SELECT 1 FROM Deliveries d
+      WHERE d.cold_chamber_number = v.id AND d.status NOT IN (N'Cancelada', N'Concluída')
+    )
+    ORDER BY v.id ASC
+  `.catch(() => ({ recordset: [] }));
+
+  let vehicleId = null;
+  let vehicleName = 'Câmara fria 01';
+  if (vehiclesResult.recordset.length) {
+    vehicleId = vehiclesResult.recordset[0].id;
+    vehicleName = vehiclesResult.recordset[0].name;
+  } else {
+    for (let i = 1; i <= 10; i++) {
+      const check = await sql.query`
+        SELECT 1 FROM Deliveries WHERE cold_chamber_number = ${i} AND status NOT IN (N'Cancelada', N'Concluída')
+      `;
+      if (!check.recordset.length) { vehicleId = i; vehicleName = `Câmara fria ${String(i).padStart(2, '0')}`; break; }
+    }
+  }
+
+  if (!vehicleId) {
+    return { skipped: true, reason: 'Nenhum veículo disponível no momento.' };
+  }
+
+  // Select orders up to maxOrders
+  const selectedOrders = pendingOrders.slice(0, maxOrders);
+
+  // Determine cities from selected orders
+  const orderCities = [...new Set(selectedOrders.map((o) => normalizeCity(o.clientCity)).filter(Boolean))];
+
+  // Count city occurrences to find dominant city for seller binding
+  const cityCounts = {};
+  for (const city of selectedOrders.map((o) => normalizeCity(o.clientCity))) {
+    if (city) cityCounts[city] = (cityCounts[city] || 0) + 1;
+  }
+  const dominantCity = Object.keys(cityCounts).sort((a, b) => cityCounts[b] - cityCounts[a])[0] || '';
+
+  // Determine seller using bindings
+  let chosenSeller = null;
+
+  // Check city bindings first
+  for (const seller of availableSellers) {
+    const cityBinding = bindings.find(
+      (b) => b.binding_type === 'city' && b.seller_id === seller.id &&
+             normalizeCity(b.binding_value) === dominantCity
+    );
+    if (cityBinding) { chosenSeller = seller; break; }
+  }
+
+  // Check client bindings if no city match
+  if (!chosenSeller) {
+    for (const seller of availableSellers) {
+      for (const order of selectedOrders) {
+        const clientBinding = bindings.find(
+          (b) => b.binding_type === 'client' && b.seller_id === seller.id &&
+                 b.binding_value.toLowerCase() === (order.clientName || '').toLowerCase()
+        );
+        if (clientBinding) { chosenSeller = seller; break; }
+      }
+      if (chosenSeller) break;
+    }
+  }
+
+  // Fallback to first available seller
+  if (!chosenSeller) chosenSeller = availableSellers[0];
+
+  // Build route cities
+  let routeCities = orderCities.slice(0, maxCities);
+
+  if (includeRouteCities && routeCities.length > 0) {
+    const originCity = normalizeCity(chosenSeller.sellerCity) || routeCities[0];
+    const farthest = getFarthestCity(originCity, routeCities);
+    if (farthest) {
+      const citiesOnRoute = getCitiesOnRoute(originCity, farthest);
+      for (const city of citiesOnRoute) {
+        if (!routeCities.includes(city) && routeCities.length < maxCities) {
+          routeCities.push(city);
+        }
+      }
+    }
+  }
+
+  const route = routeCities.join(' → ') || selectedOrders.map((o) => normalizeCity(o.clientCity)).filter(Boolean).join(' → ') || 'Rota automática';
+
+  // Generate delivery code
+  const codeResult = await sql.query`
+    SELECT MAX(TRY_CAST(SUBSTRING(code, 3, LEN(code)) AS INT)) AS maxNum
+    FROM Deliveries WHERE code LIKE 'R-%'
+  `;
+  const maxNum = codeResult.recordset[0].maxNum || 0;
+  const code = 'R-' + (maxNum + 1);
+
+  // Ensure confirmation_sent column exists
+  await sql.query`
+    IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'Deliveries') AND name = N'confirmation_sent')
+      ALTER TABLE Deliveries ADD confirmation_sent bit NOT NULL DEFAULT 0
+  `.catch(() => {});
+
+  const stopsCount = routeCities.length || selectedOrders.length;
+
+  const insertResult = await sql.query`
+    INSERT INTO Deliveries
+      (code, route, seller_id, status, cold_chamber_number, stops_count, temperature, departure_date, arrival_date, notes, confirmation_sent, updated_at)
+    OUTPUT INSERTED.id
+    VALUES
+      (${code}, ${route}, ${chosenSeller.id}, N'Planejada', ${vehicleId}, ${stopsCount},
+       NULL, NULL, NULL, N'', 1, GETUTCDATE())
+  `;
+  const newDeliveryId = insertResult.recordset[0].id;
+
+  for (const order of selectedOrders) {
+    await sql.query`INSERT INTO DeliveryOrders (delivery_id, order_id) VALUES (${newDeliveryId}, ${order.id})`;
+    await sql.query`UPDATE GestaoOrders SET status = N'Separação', updatedAt = GETUTCDATE() WHERE id = ${order.id} AND status = N'Recebido'`;
+  }
+
+  await notifySellerAboutDelivery(chosenSeller.id, selectedOrders.map((o) => o.id), code, context);
+
+  // Log execution
+  const resultMessage = `Entrega ${code} criada com ${selectedOrders.length} pedido(s) para ${chosenSeller.name} — Rota: ${route}`;
+  await sql.query`
+    IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'AutomationRunLog')
+    CREATE TABLE AutomationRunLog (
+      id INT PRIMARY KEY IDENTITY,
+      automation_key NVARCHAR(100) NOT NULL,
+      result_message NVARCHAR(500),
+      created_at DATETIME DEFAULT GETUTCDATE()
+    )
+  `.catch(() => {});
+  await sql.query`
+    INSERT INTO AutomationRunLog (automation_key, result_message) VALUES ('receive_orders', ${resultMessage})
+  `.catch(() => {});
+
+  return {
+    success: true,
+    deliveryCode: code,
+    sellerId: chosenSeller.id,
+    sellerName: chosenSeller.name,
+    orderCount: selectedOrders.length,
+    route,
+    message: resultMessage,
+  };
+}
+
 app.http('auto-delivery', {
   methods: ['GET', 'POST'],
   authLevel: 'anonymous',
@@ -139,7 +430,6 @@ app.http('auto-delivery', {
       await sql.connect(sqlConfig);
 
       if (request.method === 'GET') {
-        // Return automation status and last execution info
         const cfgResult = await sql.query`
           SELECT is_active, updated_at FROM AutomationConfig WHERE automation_key = 'receive_orders'
         `.catch(() => ({ recordset: [] }));
@@ -159,231 +449,49 @@ app.http('auto-delivery', {
       }
 
       if (request.method === 'POST') {
-        // Load config
-        const cfgResult = await sql.query`
-          SELECT is_active, min_orders, max_orders, max_cities, include_route_cities,
-                 time_interval_minutes, time_start, time_end
-          FROM AutomationConfig WHERE automation_key = 'receive_orders'
-        `.catch(() => ({ recordset: [] }));
-
-        if (!cfgResult.recordset.length || !cfgResult.recordset[0].is_active) {
-          return { jsonBody: { skipped: true, reason: 'Automação não está ativa.' } };
-        }
-
-        const cfg = cfgResult.recordset[0];
-        const minOrders = cfg.min_orders || 1;
-        const maxOrders = cfg.max_orders || 10;
-        const maxCities = cfg.max_cities || 5;
-        const includeRouteCities = !!cfg.include_route_cities;
-
-        // Check time window
-        const now = new Date();
-        const nowUTC3 = new Date(now.getTime() - 3 * 60 * 60 * 1000); // approximate BRT
-        const currentTime = `${String(nowUTC3.getHours()).padStart(2, '0')}:${String(nowUTC3.getMinutes()).padStart(2, '0')}`;
-        if (cfg.time_start && cfg.time_end) {
-          if (currentTime < cfg.time_start || currentTime > cfg.time_end) {
-            return { jsonBody: { skipped: true, reason: 'Fora do horário configurado.' } };
-          }
-        }
-
-        // Load seller bindings
-        const bindingsResult = await sql.query`
-          SELECT seller_id, binding_type, binding_value
-          FROM AutomationSellerBindings
-          WHERE automation_key = 'receive_orders'
-        `.catch(() => ({ recordset: [] }));
-        const bindings = bindingsResult.recordset;
-
-        // Load pending orders with status 'Recebido'
-        const ordersResult = await sql.query`
-          SELECT o.id, o.clientName, o.clientCity, o.totalValue
-          FROM GestaoOrders o
-          WHERE o.status = N'Recebido'
-            AND (o.deletedAt IS NULL)
-            AND NOT EXISTS (
-              SELECT 1 FROM DeliveryOrders dor
-              INNER JOIN Deliveries d ON dor.delivery_id = d.id
-              WHERE dor.order_id = o.id AND d.status NOT IN (N'Cancelada', N'Concluída')
-            )
-          ORDER BY o.createdAt ASC
-        `;
-
-        const pendingOrders = ordersResult.recordset;
-        if (pendingOrders.length < minOrders) {
-          return { jsonBody: { skipped: true, reason: `Pedidos pendentes (${pendingOrders.length}) abaixo do mínimo configurado (${minOrders}).` } };
-        }
-
-        // Find available sellers (active, no active delivery)
-        const availableSellersResult = await sql.query`
-          SELECT s.id, u.name, s.city AS sellerCity
-          FROM Sellers s
-          INNER JOIN Users u ON s.userId = u.id
-          WHERE s.isActive = 1
-            AND NOT EXISTS (
-              SELECT 1 FROM Deliveries d
-              WHERE d.seller_id = s.id AND d.status NOT IN (N'Cancelada', N'Concluída')
-            )
-          ORDER BY u.name ASC
-        `;
-        const availableSellers = availableSellersResult.recordset;
-
-        if (!availableSellers.length) {
-          return { jsonBody: { skipped: true, reason: 'Nenhum vendedor disponível no momento.' } };
-        }
-
-        // Find available vehicles (not in active delivery)
-        const vehiclesResult = await sql.query`
-          SELECT v.id, v.name
-          FROM Vehicles v
-          WHERE NOT EXISTS (
-            SELECT 1 FROM Deliveries d
-            WHERE d.cold_chamber_number = v.id AND d.status NOT IN (N'Cancelada', N'Concluída')
-          )
-          ORDER BY v.id ASC
-        `.catch(() => ({ recordset: [] }));
-
-        // Fallback: find available vehicle by cold_chamber_number matching
-        let vehicleId = null;
-        let vehicleName = 'Câmara fria 01';
-        if (vehiclesResult.recordset.length) {
-          vehicleId = vehiclesResult.recordset[0].id;
-          vehicleName = vehiclesResult.recordset[0].name;
-        } else {
-          // Try to find a free chamber number if no vehicle table entries
-          for (let i = 1; i <= 10; i++) {
-            const check = await sql.query`
-              SELECT 1 FROM Deliveries WHERE cold_chamber_number = ${i} AND status NOT IN (N'Cancelada', N'Concluída')
-            `;
-            if (!check.recordset.length) { vehicleId = i; vehicleName = `Câmara fria ${String(i).padStart(2, '0')}`; break; }
-          }
-        }
-
-        if (!vehicleId) {
-          return { jsonBody: { skipped: true, reason: 'Nenhum veículo disponível no momento.' } };
-        }
-
-        // Select orders up to maxOrders
-        const selectedOrders = pendingOrders.slice(0, maxOrders);
-
-        // Determine cities from selected orders
-        const orderCities = [...new Set(selectedOrders.map((o) => normalizeCity(o.clientCity)).filter(Boolean))];
-
-        // Count city occurrences to find dominant city for seller binding
-        const cityCounts = {};
-        for (const city of selectedOrders.map((o) => normalizeCity(o.clientCity))) {
-          if (city) cityCounts[city] = (cityCounts[city] || 0) + 1;
-        }
-        const dominantCity = Object.keys(cityCounts).sort((a, b) => cityCounts[b] - cityCounts[a])[0] || '';
-
-        // Determine seller using bindings
-        let chosenSeller = null;
-
-        // Check city bindings first
-        for (const seller of availableSellers) {
-          const cityBinding = bindings.find(
-            (b) => b.binding_type === 'city' && b.seller_id === seller.id &&
-                   normalizeCity(b.binding_value) === dominantCity
-          );
-          if (cityBinding) { chosenSeller = seller; break; }
-        }
-
-        // Check client bindings if no city match
-        if (!chosenSeller) {
-          for (const seller of availableSellers) {
-            for (const order of selectedOrders) {
-              const clientBinding = bindings.find(
-                (b) => b.binding_type === 'client' && b.seller_id === seller.id &&
-                       b.binding_value.toLowerCase() === (order.clientName || '').toLowerCase()
-              );
-              if (clientBinding) { chosenSeller = seller; break; }
-            }
-            if (chosenSeller) break;
-          }
-        }
-
-        // Fallback to first available seller
-        if (!chosenSeller) chosenSeller = availableSellers[0];
-
-        // Build route cities
-        let routeCities = orderCities.slice(0, maxCities);
-
-        if (includeRouteCities && routeCities.length > 0) {
-          // Determine origin (seller city or first city)
-          const originCity = normalizeCity(chosenSeller.sellerCity) || routeCities[0];
-          const farthest = getFarthestCity(originCity, routeCities);
-          if (farthest) {
-            const citiesOnRoute = getCitiesOnRoute(originCity, farthest);
-            // Add intermediate cities that are not already in the route
-            for (const city of citiesOnRoute) {
-              if (!routeCities.includes(city) && routeCities.length < maxCities) {
-                routeCities.push(city);
-              }
-            }
-          }
-        }
-
-        const route = routeCities.join(' → ') || selectedOrders.map((o) => normalizeCity(o.clientCity)).filter(Boolean).join(' → ') || 'Rota automática';
-
-        // Generate delivery code
-        const codeResult = await sql.query`
-          SELECT MAX(TRY_CAST(SUBSTRING(code, 3, LEN(code)) AS INT)) AS maxNum
-          FROM Deliveries WHERE code LIKE 'R-%'
-        `;
-        const maxNum = codeResult.recordset[0].maxNum || 0;
-        const code = 'R-' + (maxNum + 1);
-
-        // Ensure confirmation_sent column exists
-        await sql.query`
-          IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'Deliveries') AND name = N'confirmation_sent')
-            ALTER TABLE Deliveries ADD confirmation_sent bit NOT NULL DEFAULT 0
-        `.catch(() => {});
-
-        const stopsCount = routeCities.length || selectedOrders.length;
-
-        const insertResult = await sql.query`
-          INSERT INTO Deliveries
-            (code, route, seller_id, status, cold_chamber_number, stops_count, temperature, departure_date, arrival_date, notes, confirmation_sent, updated_at)
-          OUTPUT INSERTED.id
-          VALUES
-            (${code}, ${route}, ${chosenSeller.id}, N'Planejada', ${vehicleId}, ${stopsCount},
-             NULL, NULL, NULL, N'', 1, GETUTCDATE())
-        `;
-        const newDeliveryId = insertResult.recordset[0].id;
-
-        for (const order of selectedOrders) {
-          await sql.query`INSERT INTO DeliveryOrders (delivery_id, order_id) VALUES (${newDeliveryId}, ${order.id})`;
-        }
-
-        // Log execution
-        const resultMessage = `Entrega ${code} criada com ${selectedOrders.length} pedido(s) para ${chosenSeller.name} — Rota: ${route}`;
-        await sql.query`
-          IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'AutomationRunLog')
-          CREATE TABLE AutomationRunLog (
-            id INT PRIMARY KEY IDENTITY,
-            automation_key NVARCHAR(100) NOT NULL,
-            result_message NVARCHAR(500),
-            created_at DATETIME DEFAULT GETUTCDATE()
-          )
-        `.catch(() => {});
-        await sql.query`
-          INSERT INTO AutomationRunLog (automation_key, result_message) VALUES ('receive_orders', ${resultMessage})
-        `.catch(() => {});
-
-        return {
-          jsonBody: {
-            success: true,
-            deliveryCode: code,
-            sellerId: chosenSeller.id,
-            sellerName: chosenSeller.name,
-            orderCount: selectedOrders.length,
-            route,
-            message: resultMessage,
-          },
-        };
+        const result = await runAutoDelivery(context);
+        return { jsonBody: result };
       }
     } catch (error) {
       context.error('Erro na função auto-delivery:', error);
       return { status: 500, jsonBody: { error: 'Erro interno do servidor' } };
+    }
+  },
+});
+
+// Timer trigger — fires every minute and executes automation when interval has elapsed
+app.timer('autoDeliveryTimer', {
+  schedule: '0 * * * * *',
+  handler: async (myTimer, context) => {
+    try {
+      await sql.connect(sqlConfig);
+
+      const cfgResult = await sql.query`
+        SELECT is_active, time_interval_minutes
+        FROM AutomationConfig WHERE automation_key = 'receive_orders'
+      `.catch(() => ({ recordset: [] }));
+
+      if (!cfgResult.recordset.length || !cfgResult.recordset[0].is_active) return;
+
+      const intervalMinutes = cfgResult.recordset[0].time_interval_minutes || 30;
+
+      // Only run if enough time has passed since the last execution
+      const lastRunResult = await sql.query`
+        SELECT TOP 1 created_at FROM AutomationRunLog
+        WHERE automation_key = 'receive_orders'
+        ORDER BY id DESC
+      `.catch(() => ({ recordset: [] }));
+
+      if (lastRunResult.recordset.length) {
+        const lastRun = new Date(lastRunResult.recordset[0].created_at);
+        const minutesSinceLastRun = (Date.now() - lastRun.getTime()) / 60000;
+        if (minutesSinceLastRun < intervalMinutes) return;
+      }
+
+      const result = await runAutoDelivery(context);
+      context.log('autoDeliveryTimer:', result.message || result.reason || JSON.stringify(result));
+    } catch (error) {
+      context.error('Erro no timer de auto-delivery:', error);
     }
   },
 });
