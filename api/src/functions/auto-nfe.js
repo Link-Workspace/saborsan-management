@@ -692,6 +692,18 @@ async function emitirNfeParaPedido(orderId, context) {
     } catch (_) {}
   }
 
+  // E16a-40: não contribuinte (9) não pode ter operação de revenda (violaria indFinal=0)
+  if (stateRegistrationIndicator === 9 && purchasePurpose === 'revenda') {
+    return {
+      success: false,
+      error:
+        'O destinatário está cadastrado como não contribuinte do ICMS, mas a compra foi ' +
+        'informada como destinada à revenda ou industrialização. Confirme a finalidade da ' +
+        'compra ou verifique se o cliente possui Inscrição Estadual antes de emitir a NF-e.',
+      orderId,
+    };
+  }
+
   const env = process.env.NODE_ENV === 'production' ? 'PRODUCTION' : 'HOMOLOGATION';
   const createRes = await sql.query`
     INSERT INTO GestaoFiscalDocuments (orderId, environment, status) OUTPUT INSERTED.id VALUES (${orderId}, ${env}, 'SUBMITTING')
