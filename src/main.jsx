@@ -59,6 +59,7 @@ import {
   Database,
   ImageOff,
   Printer,
+  AlertCircle,
 } from 'lucide-react'
 import './styles.css'
 
@@ -428,6 +429,7 @@ function App() {
   const [bgImport, setBgImport] = useState(null)
   const [bgImportPanelOpen, setBgImportPanelOpen] = useState(false)
   const [receiveOrdersActive, setReceiveOrdersActive] = useState(false)
+  const [generateNfeActive, setGenerateNfeActive] = useState(false)
 
   const [systemNotifications, setSystemNotifications] = useState([])
   const [notifSettings, setNotifSettings] = useState(() => {
@@ -525,6 +527,12 @@ function App() {
       .then((r) => r.json())
       .then((data) => { setReceiveOrdersActive(!!(data?.config?.isActive)) })
       .catch((err) => { console.error('Falha ao carregar status da automação:', err) })
+  }, [])
+  useEffect(() => {
+    fetch(`${API_URL}/api/automation-config?key=generate_nfe`)
+      .then((r) => r.json())
+      .then((data) => { setGenerateNfeActive(!!(data?.config?.isActive)) })
+      .catch(() => {})
   }, [])
   useEffect(() => { fetchVehicles() }, [])
   useEffect(() => { fetchClients() }, [])
@@ -830,9 +838,9 @@ function App() {
         </section>
 
         {active === 'dashboard' && <Dashboard totals={totals} orders={orders} aiEnabled={aiEnabled} setActive={setActive} />}
-        {active === 'pedidos' && <Orders orders={orders} ordersLoading={ordersLoading} onSelect={setSelectedOrder} updateOrderStatus={updateOrderStatus} createInvoice={createInvoice} onGerarNota={openGerarNota} onNewOrder={() => setNewOrderOpen(true)} onVerNota={setVerNotaOrder} search={topbarSearch} receiveOrdersActive={receiveOrdersActive} />}
+        {active === 'pedidos' && <Orders orders={orders} ordersLoading={ordersLoading} onSelect={setSelectedOrder} updateOrderStatus={updateOrderStatus} createInvoice={createInvoice} onGerarNota={openGerarNota} onNewOrder={() => setNewOrderOpen(true)} onVerNota={setVerNotaOrder} search={topbarSearch} receiveOrdersActive={receiveOrdersActive} generateNfeActive={generateNfeActive} />}
         {active === 'vendedores' && <Sellers search={topbarSearch} addNotif={addNotif} />}
-        {active === 'notas' && <Invoices orders={orders} onGerarNota={openGerarNota} onVerNota={setVerNotaOrder} search={topbarSearch} />}
+        {active === 'notas' && <Invoices orders={orders} onGerarNota={openGerarNota} onVerNota={setVerNotaOrder} search={topbarSearch} generateNfeActive={generateNfeActive} />}
         {active === 'estoque' && <Stock onProduct={setSelectedProduct} refreshKey={stockRefreshKey} search={topbarSearch} addNotif={addNotif} bgImport={bgImport} onStartBgAnalysis={startBackgroundAnalysis} onClearBgImport={() => setBgImport(null)} />}
         {active === 'fornecedores' && <Suppliers onMessage={setSupplierModal} search={topbarSearch} addNotif={addNotif} />}
         {active === 'compras' && <Purchases notify={notify} addNotif={addNotif} />}
@@ -841,7 +849,7 @@ function App() {
         {active === 'pagamentos' && <Payments paymentsData={paymentsState} paymentsLoading={paymentsLoading} onSelectPayment={setSelectedPayment} onNewPayment={() => setNewPaymentOpen(true)} search={topbarSearch} />}
         {active === 'financeiro' && <Finance />}
         {active === 'relatorios' && <Reports />}
-        {active === 'automacao' && <Automation aiEnabled={aiEnabled} setAiEnabled={setAiEnabled} notify={notify} receiveOrdersActive={receiveOrdersActive} setReceiveOrdersActive={setReceiveOrdersActive} />}
+        {active === 'automacao' && <Automation aiEnabled={aiEnabled} setAiEnabled={setAiEnabled} notify={notify} receiveOrdersActive={receiveOrdersActive} setReceiveOrdersActive={setReceiveOrdersActive} generateNfeActive={generateNfeActive} setGenerateNfeActive={setGenerateNfeActive} />}
         {active === 'configuracoes' && <Settings notify={notify} onNotifSettingChange={(key, val) => setNotifSettings((p) => ({ ...p, [key]: val }))} />}
       </main>
 
@@ -1119,7 +1127,7 @@ function Dashboard({ totals, orders, aiEnabled, setActive }) {
   )
 }
 
-function Orders({ orders, ordersLoading, onSelect, updateOrderStatus, createInvoice, onGerarNota, onNewOrder, onVerNota, search = '', receiveOrdersActive = false }) {
+function Orders({ orders, ordersLoading, onSelect, updateOrderStatus, createInvoice, onGerarNota, onNewOrder, onVerNota, search = '', receiveOrdersActive = false, generateNfeActive = false }) {
   const [filter, setFilter] = useState('Todos')
   const activeOrders = orders.filter((o) => !o.isDeleted)
   const removedOrders = orders.filter((o) => o.isDeleted)
@@ -1151,7 +1159,11 @@ function Orders({ orders, ordersLoading, onSelect, updateOrderStatus, createInvo
                   ? <button style={{background:'var(--orange)',color:'#fff',opacity:0.5,cursor:'not-allowed'}} disabled title="Desabilitado porque a automação 'Receber pedidos do app' está ativada">Separar</button>
                   : <button style={{background:'var(--orange)',color:'#fff'}} onClick={() => updateOrderStatus(order.id, 'Separação')}>Separar</button>
               )}
-              {order.status === 'Pronto' && order.nfeData?.nfeStatus !== 'AUTHORIZED' && <button onClick={() => onGerarNota(order)}>Gerar nota</button>}
+              {order.status === 'Pronto' && order.nfeData?.nfeStatus !== 'AUTHORIZED' && (
+                generateNfeActive
+                  ? <button style={{opacity:0.5,cursor:'not-allowed'}} disabled title="Desabilitado porque a automação 'Gerar nota fiscal' está ativada">Gerar nota</button>
+                  : <button onClick={() => onGerarNota(order)}>Gerar nota</button>
+              )}
             </div>
           </article>
         ))}
@@ -1160,7 +1172,7 @@ function Orders({ orders, ordersLoading, onSelect, updateOrderStatus, createInvo
   )
 }
 
-function Invoices({ orders, onGerarNota, onVerNota, search = '' }) {
+function Invoices({ orders, onGerarNota, onVerNota, search = '', generateNfeActive = false }) {
   const fiscalHistory = orders.filter((o) => o.nfeData && (!search || o.customer.toLowerCase().includes(search.toLowerCase())))
   const readyToEmit = orders.filter((o) => !o.isDeleted && o.status === 'Pronto' && o.nfeData?.nfeStatus !== 'AUTHORIZED' && (!search || o.customer.toLowerCase().includes(search.toLowerCase())))
 
@@ -1209,7 +1221,10 @@ function Invoices({ orders, onGerarNota, onVerNota, search = '' }) {
                 <b>{order.id}</b>
                 <span>{order.customer}</span>
                 <strong>{money(order.value)}</strong>
-                <button onClick={() => onGerarNota(order)}>Gerar nota</button>
+                {generateNfeActive
+                  ? <button style={{opacity:0.5,cursor:'not-allowed'}} disabled title="Desabilitado porque a automação 'Gerar nota fiscal' está ativada">Gerar nota</button>
+                  : <button onClick={() => onGerarNota(order)}>Gerar nota</button>
+                }
               </div>
             ))}
           </div>
@@ -4710,21 +4725,43 @@ function AutomationAdjustModal({ onClose, onActivate, isActive, notify }) {
   )
 }
 
-function Automation({ aiEnabled, setAiEnabled, notify, receiveOrdersActive, setReceiveOrdersActive }) {
+function Automation({ aiEnabled, setAiEnabled, notify, receiveOrdersActive, setReceiveOrdersActive, generateNfeActive, setGenerateNfeActive }) {
   const [dialogOpen, setDialogOpen] = useState(false)
   const [adjustOpen, setAdjustOpen] = useState(false)
+  const [nfeDialogOpen, setNfeDialogOpen] = useState(false)
+  const [nfeAdjustOpen, setNfeAdjustOpen] = useState(false)
+  const [nfeFiscalWarning, setNfeFiscalWarning] = useState(false)
 
   const automations = [
     ['Receber pedidos do app', 'Captura solicitações, organiza itens e direciona para separação.', true],
     ['Sugerir reposição de estoque', 'Analisa mínimo, giro e produtos em atenção.', true],
-    ['Gerar nota fiscal demo', 'Prepara dados fiscais do pedido antes da emissão.', true],
+    ['Gerar nota fiscal', 'Emite automaticamente a NF-e dos pedidos prontos e corrige erros com IA.', true],
     ['Otimizar rotas de entrega', 'Agrupa regiões, horários e veículos refrigerados.', true],
     ['Comunicar fornecedores', 'Monta mensagens de cotação e reposição.', false],
     ['Acompanhar clientes parados', 'Identifica clientes que podem receber nova oferta.', true],
   ]
 
-  const handleCardClick = (title) => {
-    if (title === 'Receber pedidos do app') setDialogOpen(true)
+  const handleCardClick = async (title) => {
+    if (title === 'Receber pedidos do app') { setDialogOpen(true); return }
+    if (title === 'Gerar nota fiscal') {
+      // Verifica se todos os produtos têm configuração fiscal completa (ibsCbsCst e ibsCbsClassTrib)
+      try {
+        const [cfgRes, prodsRes] = await Promise.all([
+          fetch(`${API_URL}/api/fiscal-config`).then((r) => r.json()).catch(() => ({ configs: [] })),
+          fetch(`${API_URL}/api/products`).then((r) => r.json()).catch(() => ({ products: [] })),
+        ])
+        const activeProducts = (prodsRes.products || []).filter((p) => p.active !== false)
+        const configs = cfgRes.configs || []
+        const configMap = {}
+        configs.forEach((c) => { configMap[String(c.productId)] = c })
+        const incomplete = activeProducts.filter((p) => {
+          const cfg = configMap[String(p.id)]
+          return !cfg || !cfg.ibsCbsCst || !cfg.ibsCbsClassTrib
+        })
+        if (incomplete.length > 0) { setNfeFiscalWarning(true); return }
+      } catch (_) {}
+      setNfeDialogOpen(true)
+    }
   }
 
   const handleActivateToggle = async () => {
@@ -4744,8 +4781,26 @@ function Automation({ aiEnabled, setAiEnabled, notify, receiveOrdersActive, setR
     setAdjustOpen(false)
   }
 
+  const handleNfeActivateToggle = async () => {
+    const newVal = !generateNfeActive
+    try {
+      const res = await fetch(`${API_URL}/api/automation-config`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: 'generate_nfe', config: { isActive: newVal } }),
+      })
+      if (res.ok) {
+        setGenerateNfeActive(newVal)
+        notify(newVal ? 'Automação "Gerar nota fiscal" ativada.' : 'Automação "Gerar nota fiscal" desativada.')
+      } else { notify('Erro ao alterar status da automação.') }
+    } catch { notify('Erro ao alterar status da automação.') }
+    setNfeDialogOpen(false)
+    setNfeAdjustOpen(false)
+  }
+
   const isCardActive = (title) => {
     if (title === 'Receber pedidos do app') return receiveOrdersActive
+    if (title === 'Gerar nota fiscal') return generateNfeActive
     return aiEnabled
   }
 
@@ -4762,7 +4817,7 @@ function Automation({ aiEnabled, setAiEnabled, notify, receiveOrdersActive, setR
             <article
               key={title}
               className={isCardActive(title) ? 'on' : ''}
-              style={{ cursor: title === 'Receber pedidos do app' ? 'pointer' : undefined }}
+              style={{ cursor: (title === 'Receber pedidos do app' || title === 'Gerar nota fiscal') ? 'pointer' : undefined }}
               onClick={() => handleCardClick(title)}
             >
               <Settings2 size={22} />
@@ -4791,7 +4846,204 @@ function Automation({ aiEnabled, setAiEnabled, notify, receiveOrdersActive, setR
           notify={notify}
         />
       )}
+
+      {nfeFiscalWarning && (
+        <div className="nfOverlay" onClick={(e) => e.target.classList.contains('nfOverlay') && setNfeFiscalWarning(false)}>
+          <div className="autoActionDialog">
+            <button className="nfClose" onClick={() => setNfeFiscalWarning(false)}><X size={16} /></button>
+            <div className="autoActionIcon" style={{ background: 'var(--orange-light, #fff3e0)', color: 'var(--orange, #f57c00)' }}><AlertCircle size={28} /></div>
+            <h3>Configuração fiscal incompleta</h3>
+            <p style={{ textAlign: 'center', color: 'var(--muted)', fontSize: '.92rem', lineHeight: 1.5 }}>
+              Para ativar esta automação, todos os produtos devem estar com os campos <strong>CST IBS/CBS</strong> e <strong>Classificação Tributária (cClassTrib)</strong> devidamente preenchidos.
+              <br /><br />
+              Acesse <strong>Configurações → Fiscal e NCM</strong> para configurar os produtos pendentes.
+            </p>
+            <div className="autoActionButtons">
+              <button className="autoActionBtnActivate" onClick={() => setNfeFiscalWarning(false)}>Entendido</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {nfeDialogOpen && (
+        <AutomationActionDialog
+          automation="Gerar nota fiscal"
+          isActive={generateNfeActive}
+          onClose={() => setNfeDialogOpen(false)}
+          onActivate={handleNfeActivateToggle}
+          onAdjust={() => { setNfeDialogOpen(false); setNfeAdjustOpen(true) }}
+        />
+      )}
+
+      {nfeAdjustOpen && (
+        <AutomationNfeAdjustModal
+          isActive={generateNfeActive}
+          onClose={() => setNfeAdjustOpen(false)}
+          onActivate={handleNfeActivateToggle}
+          notify={notify}
+        />
+      )}
     </>
+  )
+}
+
+function AutomationNfeAdjustModal({ onClose, onActivate, isActive, notify }) {
+  const [sellers, setSellers] = useState([])
+  const [saving, setSaving] = useState(false)
+  const [activating, setActivating] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [config, setConfig] = useState({
+    nfeNotifyOnError: false,
+    nfeNotifySellerId: null,
+    nfePrintDanfeAuto: false,
+  })
+  const [savedConfig, setSavedConfig] = useState(null)
+
+  useEffect(() => {
+    const fetchAll = async () => {
+      setLoading(true)
+      try {
+        const [sellersRes, cfgRes] = await Promise.all([
+          fetch(`${API_URL}/api/sellers`).then((r) => r.json()).catch(() => ({ sellers: [] })),
+          fetch(`${API_URL}/api/automation-config?key=generate_nfe`).then((r) => r.json()).catch(() => null),
+        ])
+        if (sellersRes.sellers) setSellers(sellersRes.sellers.filter((s) => s.status === 'Ativo'))
+        if (cfgRes?.config) {
+          const loaded = {
+            nfeNotifyOnError: !!cfgRes.config.nfeNotifyOnError,
+            nfeNotifySellerId: cfgRes.config.nfeNotifySellerId ?? null,
+            nfePrintDanfeAuto: !!cfgRes.config.nfePrintDanfeAuto,
+          }
+          setConfig(loaded)
+          setSavedConfig(loaded)
+        } else {
+          const def = { nfeNotifyOnError: false, nfeNotifySellerId: null, nfePrintDanfeAuto: false }
+          setSavedConfig(def)
+        }
+      } catch { /* ignore */ }
+      finally { setLoading(false) }
+    }
+    fetchAll()
+  }, [])
+
+  const setC = (k, v) => setConfig((p) => ({ ...p, [k]: v }))
+
+  const isDirty = savedConfig !== null && JSON.stringify(config) !== JSON.stringify(savedConfig)
+
+  const handleSave = async (silent = false) => {
+    setSaving(true)
+    try {
+      const res = await fetch(`${API_URL}/api/automation-config`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: 'generate_nfe', config }),
+      })
+      if (res.ok) {
+        if (!silent) notify('Configurações salvas com sucesso.')
+        setSavedConfig(config)
+      } else if (!silent) notify('Erro ao salvar configurações.')
+      return res.ok
+    } catch {
+      if (!silent) notify('Erro ao salvar configurações.')
+      return false
+    } finally { setSaving(false) }
+  }
+
+  const handleActivate = async () => {
+    setActivating(true)
+    try {
+      const saved = await handleSave(true)
+      if (saved) await onActivate()
+      else notify('Erro ao salvar configurações.')
+    } finally { setActivating(false) }
+  }
+
+  return (
+    <div className="nfOverlay" onClick={(e) => e.target.classList.contains('nfOverlay') && onClose()}>
+      <div className="autoAdjustModal">
+        <div className="autoAdjustHeader">
+          <div className="autoAdjustHeaderInfo">
+            <div>
+              <span>Automação</span>
+              <h2>Gerar nota fiscal</h2>
+              <p>Configure como esta automação deve funcionar</p>
+            </div>
+          </div>
+          <button className="nfClose" style={{ position: 'static' }} onClick={onClose}><X size={16} /></button>
+        </div>
+
+        {loading ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '32px 28px', color: 'var(--muted)', fontWeight: 700 }}>
+            <Loader2 size={18} className="verNotaDetailsSpinner" /> Carregando configurações...
+          </div>
+        ) : (
+          <div className="autoAdjustBody">
+
+            {/* Tratamento de erros */}
+            <div className="autoAdjustSection">
+              <div className="autoAdjustSectionTitle"><AlertCircle size={15} /> Tratamento de erros na emissão</div>
+              <p style={{ fontSize: '.83rem', color: 'var(--muted)', fontWeight: 600, margin: '0 0 14px' }}>
+                Quando ocorrer um erro na verificação ou geração da nota fiscal de algum produto
+              </p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <label className="autoAdjustCheckRow" style={{ cursor: 'pointer' }} onClick={() => setC('nfeNotifyOnError', false)}>
+                  <input type="radio" readOnly checked={!config.nfeNotifyOnError} style={{ accentColor: 'var(--primary)', width: 16, height: 16 }} />
+                  <div>
+                    <span>IA analisa e corrige automaticamente</span>
+                    <small>A inteligência artificial tentará identificar e resolver o erro com base no catálogo de rejeições do SEFAZ e reemitirá a nota quando possível</small>
+                  </div>
+                </label>
+                <label className="autoAdjustCheckRow" style={{ cursor: 'pointer' }} onClick={() => setC('nfeNotifyOnError', true)}>
+                  <input type="radio" readOnly checked={config.nfeNotifyOnError} style={{ accentColor: 'var(--primary)', width: 16, height: 16 }} />
+                  <div>
+                    <span>Notificar funcionário para análise</span>
+                    <small>Um funcionário receberá uma notificação no app para verificar e corrigir manualmente o erro</small>
+                  </div>
+                </label>
+              </div>
+
+              {config.nfeNotifyOnError && (
+                <div style={{ marginTop: 14 }}>
+                  <div className="autoAdjustSectionTitle" style={{ marginBottom: 8 }}><UserRound size={14} /> Funcionário a notificar</div>
+                  <CustomSelect
+                    value={config.nfeNotifySellerId ? String(config.nfeNotifySellerId) : ''}
+                    onChange={(v) => setC('nfeNotifySellerId', v ? Number(v) : null)}
+                    placeholder="Selecionar funcionário"
+                    options={sellers.map((s) => ({ value: String(s.id), label: s.name }))}
+                  />
+                </div>
+              )}
+            </div>
+
+            {/* Impressão automática do DANFE */}
+            <div className="autoAdjustSection">
+              <div className="autoAdjustSectionTitle"><Printer size={15} /> Impressão do DANFE</div>
+              <label className="autoAdjustCheckRow">
+                <input type="checkbox" checked={config.nfePrintDanfeAuto}
+                  onChange={(e) => setC('nfePrintDanfeAuto', e.target.checked)} />
+                <div>
+                  <span>Imprimir DANFE automaticamente</span>
+                  <small>Ao ser autorizada pelo SEFAZ, o DANFE da nota fiscal será enviado automaticamente para a impressora padrão do sistema</small>
+                </div>
+              </label>
+            </div>
+
+          </div>
+        )}
+
+        <div className="autoAdjustFooter">
+          <button className="autoAdjustSaveBtn" onClick={() => handleSave()} disabled={saving || loading || !isDirty}>
+            {saving ? <><Loader2 size={15} className="verNotaDetailsSpinner" /> Salvando...</> : 'Salvar'}
+          </button>
+          <button className="autoAdjustActivateBtn" onClick={handleActivate} disabled={activating || loading}>
+            {activating
+              ? <><Loader2 size={15} className="verNotaDetailsSpinner" /> {isActive ? 'Desativando...' : 'Ativando...'}</>
+              : isActive ? <><X size={15} /> Desativar automação</> : <><Sparkles size={15} /> Ativar automação</>
+            }
+          </button>
+        </div>
+      </div>
+    </div>
   )
 }
 

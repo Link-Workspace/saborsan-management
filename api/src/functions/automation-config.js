@@ -23,9 +23,25 @@ async function ensureTables() {
       time_interval_minutes INT NOT NULL DEFAULT 30,
       time_start NVARCHAR(5) NULL,
       time_end NVARCHAR(5) NULL,
+      nfe_notify_on_error BIT NOT NULL DEFAULT 0,
+      nfe_notify_seller_id INT NULL,
+      nfe_print_danfe_auto BIT NOT NULL DEFAULT 0,
       created_at DATETIME DEFAULT GETUTCDATE(),
       updated_at DATETIME DEFAULT GETUTCDATE()
     )
+  `;
+  // Migrate existing table: add NF-e columns if missing
+  await sql.query`
+    IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('AutomationConfig') AND name = 'nfe_notify_on_error')
+      ALTER TABLE AutomationConfig ADD nfe_notify_on_error BIT NOT NULL DEFAULT 0
+  `;
+  await sql.query`
+    IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('AutomationConfig') AND name = 'nfe_notify_seller_id')
+      ALTER TABLE AutomationConfig ADD nfe_notify_seller_id INT NULL
+  `;
+  await sql.query`
+    IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('AutomationConfig') AND name = 'nfe_print_danfe_auto')
+      ALTER TABLE AutomationConfig ADD nfe_print_danfe_auto BIT NOT NULL DEFAULT 0
   `;
   await sql.query`
     IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'AutomationSellerBindings')
@@ -54,7 +70,8 @@ app.http('automation-config', {
 
         const cfgResult = await sql.query`
           SELECT is_active, min_orders, max_orders, max_cities, include_route_cities,
-                 time_interval_minutes, time_start, time_end
+                 time_interval_minutes, time_start, time_end,
+                 nfe_notify_on_error, nfe_notify_seller_id, nfe_print_danfe_auto
           FROM AutomationConfig
           WHERE automation_key = ${key}
         `;
@@ -84,6 +101,9 @@ app.http('automation-config', {
               timeIntervalMinutes: row.time_interval_minutes,
               timeStart: row.time_start,
               timeEnd: row.time_end,
+              nfeNotifyOnError: !!row.nfe_notify_on_error,
+              nfeNotifySellerId: row.nfe_notify_seller_id ?? null,
+              nfePrintDanfeAuto: !!row.nfe_print_danfe_auto,
             },
             bindings: bindingsResult.recordset.map((b) => ({
               id: b.id,
@@ -110,11 +130,14 @@ app.http('automation-config', {
         const timeIntervalMinutes = config.timeIntervalMinutes ?? null;
         const timeStart = config.timeStart ?? null;
         const timeEnd = config.timeEnd ?? null;
+        const nfeNotifyOnError = config.nfeNotifyOnError !== undefined ? (config.nfeNotifyOnError ? 1 : 0) : null;
+        const nfeNotifySellerId = config.nfeNotifySellerId !== undefined ? (config.nfeNotifySellerId ?? null) : null;
+        const nfePrintDanfeAuto = config.nfePrintDanfeAuto !== undefined ? (config.nfePrintDanfeAuto ? 1 : 0) : null;
 
         if (!existing.recordset.length) {
           await sql.query`
             INSERT INTO AutomationConfig
-              (automation_key, is_active, min_orders, max_orders, max_cities, include_route_cities, time_interval_minutes, time_start, time_end, updated_at)
+              (automation_key, is_active, min_orders, max_orders, max_cities, include_route_cities, time_interval_minutes, time_start, time_end, nfe_notify_on_error, nfe_notify_seller_id, nfe_print_danfe_auto, updated_at)
             VALUES
               (${key},
                ${isActive ?? 0},
@@ -125,6 +148,9 @@ app.http('automation-config', {
                ${timeIntervalMinutes ?? 30},
                ${timeStart ?? '07:00'},
                ${timeEnd ?? '18:00'},
+               ${nfeNotifyOnError ?? 0},
+               ${nfeNotifySellerId ?? null},
+               ${nfePrintDanfeAuto ?? 0},
                GETUTCDATE())
           `;
         } else {
@@ -140,6 +166,9 @@ app.http('automation-config', {
               time_interval_minutes  = ${timeIntervalMinutes !== null ? timeIntervalMinutes : currentRow.time_interval_minutes},
               time_start             = ${timeStart !== null ? timeStart : currentRow.time_start},
               time_end               = ${timeEnd !== null ? timeEnd : currentRow.time_end},
+              nfe_notify_on_error    = ${nfeNotifyOnError !== null ? nfeNotifyOnError : currentRow.nfe_notify_on_error},
+              nfe_notify_seller_id   = ${nfeNotifySellerId !== undefined && config.nfeNotifySellerId !== undefined ? nfeNotifySellerId : currentRow.nfe_notify_seller_id},
+              nfe_print_danfe_auto   = ${nfePrintDanfeAuto !== null ? nfePrintDanfeAuto : currentRow.nfe_print_danfe_auto},
               updated_at             = GETUTCDATE()
             WHERE automation_key = ${key}
           `;
