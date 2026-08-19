@@ -66,11 +66,14 @@ async function notifyDriverAboutOrders(sellerId, orderIds, deliveryCode) {
     if (!sellerRow.recordset.length) return;
     const { userId } = sellerRow.recordset[0];
 
-    // Buscar apenas os pedidos que estão em Separação
+    // Buscar apenas os pedidos que estão em Separação sem NF-e pendente de autorização
     const separacaoOrders = [];
     for (const orderId of orderIds) {
       const check = await sql.query`SELECT id, clientName FROM GestaoOrders WHERE id = ${orderId} AND status = N'Separação'`;
-      if (check.recordset.length) separacaoOrders.push(check.recordset[0]);
+      if (!check.recordset.length) continue;
+      const nfeBlocking = await sql.query`SELECT 1 AS found FROM GestaoFiscalDocuments WHERE orderId = ${orderId} AND status IN ('PROCESSING', 'SUBMITTING', 'MANUAL_REVIEW')`;
+      if (nfeBlocking.recordset.length) continue;
+      separacaoOrders.push(check.recordset[0]);
     }
     if (!separacaoOrders.length) return;
 

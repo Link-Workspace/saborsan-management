@@ -615,7 +615,7 @@ Se não puder corrigir com certeza, defina status_decisao = "REQUER_INTERVENCAO"
 
 // ── Emissão de uma nota fiscal para um pedido ─────────────────────────────────
 
-async function emitirNfeParaPedido(orderId, context) {
+async function emitirNfeParaPedido(orderId, context, { aiFixEnabled = false } = {}) {
   const [orderRes, itemsRes] = await Promise.all([
     sql.query`SELECT id, clientName, clientCnpj, clientCity, clientPhone, status, totalValue, purchasePurpose FROM GestaoOrders WHERE id = ${orderId}`,
     sql.query`SELECT productName, quantity, unit, unitPrice FROM GestaoOrderItems WHERE orderId = ${orderId} ORDER BY id ASC`,
@@ -683,15 +683,22 @@ async function emitirNfeParaPedido(orderId, context) {
   if (cnpjNorm && cnpjNorm.length === 14) {
     try {
       const clientRes = await sql.query`
-        SELECT TOP 1 id, stateRegistrationIndicator, stateRegistration FROM Clients
+        SELECT TOP 1 id, stateRegistrationIndicator, stateRegistration, nextFiscalLookupAt FROM Clients
         WHERE cnpjNormalized = ${cnpjNorm} OR (cnpjNormalized IS NULL AND establishmentName = ${order.clientName})
       `;
       const clientRow = clientRes.recordset[0];
+      const lookupVencido = !clientRow?.nextFiscalLookupAt || new Date(clientRow.nextFiscalLookupAt) <= new Date();
+      context?.log(`[auto-nfe] Cadastro banco CNPJ ${cnpjNorm} (pedido ${orderId}): encontrado=${!!clientRow}, indicador=${clientRow?.stateRegistrationIndicator ?? 'null'}, IE="${clientRow?.stateRegistration ?? 'null'}", lookupVencido=${lookupVencido}`);
       if (clientRow && clientRow.stateRegistrationIndicator !== null) {
         stateRegistrationIndicator = clientRow.stateRegistrationIndicator;
         stateRegistration = clientRow.stateRegistration;
+        context?.log(`[auto-nfe] Usando dados do banco para pedido ${orderId}: indicador=${stateRegistrationIndicator}, IE="${stateRegistration}"`);
+      } else if (!lookupVencido && !aiFixEnabled) {
+        // nextFiscalLookupAt ainda no futuro e IA desabilitada: evita chamada redundante à Focus NFe
+        context?.log(`[auto-nfe] Lookup Focus NF-e pulado (nextFiscalLookupAt não vencido) — pedido ${orderId}`);
       } else {
-        // Dado fiscal nunca carregado: consulta Focus NF-e antes de montar o payload
+        // Dado fiscal nunca carregado ou vencido: consulta Focus NF-e antes de montar o payload
+        context?.log(`[auto-nfe] Iniciando lookup proativo Focus NF-e /v2/cnpjs/${cnpjNorm} — pedido ${orderId}...`);
         try {
           const focusResp = await focusRequest(`/v2/cnpjs/${cnpjNorm}`);
           const cityStrFiscal2 = String(order.clientCity || '').trim();
@@ -721,6 +728,25 @@ async function emitirNfeParaPedido(orderId, context) {
           context?.log(`[auto-nfe] Lookup proativo Focus NF-e para pedido ${orderId}: indicador ${stateRegistrationIndicator}${stateRegistration ? `, IE ${stateRegistration}` : ''}`);
         } catch (focusErr) {
           context?.warn?.(`[auto-nfe] Falha no lookup proativo Focus NF-e para pedido ${orderId}: ${focusErr.message}`);
+          if (clientRow?.id) {
+            const agora = new Date();
+            const proxima15Dias = new Date(agora.getTime() + 15 * 24 * 60 * 60 * 1000);
+            const proximaDia = new Date(agora.getTime() + 24 * 60 * 60 * 1000);
+            const is404 = focusErr.httpStatus === 404;
+            const is400 = focusErr.httpStatus === 400;
+            const errMsg = is404
+              ? 'CNPJ not found in the Federal Revenue database'
+              : String(focusErr.message || 'Erro na consulta CNPJ').slice(0, 490);
+            await sql.query`
+              UPDATE Clients SET
+                lastFiscalLookupAt    = ${agora},
+                nextFiscalLookupAt    = ${is404 || is400 ? proxima15Dias : proximaDia},
+                fiscalLookupSource    = 'FOCUS_NFE',
+                lastFiscalLookupError = ${errMsg},
+                requiresFiscalReview  = ${is404 || is400 ? 1 : 0}
+              WHERE id = ${clientRow.id}
+            `.catch(() => {});
+          }
         }
       }
     } catch (_) {}
@@ -738,6 +764,8 @@ async function emitirNfeParaPedido(orderId, context) {
     };
   }
 
+  context?.log(`[auto-nfe] Pré-submissão pedido ${orderId}: stateRegistrationIndicator=${stateRegistrationIndicator}, stateRegistration="${stateRegistration}", purchasePurpose="${purchasePurpose}"`);
+
   const env = process.env.NODE_ENV === 'production' ? 'PRODUCTION' : 'HOMOLOGATION';
   const createRes = await sql.query`
     INSERT INTO GestaoFiscalDocuments (orderId, environment, status) OUTPUT INSERTED.id VALUES (${orderId}, ${env}, 'SUBMITTING')
@@ -746,15 +774,21 @@ async function emitirNfeParaPedido(orderId, context) {
   const reference = createNfeReference(docId);
   const payload = buildNfePayload(order, items, { stateRegistrationIndicator, stateRegistration, purchasePurpose, fiscalConfigs, codigosBenef });
 
+  context?.log(`[auto-nfe] Payload montado para pedido ${orderId} — ref="${reference}", docId=${docId}, indicador_ie=${payload.indicador_inscricao_estadual_destinatario}, consumidor_final=${payload.consumidor_final}`);
+
   await sql.query`
     UPDATE GestaoFiscalDocuments SET focusReference = ${reference}, requestPayload = ${JSON.stringify(payload)}, issuedAt = GETUTCDATE(), updatedAt = GETUTCDATE() WHERE id = ${docId}
   `;
 
   try {
+    context?.log(`[auto-nfe] Enviando NF-e à Focus NF-e (POST /v2/nfe?ref=${reference}) — pedido ${orderId}...`);
     const focusRes = await focusRequest(`/v2/nfe?ref=${encodeURIComponent(reference)}`, { method: 'POST', body: payload });
+    context?.log(`[auto-nfe] Resposta Focus NF-e (submissão inicial) pedido ${orderId}: ${JSON.stringify(focusRes.data)}`);
     const mapped = mapFocusStatus(focusRes.data);
+    context?.log(`[auto-nfe] Status mapeado pedido ${orderId}: ${mapped.status}`);
 
     if (mapped.status === 'AUTHORIZED') {
+      context?.log(`[auto-nfe] ✔ NF-e AUTORIZADA (submissão inicial) — pedido ${orderId}, chave ${mapped.accessKey}, protocolo ${mapped.protocol}`);
       await sql.query`
         UPDATE GestaoFiscalDocuments SET status = 'AUTHORIZED', nfeNumber = ${mapped.number || null}, nfeSeries = ${mapped.series || null},
         accessKey = ${mapped.accessKey || null}, protocol = ${mapped.protocol || null}, xmlPath = ${mapped.xmlPath || null},
@@ -766,6 +800,7 @@ async function emitirNfeParaPedido(orderId, context) {
       return { success: true, orderId, reference, authorized: true };
     }
 
+    context?.log(`[auto-nfe] NF-e em processamento (SEFAZ) — pedido ${orderId}`);
     await sql.query`UPDATE GestaoFiscalDocuments SET status = 'PROCESSING', responsePayload = ${JSON.stringify(focusRes.data)}, updatedAt = GETUTCDATE() WHERE id = ${docId}`;
     return { success: false, error: 'NF-e em processamento', orderId, reference, docId, processing: true, payload, order, items, fiscalConfigs };
   } catch (focusErr) {
@@ -779,6 +814,9 @@ async function emitirNfeParaPedido(orderId, context) {
       return focusErr.data?.mensagem || JSON.stringify(focusErr.data);
     })();
     const sefazCode = String(focusErr.data?.status_sefaz || '').trim();
+
+    context?.warn(`[auto-nfe] ✘ Submissão REJEITADA/FALHOU — pedido ${orderId}, httpStatus=${focusErr.httpStatus}, cStat=${sefazCode || errCode}, msg: ${errMsg}`);
+    context?.log(`[auto-nfe] Resposta completa da Focus NF-e (erro submissão inicial) pedido ${orderId}: ${JSON.stringify(focusErr.data)}`);
 
     await sql.query`
       UPDATE GestaoFiscalDocuments SET status = ${docStatus}, errorCode = ${sefazCode || errCode},
@@ -839,7 +877,7 @@ async function migrateNfeProgressColumns() {
     IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'NfeInterventions')
     CREATE TABLE NfeInterventions (
       id INT PRIMARY KEY IDENTITY,
-      order_id INT NOT NULL,
+      order_id NVARCHAR(50) NOT NULL,
       error_code NVARCHAR(50) NULL,
       error_message NVARCHAR(MAX) NULL,
       action_required NVARCHAR(MAX) NULL,
@@ -849,6 +887,16 @@ async function migrateNfeProgressColumns() {
       CONSTRAINT UQ_NfeInterventions_OrderId UNIQUE (order_id)
     )
   `.catch(() => {});
+  // Migration: altera order_id de INT para NVARCHAR(50) se ainda for INT
+  await sql.query(`
+    IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('NfeInterventions') AND name = 'order_id' AND system_type_id = TYPE_ID('int'))
+    BEGIN
+      IF EXISTS (SELECT 1 FROM sys.key_constraints WHERE name = 'UQ_NfeInterventions_OrderId')
+        ALTER TABLE NfeInterventions DROP CONSTRAINT UQ_NfeInterventions_OrderId;
+      ALTER TABLE NfeInterventions ALTER COLUMN order_id NVARCHAR(50) NOT NULL;
+      ALTER TABLE NfeInterventions ADD CONSTRAINT UQ_NfeInterventions_OrderId UNIQUE (order_id);
+    END
+  `).catch(() => {});
   await sql.query(`IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('AutomationConfig') AND name = 'nfe_interventions_json') ALTER TABLE AutomationConfig ADD nfe_interventions_json NVARCHAR(MAX) NULL`).catch(() => {});
 }
 
@@ -962,32 +1010,49 @@ async function tryProgrammaticFix(failed, context) {
 
   // cStat 232: IE do destinatário não informada — consulta Focus NF-e para obter indicador/IE correto
   if (String(errorCode).trim() === '232') {
+    context?.log(`[auto-nfe] ▶ [232] INÍCIO da correção automática — pedido ${failed.orderId}`);
     const cnpjNorm = order.clientCnpj ? String(order.clientCnpj).replace(/\D/g, '') : null;
-    if (!cnpjNorm || cnpjNorm.length !== 14) return null;
+    context?.log(`[auto-nfe] [232] CNPJ do destinatário: "${order.clientCnpj}" → normalizado: "${cnpjNorm}"`);
+    if (!cnpjNorm || cnpjNorm.length !== 14) {
+      context?.warn?.(`[auto-nfe] [232] CNPJ inválido ou ausente — pedido ${failed.orderId} → intervenção manual`);
+      return null;
+    }
     try {
+      context?.log(`[auto-nfe] [232] Consultando cadastro do cliente no banco (CNPJ ${cnpjNorm})...`);
       const clientRes = await sql.query`
         SELECT TOP 1 id, stateRegistrationIndicator, stateRegistration
         FROM Clients WHERE cnpjNormalized = ${cnpjNorm}
       `;
+      if (clientRes.recordset.length) {
+        const { id: cid, stateRegistrationIndicator: dbInd, stateRegistration: dbIe } = clientRes.recordset[0];
+        context?.log(`[auto-nfe] [232] Cliente encontrado no banco — id=${cid}, indicador atual=${dbInd}, IE atual="${dbIe}"`);
+      } else {
+        context?.warn?.(`[auto-nfe] [232] Cliente NÃO encontrado no banco para CNPJ ${cnpjNorm}`);
+      }
 
       const cityStr = String(order.clientCity || '').trim();
       const ufDestinatario = cityStr.includes(' - ') ? cityStr.split(' - ').pop().trim() : null;
+      context?.log(`[auto-nfe] [232] Cidade do destinatário: "${cityStr}" → UF extraída: "${ufDestinatario}"`);
 
       let indicator;
       let ie;
 
       try {
+        context?.log(`[auto-nfe] [232] Chamando Focus NF-e /v2/cnpjs/${cnpjNorm}...`);
         // Consulta Focus NF-e para obter IE atualizada do CNPJ do destinatário
         const focusResp = await focusRequest(`/v2/cnpjs/${cnpjNorm}`);
+        context?.log(`[auto-nfe] [232] Resposta Focus NF-e: ${JSON.stringify(focusResp.data)}`);
         const ieResult = extrairIEDaRespostaLocal(focusResp.data, ufDestinatario);
         indicator = ieResult.stateRegistrationIndicator;
         ie = ieResult.stateRegistration;
+        context?.log(`[auto-nfe] [232] Resultado extrairIEDaRespostaLocal: indicador=${indicator}, IE="${ie}", UF="${ieResult.stateRegistrationUF}", status="${ieResult.stateRegistrationStatus}"`);
 
         // Atualiza cadastro do cliente com os dados frescos
         if (clientRes.recordset.length) {
           const clientId = clientRes.recordset[0].id;
           const agora = new Date();
           const proxima15Dias = new Date(agora.getTime() + 15 * 24 * 60 * 60 * 1000);
+          context?.log(`[auto-nfe] [232] Atualizando cliente id=${clientId} no banco com novos dados fiscais...`);
           await sql.query`
             UPDATE Clients SET
               stateRegistrationIndicator  = ${indicator},
@@ -1001,36 +1066,65 @@ async function tryProgrammaticFix(failed, context) {
               lastFiscalLookupError       = NULL,
               fiscalLookupResponseJson    = ${JSON.stringify(focusResp.data)}
             WHERE id = ${clientId}
-          `.catch(() => {});
+          `.catch((updateErr) => context?.warn?.(`[auto-nfe] [232] Falha ao atualizar cliente no banco: ${updateErr.message}`));
+          context?.log(`[auto-nfe] [232] Cadastro do cliente atualizado com sucesso`);
         }
 
         context?.log(`[auto-nfe] cStat 232 — Focus NF-e CNPJ: indicador ${indicator}${ie ? `, IE ${ie}` : ''} — pedido ${failed.orderId}`);
       } catch (focusErr) {
         // Falha na consulta à Focus NF-e: usa dados do cadastro como fallback
         context?.warn?.(`[auto-nfe] cStat 232 — falha ao consultar Focus NF-e CNPJ (pedido ${failed.orderId}): ${focusErr.message}`);
-        if (!clientRes.recordset.length) return null;
-        const { stateRegistrationIndicator: dbIndicator, stateRegistration: dbIe } = clientRes.recordset[0];
-        if (dbIndicator === null || dbIndicator === undefined) return null;
-        indicator = dbIndicator;
-        ie = dbIe;
+        const is404 = focusErr.httpStatus === 404;
+        if (is404) {
+          // CNPJ não encontrado na Receita Federal via Focus: força indicador 9 como último recurso
+          context?.warn?.(`[auto-nfe] [232] Focus NF-e 404 para CNPJ ${cnpjNorm} — CNPJ não encontrado na RF. Aplicando fallback: indicador=9, consumidor_final=1`);
+          indicator = 9;
+          ie = null;
+        } else {
+          context?.warn?.(`[auto-nfe] [232] Usando dados do banco como fallback...`);
+          if (!clientRes.recordset.length) {
+            context?.warn?.(`[auto-nfe] [232] Sem dados no banco e Focus falhou — pedido ${failed.orderId} → intervenção manual`);
+            return null;
+          }
+          const { stateRegistrationIndicator: dbIndicator, stateRegistration: dbIe } = clientRes.recordset[0];
+          if (dbIndicator === null || dbIndicator === undefined) {
+            context?.warn?.(`[auto-nfe] [232] Indicador nulo no banco — pedido ${failed.orderId} → intervenção manual`);
+            return null;
+          }
+          indicator = dbIndicator;
+          ie = dbIe;
+          context?.log(`[auto-nfe] [232] Fallback banco: indicador=${indicator}, IE="${ie}"`);
+        }
       }
 
-      if (indicator === null || indicator === undefined) return null;
-      // Indicador 9 confirmado pela Focus NF-e: não é corrigível automaticamente
-      if (indicator === 9) {
-        context?.log(`[auto-nfe] cStat 232 — Focus NF-e confirma indicador 9 para pedido ${failed.orderId} — requer intervenção`);
+      if (indicator === null || indicator === undefined) {
+        context?.warn?.(`[auto-nfe] [232] Indicador indefinido após todas as tentativas — pedido ${failed.orderId} → intervenção manual`);
         return null;
+      }
+
+      // Indicador 1 sem IE: não adianta reenviar, cairia em 232 novamente — força indicador 9
+      if (indicator === 1 && !ie) {
+        context?.warn?.(`[auto-nfe] [232] Indicador=1 mas IE nula (sem dados suficientes) — aplicando fallback: indicador=9, consumidor_final=1 — pedido ${failed.orderId}`);
+        indicator = 9;
+      }
+
+      // Indicador 9: reenvio com consumidor_final=1 como último recurso antes de intervenção
+      if (indicator === 9) {
+        context?.log(`[auto-nfe] [232] Indicador 9 — reenviando com consumidor_final=1 como último recurso para pedido ${failed.orderId}`);
       }
 
       const corrected = JSON.parse(JSON.stringify(payload));
       corrected.indicador_inscricao_estadual_destinatario = indicator;
       if (indicator === 1 && ie) {
         corrected.inscricao_estadual_destinatario = String(ie).replace(/\D/g, '');
+        context?.log(`[auto-nfe] [232] Payload corrigido: indicador=1, IE="${corrected.inscricao_estadual_destinatario}"`);
       } else {
         delete corrected.inscricao_estadual_destinatario;
+        context?.log(`[auto-nfe] [232] Payload corrigido: indicador=${indicator} (sem IE no payload)`);
       }
       corrected.consumidor_final = (indicator === 9 || (order.purchasePurpose || 'consumo') === 'consumo') ? 1 : 0;
-      context?.log(`[auto-nfe] Correção programática 232 via Focus NF-e: indicador ${indicator}${ie ? `, IE ${ie}` : ''} — pedido ${failed.orderId}`);
+      context?.log(`[auto-nfe] [232] consumidor_final definido como ${corrected.consumidor_final} (purchasePurpose="${order.purchasePurpose}")`);
+      context?.log(`[auto-nfe] cStat 232 — Correção programática via Focus NF-e: indicador ${indicator}${ie ? `, IE ${ie}` : ''} — pedido ${failed.orderId}`);
       return corrected;
     } catch (err) {
       context?.error('[auto-nfe] tryProgrammaticFix 232:', err);
@@ -1077,6 +1171,32 @@ async function runAutoNfe(context) {
     }
   }
 
+  // Retoma polling de documentos que ficaram presos em PROCESSING (ex: timeout em ciclo anterior)
+  const staleProcResult = await sql.query`
+    SELECT fd.id AS docId, fd.orderId, fd.focusReference AS reference
+    FROM GestaoFiscalDocuments fd
+    INNER JOIN GestaoOrders o ON o.id = fd.orderId
+    WHERE fd.status = 'PROCESSING'
+      AND fd.focusReference IS NOT NULL
+      AND fd.updatedAt < DATEADD(MINUTE, -5, GETUTCDATE())
+      AND o.status = N'Pronto'
+      AND o.deletedAt IS NULL
+  `.catch(() => ({ recordset: [] }));
+
+  for (const { docId, orderId, reference } of staleProcResult.recordset) {
+    context?.log(`[auto-nfe] Retomando polling de doc ${docId} (pedido ${orderId}, ref ${reference})...`);
+    const staleResult = await pollProcessingNfe(reference, docId, orderId, context);
+    if (staleResult.authorized) {
+      if (printDanfeAuto) await printDanfe(reference, context).catch(() => {});
+    } else if (staleResult.rejected) {
+      context?.warn(`[auto-nfe] Doc ${docId} rejeitado após retomada de polling: cStat ${staleResult.errorCode}`);
+    } else if (staleResult.timeout) {
+      // Move to SUBMISSION_FAILED so the next cycle creates a fresh submission instead of looping forever
+      await sql.query`UPDATE GestaoFiscalDocuments SET status = 'SUBMISSION_FAILED', updatedAt = GETUTCDATE() WHERE id = ${docId}`.catch(() => {});
+      context?.warn(`[auto-nfe] Doc ${docId} (pedido ${orderId}) permaneceu em PROCESSING após retomada — marcado SUBMISSION_FAILED para nova tentativa`);
+    }
+  }
+
   // Busca pedidos Pronto sem NF-e autorizada ou com SUBMISSION_FAILED / REJECTED (ambos são retentados)
   const pendingOrdersResult = await sql.query`
     SELECT DISTINCT o.id AS orderId
@@ -1100,8 +1220,11 @@ async function runAutoNfe(context) {
   `;
 
   const pendingOrders = pendingOrdersResult.recordset;
-  if (!pendingOrders.length) {
+  if (!pendingOrders.length && !staleProcResult.recordset.length) {
     return { skipped: true, reason: 'Nenhum pedido pendente.' };
+  }
+  if (!pendingOrders.length) {
+    return { success: true, authorized: 0, aiResolved: 0, needsIntervention: 0, interventionOrders: [], message: 'Nenhum pedido novo; polling de documentos em processamento executado.' };
   }
 
   context?.log(`[auto-nfe] Processando ${pendingOrders.length} pedido(s)...`);
@@ -1113,7 +1236,7 @@ async function runAutoNfe(context) {
   for (const [idx, { orderId }] of pendingOrders.entries()) {
     await setNfeProgress(`Emitindo NF-e do pedido #${orderId}...`, { total: pendingOrders.length, done: idx });
     try {
-      const result = await emitirNfeParaPedido(orderId, context);
+      const result = await emitirNfeParaPedido(orderId, context, { aiFixEnabled: !notifyOnError });
 
       if (result.success || result.alreadyAuthorized) {
         successOrders.push(orderId);
@@ -1127,8 +1250,11 @@ async function runAutoNfe(context) {
         if (pollResult.authorized) {
           successOrders.push(orderId);
           if (printDanfeAuto && result.reference) await printDanfe(result.reference, context).catch(() => {});
+        } else if (pollResult.timeout) {
+          // SEFAZ ainda está processando — o documento fica em PROCESSING e o stale polling retomará na próxima execução
+          context?.warn(`[auto-nfe] Timeout no polling do pedido ${orderId} (doc ${result.docId}) — será retomado pelo stale polling`);
         } else {
-          failedOrders.push({ orderId, errorCode: pollResult.errorCode, error: pollResult.errorMessage || 'Timeout aguardando autorização', payload: result.payload || null, order: result.order || null, items: result.items || null, fiscalConfigs: result.fiscalConfigs || null });
+          failedOrders.push({ orderId, errorCode: pollResult.errorCode, error: pollResult.errorMessage || 'Erro aguardando autorização', payload: result.payload || null, order: result.order || null, items: result.items || null, fiscalConfigs: result.fiscalConfigs || null });
         }
       } else if (!result.skipRetry) {
         failedOrders.push({ orderId, errorCode: result.errorCode, error: result.error, payload: result.payload, order: result.order, items: result.items, fiscalConfigs: result.fiscalConfigs });
@@ -1144,6 +1270,13 @@ async function runAutoNfe(context) {
   const needsIntervention = [];
 
   for (const failed of failedOrders) {
+    // Erros de rede/timeout não são rejeições SEFAZ — o doc já está SUBMISSION_FAILED e será retentado automaticamente
+    const isNetworkError = !failed.errorCode || failed.errorCode === 'ERR' || failed.errorCode === 'TIMEOUT' || String(failed.error || '').includes('fetch failed') || String(failed.error || '').includes('Tempo limite');
+    if (isNetworkError && failed.payload) {
+      context?.warn(`[auto-nfe] Pedido ${failed.orderId} falhou por erro de rede/timeout (${failed.errorCode || 'ERR'}: "${failed.error}") — mantido como SUBMISSION_FAILED para retry automático no próximo ciclo`);
+      continue;
+    }
+
     if (!failed.payload || !failed.order || !failed.items) {
       needsIntervention.push(failed);
       continue;
@@ -1159,29 +1292,51 @@ async function runAutoNfe(context) {
     }
 
     // Correção determinística antes de acionar a IA
+    context?.log(`[auto-nfe] [232] Verificando correção programática para pedido ${failed.orderId} (cStat ${failed.errorCode})...`);
     const progPayload = await tryProgrammaticFix(failed, context);
     if (progPayload) {
+      context?.log(`[auto-nfe] [232] Payload corrigido obtido — iniciando resubmissão à SEFAZ para pedido ${failed.orderId}`);
       await setNfeProgress(`Corrigindo IE automaticamente para o pedido #${failed.orderId} (cStat ${failed.errorCode})...`, { total: pendingOrders.length, done: successOrders.length });
       try {
+        context?.log(`[auto-nfe] [232] Invalidando documento anterior (status → SUBMISSION_FAILED)...`);
         await sql.query`UPDATE GestaoFiscalDocuments SET status = 'SUBMISSION_FAILED', updatedAt = GETUTCDATE() WHERE orderId = ${failed.orderId} AND status IN ('REJECTED', 'SUBMISSION_FAILED')`.catch(() => {});
         const envP = process.env.NODE_ENV === 'production' ? 'PRODUCTION' : 'HOMOLOGATION';
         const createResP = await sql.query`INSERT INTO GestaoFiscalDocuments (orderId, environment, status) OUTPUT INSERTED.id VALUES (${failed.orderId}, ${envP}, 'SUBMITTING')`;
         const docIdP = createResP.recordset[0].id;
         const referenceP = createNfeReference(docIdP);
+        context?.log(`[auto-nfe] [232] Novo documento criado: id=${docIdP}, referência="${referenceP}"`);
         await sql.query`UPDATE GestaoFiscalDocuments SET focusReference = ${referenceP}, requestPayload = ${JSON.stringify(progPayload)}, issuedAt = GETUTCDATE(), updatedAt = GETUTCDATE() WHERE id = ${docIdP}`;
+        context?.log(`[auto-nfe] [232] Enviando NF-e corrigida à Focus NF-e (POST /v2/nfe?ref=${referenceP})...`);
         const focusResP = await focusRequest(`/v2/nfe?ref=${encodeURIComponent(referenceP)}`, { method: 'POST', body: progPayload });
+        context?.log(`[auto-nfe] [232] Resposta Focus NF-e após resubmissão: ${JSON.stringify(focusResP.data)}`);
         const mappedP = mapFocusStatus(focusResP.data);
+        context?.log(`[auto-nfe] [232] Status mapeado: ${mappedP.status}`);
         if (mappedP.status === 'AUTHORIZED') {
+          context?.log(`[auto-nfe] [232] ✔ NF-e AUTORIZADA — pedido ${failed.orderId}, chave ${mappedP.accessKey}, protocolo ${mappedP.protocol}`);
           await sql.query`UPDATE GestaoFiscalDocuments SET status = 'AUTHORIZED', nfeNumber = ${mappedP.number || null}, nfeSeries = ${mappedP.series || null}, accessKey = ${mappedP.accessKey || null}, protocol = ${mappedP.protocol || null}, xmlPath = ${mappedP.xmlPath || null}, danfePath = ${mappedP.danfePath || null}, authorizedAt = GETUTCDATE(), responsePayload = ${JSON.stringify(focusResP.data)}, updatedAt = GETUTCDATE() WHERE id = ${docIdP}`;
           await sql.query`UPDATE GestaoOrders SET status = N'Pronto', updatedAt = GETUTCDATE() WHERE id = ${failed.orderId}`;
           await notifyDriverNfeAuthorized(failed.orderId, context);
           aiResolvedOrders.push(failed.orderId);
           if (printDanfeAuto) await printDanfe(referenceP, context).catch(() => {});
         } else if (mappedP.status === 'PROCESSING') {
+          context?.log(`[auto-nfe] [232] SEFAZ em processamento — iniciando polling para pedido ${failed.orderId}...`);
           await sql.query`UPDATE GestaoFiscalDocuments SET status = 'PROCESSING', responsePayload = ${JSON.stringify(focusResP.data)}, updatedAt = GETUTCDATE() WHERE id = ${docIdP}`;
-          aiResolvedOrders.push(failed.orderId);
+          await setNfeProgress(`Aguardando autorização SEFAZ do pedido #${failed.orderId} (correção 232)...`, { total: pendingOrders.length, done: successOrders.length });
+          const pollResultP = await pollProcessingNfe(referenceP, docIdP, failed.orderId, context);
+          context?.log(`[auto-nfe] [232] Resultado polling: authorized=${pollResultP.authorized}, timeout=${pollResultP.timeout}, errorCode=${pollResultP.errorCode}`);
+          if (pollResultP.authorized) {
+            context?.log(`[auto-nfe] [232] ✔ NF-e AUTORIZADA via polling — pedido ${failed.orderId}`);
+            aiResolvedOrders.push(failed.orderId);
+            if (printDanfeAuto) await printDanfe(referenceP, context).catch(() => {});
+          } else if (pollResultP.timeout) {
+            // SEFAZ ainda processa — não é um erro, próximo ciclo fará nova consulta
+            context?.warn(`[auto-nfe] Polling timeout na correção 232 do pedido ${failed.orderId} — nota em processamento na SEFAZ`);
+          } else {
+            needsIntervention.push({ ...failed, errorCode: pollResultP.errorCode, error: pollResultP.errorMessage || 'Erro após correção 232' });
+          }
         } else {
           const errMsgP = focusResP.data?.mensagem_sefaz || focusResP.data?.mensagem || JSON.stringify(focusResP.data);
+          context?.warn(`[auto-nfe] [232] ✘ Resubmissão REJEITADA pela SEFAZ — pedido ${failed.orderId}, cStat ${focusResP.data?.status_sefaz}, msg: ${errMsgP}`);
           await sql.query`UPDATE GestaoFiscalDocuments SET status = 'REJECTED', errorCode = ${String(focusResP.data?.status_sefaz || 'PROG_ERR')}, errorMessage = ${errMsgP}, responsePayload = ${JSON.stringify(focusResP.data)}, updatedAt = GETUTCDATE() WHERE id = ${docIdP}`;
           needsIntervention.push(failed);
         }
@@ -1192,7 +1347,7 @@ async function runAutoNfe(context) {
       continue;
     }
 
-    // Modo: IA tenta corrigir
+    context?.log(`[auto-nfe] [232] tryProgrammaticFix retornou null para pedido ${failed.orderId} (cStat ${failed.errorCode}) — encaminhando para correção por IA`);
     context?.log(`[auto-nfe] Tentando correção IA para pedido ${failed.orderId} (cStat ${failed.errorCode})...`);
     await setNfeProgress(`IA analisando e corrigindo erro da NF-e do pedido #${failed.orderId} (cStat ${failed.errorCode || '?'})...`, { total: pendingOrders.length, done: successOrders.length });
     try {
@@ -1253,7 +1408,16 @@ async function runAutoNfe(context) {
             if (printDanfeAuto) await printDanfe(reference2, context).catch(() => {});
           } else if (mapped2.status === 'PROCESSING') {
             await sql.query`UPDATE GestaoFiscalDocuments SET status = 'PROCESSING', responsePayload = ${JSON.stringify(focusRes2.data)}, updatedAt = GETUTCDATE() WHERE id = ${docId2}`;
-            aiResolvedOrders.push(failed.orderId); // Considerado em processo
+            await setNfeProgress(`Aguardando autorização SEFAZ do pedido #${failed.orderId} (correção IA)...`, { total: pendingOrders.length, done: successOrders.length });
+            const pollResult2 = await pollProcessingNfe(reference2, docId2, failed.orderId, context);
+            if (pollResult2.authorized) {
+              aiResolvedOrders.push(failed.orderId);
+              if (printDanfeAuto) await printDanfe(reference2, context).catch(() => {});
+            } else if (pollResult2.timeout) {
+              context?.warn(`[auto-nfe] Polling timeout na correção IA do pedido ${failed.orderId} — nota em processamento na SEFAZ`);
+            } else {
+              needsIntervention.push({ ...failed, errorCode: pollResult2.errorCode, error: pollResult2.errorMessage || 'Erro após correção IA' });
+            }
           } else {
             const errMsg2 = focusRes2.data?.mensagem_sefaz || focusRes2.data?.mensagem || JSON.stringify(focusRes2.data);
             await sql.query`

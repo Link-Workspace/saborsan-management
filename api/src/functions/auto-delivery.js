@@ -163,10 +163,17 @@ async function notifySellerAboutDelivery(sellerId, orderIds, deliveryCode, conte
     const separacaoOrders = [];
     for (const orderId of orderIds) {
       const r = await sql.query`SELECT id, clientName FROM GestaoOrders WHERE id = ${orderId} AND status = N'Separação'`;
-      if (r.recordset.length) separacaoOrders.push(r.recordset[0]);
+      if (!r.recordset.length) continue;
+      // Não notificar enquanto houver NF-e pendente de autorização para este pedido
+      const nfeBlocking = await sql.query`SELECT 1 AS found FROM GestaoFiscalDocuments WHERE orderId = ${orderId} AND status IN ('PROCESSING', 'SUBMITTING', 'MANUAL_REVIEW')`;
+      if (nfeBlocking.recordset.length) {
+        context?.log(`[auto-delivery] order_ready_check ignorado: NF-e do pedido ${orderId} ainda em ${nfeBlocking.recordset[0] ? 'processamento' : '?'}`);
+        continue;
+      }
+      separacaoOrders.push(r.recordset[0]);
     }
     if (!separacaoOrders.length) {
-      context?.log(`[auto-delivery] notificação ignorada: nenhum pedido em Separação para os ids ${orderIds}`);
+      context?.log(`[auto-delivery] notificação ignorada: nenhum pedido elegível (em Separação com NF-e autorizada ou sem NF-e) para os ids ${orderIds}`);
       return;
     }
 

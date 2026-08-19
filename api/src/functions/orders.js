@@ -50,8 +50,6 @@ app.http('orders', {
             SELECT id, clientName, clientCnpj, clientCity, clientPhone,
                    status, totalValue, deliveryAt, observations, purchasePurpose, createdAt, deletedAt
             FROM GestaoOrders
-            WHERE deletedAt IS NULL
-               OR id IN (SELECT orderId FROM GestaoFiscalDocuments WHERE status = 'AUTHORIZED')
             ORDER BY createdAt DESC
           `,
           sql.query`
@@ -326,16 +324,18 @@ app.http('orders', {
           }
         }
 
-        if (hasAuthorizedNfe) {
-          // Soft delete: keep the order and its fiscal document for fiscal history
-          await sql.query`UPDATE GestaoOrders SET deletedAt = GETUTCDATE() WHERE id = ${orderId}`;
-        } else {
+        // Always soft-delete: preserves the ID so it can't be reused by a new order
+        await sql.query`UPDATE GestaoOrders SET deletedAt = GETUTCDATE() WHERE id = ${orderId}`;
+
+        if (!hasAuthorizedNfe) {
           await sql.query`DELETE FROM DeliveryOrders WHERE order_id = ${orderId}`;
           await sql.query`DELETE FROM GestaoFiscalDocuments WHERE orderId = ${orderId}`;
-          await sql.query`DELETE FROM GestaoOrders WHERE id = ${orderId}`;
         }
 
-        return { jsonBody: { success: true, softDeleted: hasAuthorizedNfe } };
+        // Remove any pending intervention for this order so stale data doesn't bleed into a new order with the same ID
+        await sql.query`DELETE FROM NfeInterventions WHERE order_id = ${orderId}`.catch(() => {});
+
+        return { jsonBody: { success: true, softDeleted: true } };
       }
     } catch (error) {
       context.error('Erro na função orders:', error);
