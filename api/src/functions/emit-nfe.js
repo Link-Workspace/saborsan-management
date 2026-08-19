@@ -1054,8 +1054,8 @@ app.http('emit-nfe', {
                          nextFiscalLookupAt, requiresFiscalReview
             FROM Clients
             WHERE cnpjNormalized = ${cnpjNorm}
-               OR (cnpjNormalized IS NULL AND REPLACE(REPLACE(REPLACE(REPLACE(documentType, '.',''),'/',''),'-',''),' ','') = ${cnpjNorm})
-               OR (documentType IS NULL AND establishmentName = ${order.clientName})
+               OR (cnpjNormalized IS NULL AND REPLACE(REPLACE(REPLACE(REPLACE(cnpj, '.',''),'/',''),'-',''),' ','') = ${cnpjNorm})
+               OR (cnpj IS NULL AND establishmentName = ${order.clientName})
           `;
 
           const clientRow = clientRes.recordset[0];

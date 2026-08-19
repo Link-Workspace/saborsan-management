@@ -4332,10 +4332,21 @@ function ClientDetailModal({ client, onClose, onEdit, onRemove }) {
 
           <h3>Dados fiscais</h3>
           <div className="supplierDetailGrid">
-            <div className="supplierDetailItem">
-              <span>{client.documentType === 'cpf' ? 'CPF' : 'CNPJ'}</span>
-              <b>{client.document || client.cnpj || '—'}</b>
-            </div>
+            {client.cnpj && (
+              <div className="supplierDetailItem">
+                <span>CNPJ</span>
+                <b>{client.cnpj}</b>
+              </div>
+            )}
+            {client.cpf && (
+              <div className="supplierDetailItem">
+                <span>CPF</span>
+                <b>{client.cpf}</b>
+              </div>
+            )}
+            {!client.cnpj && !client.cpf && (
+              <div className="supplierDetailItem"><span>Documento fiscal</span><b>—</b></div>
+            )}
             <div className="supplierDetailItem"><span>Preferência de nota fiscal</span><b>{client.invoicePreference || '—'}</b></div>
           </div>
 
@@ -4379,8 +4390,8 @@ function NewClientModal({ onClose, onCreated, editClient, onUpdated }) {
     establishmentName: editClient.establishmentName || '',
     clientName: editClient.clientName || '',
     email: editClient.email || '',
-    documentType: editClient.documentType || 'cnpj',
-    cnpj: editClient.document || editClient.cnpj || '',
+    cnpj: editClient.cnpj || '',
+    cpf: editClient.cpf || '',
     contactNumber: editClient.contactNumber || '',
     address: editClient.address || '',
     city: editClient.city || '',
@@ -4394,8 +4405,8 @@ function NewClientModal({ onClose, onCreated, editClient, onUpdated }) {
     establishmentName: '',
     clientName: '',
     email: '',
-    documentType: 'cnpj',
     cnpj: '',
+    cpf: '',
     contactNumber: '',
     address: '',
     city: '',
@@ -4415,8 +4426,8 @@ function NewClientModal({ onClose, onCreated, editClient, onUpdated }) {
     form.establishmentName !== (editClient.establishmentName || '') ||
     form.clientName !== (editClient.clientName || '') ||
     form.email !== (editClient.email || '') ||
-    form.documentType !== (editClient.documentType || 'cnpj') ||
-    form.cnpj !== (editClient.document || editClient.cnpj || '') ||
+    form.cnpj !== (editClient.cnpj || '') ||
+    form.cpf !== (editClient.cpf || '') ||
     form.contactNumber !== (editClient.contactNumber || '') ||
     form.address !== (editClient.address || '') ||
     form.city !== (editClient.city || '') ||
@@ -4440,8 +4451,8 @@ function NewClientModal({ onClose, onCreated, editClient, onUpdated }) {
         establishmentName: form.establishmentName.trim(),
         clientName: form.clientName.trim(),
         email: form.email.trim() || null,
-        documentType: form.documentType,
         cnpj: form.cnpj.trim() || null,
+        cpf: form.cpf.trim() || null,
         contactNumber: form.contactNumber.trim() || null,
         address: form.address.trim() || null,
         city: form.city.trim() || null,
@@ -4523,18 +4534,18 @@ function NewClientModal({ onClose, onCreated, editClient, onUpdated }) {
               </label>
 
               <p style={sectionTitle}>Dados fiscais</p>
-              <label className="full">
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-                  <span>Documento fiscal</span>
-                  <div className="deliverySegmented">
-                    <button type="button" className={`deliverySegBtn${form.documentType === 'cnpj' ? ' active' : ''}`} onClick={() => set('documentType', 'cnpj')}>CNPJ</button>
-                    <button type="button" className={`deliverySegBtn${form.documentType === 'cpf' ? ' active' : ''}`} onClick={() => set('documentType', 'cpf')}>CPF</button>
-                  </div>
-                </div>
+              <label>CNPJ
                 <input
-                  placeholder={form.documentType === 'cnpj' ? '00.000.000/0001-00' : '000.000.000-00'}
+                  placeholder="00.000.000/0001-00"
                   value={form.cnpj}
                   onChange={(e) => set('cnpj', e.target.value)}
+                />
+              </label>
+              <label>CPF
+                <input
+                  placeholder="000.000.000-00"
+                  value={form.cpf}
+                  onChange={(e) => set('cpf', e.target.value)}
                 />
               </label>
               <label>Preferência de nota fiscal
@@ -5699,7 +5710,8 @@ function NewOrderModal({ onClose, onCreateOrder, onUpdateOrder, editOrder, clien
               if (!c) return null
               return (
                 <div className="supplierDetailGrid" style={{ marginTop: 10, marginBottom: 4 }}>
-                  {(c.cnpj || c.document) && <div className="supplierDetailItem"><span>{c.documentType === 'cpf' ? 'CPF' : 'CNPJ'}</span><b>{c.document || c.cnpj}</b></div>}
+                  {c.cnpj && <div className="supplierDetailItem"><span>CNPJ</span><b>{c.cnpj}</b></div>}
+                  {c.cpf && <div className="supplierDetailItem"><span>CPF</span><b>{c.cpf}</b></div>}
                   {c.city && <div className="supplierDetailItem"><span>Cidade</span><b>{c.city}</b></div>}
                   {c.contactNumber && <div className="supplierDetailItem"><span>WhatsApp</span><b>{c.contactNumber}</b></div>}
                 </div>

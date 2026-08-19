@@ -683,12 +683,45 @@ async function emitirNfeParaPedido(orderId, context) {
   if (cnpjNorm && cnpjNorm.length === 14) {
     try {
       const clientRes = await sql.query`
-        SELECT TOP 1 stateRegistrationIndicator, stateRegistration FROM Clients
+        SELECT TOP 1 id, stateRegistrationIndicator, stateRegistration FROM Clients
         WHERE cnpjNormalized = ${cnpjNorm} OR (cnpjNormalized IS NULL AND establishmentName = ${order.clientName})
       `;
-      if (clientRes.recordset.length > 0 && clientRes.recordset[0].stateRegistrationIndicator !== null) {
-        stateRegistrationIndicator = clientRes.recordset[0].stateRegistrationIndicator;
-        stateRegistration = clientRes.recordset[0].stateRegistration;
+      const clientRow = clientRes.recordset[0];
+      if (clientRow && clientRow.stateRegistrationIndicator !== null) {
+        stateRegistrationIndicator = clientRow.stateRegistrationIndicator;
+        stateRegistration = clientRow.stateRegistration;
+      } else {
+        // Dado fiscal nunca carregado: consulta Focus NF-e antes de montar o payload
+        try {
+          const focusResp = await focusRequest(`/v2/cnpjs/${cnpjNorm}`);
+          const cityStrFiscal2 = String(order.clientCity || '').trim();
+          const ufDest2 = cityStrFiscal2.includes(' - ') ? cityStrFiscal2.split(' - ').pop().trim() : null;
+          const ieResult = extrairIEDaRespostaLocal(focusResp.data, ufDest2);
+          stateRegistrationIndicator = ieResult.stateRegistrationIndicator;
+          stateRegistration = ieResult.stateRegistration;
+          if (clientRow?.id) {
+            const agora = new Date();
+            const proxima15Dias = new Date(agora.getTime() + 15 * 24 * 60 * 60 * 1000);
+            await sql.query`
+              UPDATE Clients SET
+                cnpjNormalized              = ${cnpjNorm},
+                stateRegistrationIndicator  = ${stateRegistrationIndicator},
+                stateRegistration           = ${stateRegistration || null},
+                stateRegistrationUF         = ${ieResult.stateRegistrationUF || null},
+                stateRegistrationStatus     = ${ieResult.stateRegistrationStatus || null},
+                lastFiscalLookupAt          = ${agora},
+                lastFiscalLookupSuccessAt   = ${agora},
+                nextFiscalLookupAt          = ${proxima15Dias},
+                fiscalLookupSource          = 'FOCUS_NFE',
+                lastFiscalLookupError       = NULL,
+                fiscalLookupResponseJson    = ${JSON.stringify(focusResp.data)}
+              WHERE id = ${clientRow.id}
+            `.catch(() => {});
+          }
+          context?.log(`[auto-nfe] Lookup proativo Focus NF-e para pedido ${orderId}: indicador ${stateRegistrationIndicator}${stateRegistration ? `, IE ${stateRegistration}` : ''}`);
+        } catch (focusErr) {
+          context?.warn?.(`[auto-nfe] Falha no lookup proativo Focus NF-e para pedido ${orderId}: ${focusErr.message}`);
+        }
       }
     } catch (_) {}
   }
@@ -843,7 +876,7 @@ function generateInterventionAction(errorCode, errorMessage, aiDecision) {
   return 'Não foi possível identificar o problema automaticamente. Verifique os dados do pedido e dos produtos (NCM, CST, CFOP, IE do destinatário) e tente emitir a nota manualmente ou entre em contato com o suporte fiscal.';
 }
 
-async function resolveInterventions() {
+async function resolveInterventions(context) {
   try {
     await sql.query`
       UPDATE NfeInterventions SET resolved = 1, resolved_at = GETUTCDATE()
@@ -853,10 +886,12 @@ async function resolveInterventions() {
           WHERE fd.orderId = NfeInterventions.order_id AND fd.status = 'AUTHORIZED'
         )
     `;
-  } catch (_) {}
+  } catch (err) {
+    context?.error('[auto-nfe] resolveInterventions:', err);
+  }
 }
 
-async function saveInterventions(needsIntervention) {
+async function saveInterventions(needsIntervention, context) {
   for (const failed of needsIntervention) {
     const orderId = failed.orderId;
     const errCode = String(failed.errorCode || '').slice(0, 50);
@@ -869,7 +904,9 @@ async function saveInterventions(needsIntervention) {
       } else {
         await sql.query`INSERT INTO NfeInterventions (order_id, error_code, error_message, action_required) VALUES (${orderId}, ${errCode}, ${errMsg}, ${actionRequired})`;
       }
-    } catch (_) {}
+    } catch (err) {
+      context?.error(`[auto-nfe] saveInterventions orderId=${orderId}:`, err);
+    }
   }
 }
 
@@ -885,24 +922,105 @@ async function setNfeProgress(step, { total = null, done = null, isRunning = tru
   } catch (_) {}
 }
 
+// ── Helpers de classificação de IE (espelham lógica do cnpj-fiscal) ───────────
+
+function classificarIELocal(numero, situacao, ufRetorno) {
+  const sit = String(situacao || '').toUpperCase().trim();
+  const num = String(numero || '').trim();
+  if (sit === 'ISENTA' || sit === 'ISENTO' || num.toUpperCase() === 'ISENTO') {
+    return { stateRegistrationIndicator: 2, stateRegistration: null, stateRegistrationStatus: 'ISENTA', stateRegistrationUF: ufRetorno };
+  }
+  const situacoesInativas = ['CANCELADA', 'INAPTA', 'NULA', 'BAIXADA', 'SUSPENSA'];
+  if (situacoesInativas.includes(sit) || !num) {
+    return { stateRegistrationIndicator: 9, stateRegistration: null, stateRegistrationStatus: sit || 'NOT_FOUND', stateRegistrationUF: ufRetorno };
+  }
+  return { stateRegistrationIndicator: 1, stateRegistration: num, stateRegistrationStatus: sit || 'ACTIVE', stateRegistrationUF: ufRetorno };
+}
+
+function extrairIEDaRespostaLocal(data, targetUf) {
+  const uf = String(targetUf || '').toUpperCase().trim();
+  if (Array.isArray(data.inscricoes_estaduais) && data.inscricoes_estaduais.length > 0) {
+    const match = uf
+      ? data.inscricoes_estaduais.find((ie) => String(ie.uf || ie.estado || '').toUpperCase().trim() === uf)
+      : null;
+    const ie = match || data.inscricoes_estaduais[0];
+    const num = String(ie.inscricao_estadual || ie.numero || ie.ie || '').trim();
+    const sit = String(ie.situacao || ie.situacao_inscricao_estadual || ie.status || '').trim();
+    return classificarIELocal(num, sit, String(ie.uf || ie.estado || targetUf || '').toUpperCase());
+  }
+  const num = String(data.inscricao_estadual || data.ie || '').trim();
+  const sit = String(data.situacao_inscricao_estadual || data.situacao_ie || data.situacao || '').trim();
+  const ufRetorno = String(data.uf || data.estado || targetUf || '').toUpperCase().trim();
+  return classificarIELocal(num, sit, ufRetorno);
+}
+
 // ── Correção programática para erros com solução determinística ────────────────
 
 async function tryProgrammaticFix(failed, context) {
   const { errorCode, order, payload } = failed;
   if (!payload || !order) return null;
 
-  // cStat 232: IE do destinatário não informada — busca indicador/IE do cadastro do cliente
+  // cStat 232: IE do destinatário não informada — consulta Focus NF-e para obter indicador/IE correto
   if (String(errorCode).trim() === '232') {
     const cnpjNorm = order.clientCnpj ? String(order.clientCnpj).replace(/\D/g, '') : null;
     if (!cnpjNorm || cnpjNorm.length !== 14) return null;
     try {
       const clientRes = await sql.query`
-        SELECT TOP 1 stateRegistrationIndicator, stateRegistration
+        SELECT TOP 1 id, stateRegistrationIndicator, stateRegistration
         FROM Clients WHERE cnpjNormalized = ${cnpjNorm}
       `;
-      if (!clientRes.recordset.length) return null;
-      const { stateRegistrationIndicator: indicator, stateRegistration: ie } = clientRes.recordset[0];
+
+      const cityStr = String(order.clientCity || '').trim();
+      const ufDestinatario = cityStr.includes(' - ') ? cityStr.split(' - ').pop().trim() : null;
+
+      let indicator;
+      let ie;
+
+      try {
+        // Consulta Focus NF-e para obter IE atualizada do CNPJ do destinatário
+        const focusResp = await focusRequest(`/v2/cnpjs/${cnpjNorm}`);
+        const ieResult = extrairIEDaRespostaLocal(focusResp.data, ufDestinatario);
+        indicator = ieResult.stateRegistrationIndicator;
+        ie = ieResult.stateRegistration;
+
+        // Atualiza cadastro do cliente com os dados frescos
+        if (clientRes.recordset.length) {
+          const clientId = clientRes.recordset[0].id;
+          const agora = new Date();
+          const proxima15Dias = new Date(agora.getTime() + 15 * 24 * 60 * 60 * 1000);
+          await sql.query`
+            UPDATE Clients SET
+              stateRegistrationIndicator  = ${indicator},
+              stateRegistration           = ${ie || null},
+              stateRegistrationUF         = ${ieResult.stateRegistrationUF || null},
+              stateRegistrationStatus     = ${ieResult.stateRegistrationStatus || null},
+              lastFiscalLookupAt          = ${agora},
+              lastFiscalLookupSuccessAt   = ${agora},
+              nextFiscalLookupAt          = ${proxima15Dias},
+              fiscalLookupSource          = 'FOCUS_NFE',
+              lastFiscalLookupError       = NULL,
+              fiscalLookupResponseJson    = ${JSON.stringify(focusResp.data)}
+            WHERE id = ${clientId}
+          `.catch(() => {});
+        }
+
+        context?.log(`[auto-nfe] cStat 232 — Focus NF-e CNPJ: indicador ${indicator}${ie ? `, IE ${ie}` : ''} — pedido ${failed.orderId}`);
+      } catch (focusErr) {
+        // Falha na consulta à Focus NF-e: usa dados do cadastro como fallback
+        context?.warn?.(`[auto-nfe] cStat 232 — falha ao consultar Focus NF-e CNPJ (pedido ${failed.orderId}): ${focusErr.message}`);
+        if (!clientRes.recordset.length) return null;
+        const { stateRegistrationIndicator: dbIndicator, stateRegistration: dbIe } = clientRes.recordset[0];
+        if (dbIndicator === null || dbIndicator === undefined) return null;
+        indicator = dbIndicator;
+        ie = dbIe;
+      }
+
       if (indicator === null || indicator === undefined) return null;
+      // Indicador 9 confirmado pela Focus NF-e: não é corrigível automaticamente
+      if (indicator === 9) {
+        context?.log(`[auto-nfe] cStat 232 — Focus NF-e confirma indicador 9 para pedido ${failed.orderId} — requer intervenção`);
+        return null;
+      }
 
       const corrected = JSON.parse(JSON.stringify(payload));
       corrected.indicador_inscricao_estadual_destinatario = indicator;
@@ -912,7 +1030,7 @@ async function tryProgrammaticFix(failed, context) {
         delete corrected.inscricao_estadual_destinatario;
       }
       corrected.consumidor_final = (indicator === 9 || (order.purchasePurpose || 'consumo') === 'consumo') ? 1 : 0;
-      context?.log(`[auto-nfe] Correção programática 232: indicador ${indicator}${ie ? `, IE ${ie}` : ''} — pedido ${failed.orderId}`);
+      context?.log(`[auto-nfe] Correção programática 232 via Focus NF-e: indicador ${indicator}${ie ? `, IE ${ie}` : ''} — pedido ${failed.orderId}`);
       return corrected;
     } catch (err) {
       context?.error('[auto-nfe] tryProgrammaticFix 232:', err);
@@ -1162,8 +1280,8 @@ async function runAutoNfe(context) {
   }
 
   // Resolve interventions that were fixed in this run, then persist new ones
-  await resolveInterventions();
-  await saveInterventions(needsIntervention);
+  await resolveInterventions(context);
+  await saveInterventions(needsIntervention, context);
 
   const interventionPayload = needsIntervention.map((f) => ({
     orderId: f.orderId,
