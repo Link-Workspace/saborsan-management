@@ -567,12 +567,19 @@ function App() {
       fetch(`${API_URL}/api/auto-nfe-progress`)
         .then((r) => r.json())
         .then((data) => {
+          const interventions = data.pendingInterventions || [];
           if (data.isRunning) {
-            setBgNfe({ status: 'running', step: data.currentStep || 'Processando...', total: data.total, done: data.done, startedAt: data.startedAt });
-          } else if (data.lastRun) {
+            setBgNfe({ status: 'running', step: data.currentStep || 'Processando...', total: data.total, done: data.done, startedAt: data.startedAt, interventions: [] });
+          } else {
             setBgNfe((prev) => {
               if (prev?.status === 'running') {
-                return { status: 'done', step: data.currentStep || data.lastRun.message || 'Concluído', total: data.total, done: data.done, message: data.lastRun.message };
+                return { status: 'done', step: data.currentStep || data.lastRun?.message || 'Concluído', total: data.total, done: data.done, message: data.lastRun?.message, interventions };
+              }
+              if (!prev && interventions.length > 0) {
+                return { status: 'done', step: data.lastRun?.message || 'Verificação necessária', message: data.lastRun?.message, interventions };
+              }
+              if (prev?.status === 'done') {
+                return { ...prev, interventions };
               }
               return prev;
             });
@@ -589,7 +596,13 @@ function App() {
     const prev = prevBgNfeStatusRef.current;
     prevBgNfeStatusRef.current = bgNfe?.status ?? null;
     if (prev === 'running' && bgNfe?.status === 'done') {
-      addNotif('notifFiscalDocuments', { icon: Settings2, title: 'Automação de NF-e concluída', text: bgNfe.message || 'As notas fiscais foram processadas.' });
+      const hasInterventions = (bgNfe.interventions?.length ?? 0) > 0;
+      addNotif('notifFiscalDocuments', {
+        icon: hasInterventions ? AlertTriangle : Settings2,
+        type: hasInterventions ? 'warning' : 'default',
+        title: hasInterventions ? `Automação: ${bgNfe.interventions.length} intervenção(ões) necessária(s)` : 'Automação de NF-e concluída',
+        text: bgNfe.message || 'As notas fiscais foram processadas.',
+      });
       fetchOrders();
       setBgNfePanelOpen(true);
     }
@@ -896,6 +909,16 @@ function App() {
                 <Settings2 size={19} />
               </button>
             )}
+            {bgNfe?.status === 'done' && (bgNfe.interventions?.length ?? 0) > 0 && (
+              <button
+                className="iconButton bgNfeInterventionBtn"
+                onClick={() => setBgNfePanelOpen(true)}
+                title={`${bgNfe.interventions.length} intervenção(ões) necessária(s) — clique para ver`}
+              >
+                <AlertTriangle size={19} />
+                <span>{bgNfe.interventions.length}</span>
+              </button>
+            )}
             <button className="iconButton" onClick={() => setNotifOpen(!notifOpen)}><Bell size={19} />{systemNotifications.length > 0 && <span>{systemNotifications.length}</span>}</button>
           </div>
         </header>
@@ -953,7 +976,12 @@ function App() {
         <BgNfePanel
           bgNfe={bgNfe}
           onClose={() => setBgNfePanelOpen(false)}
-          onDismiss={() => { setBgNfe(null); setBgNfePanelOpen(false); }}
+          onDismiss={() => {
+            if ((bgNfe.interventions?.length ?? 0) === 0) {
+              setBgNfe(null);
+            }
+            setBgNfePanelOpen(false);
+          }}
         />
       )}
       {newDeliveryOpen && <NewDeliveryModal onClose={() => setNewDeliveryOpen(false)} orders={orders} vehicles={vehiclesState} onCreate={(d) => { setDeliveriesState((prev) => [d, ...prev]); notify(`Entrega ${d.id} criada com sucesso! O entregador será notificado sobre os pedidos em separação.`); addNotif('notifDeliveries', { icon: Truck, title: 'Nova entrega criada', text: `Entrega ${d.id} com ${d.driver} foi criada e está planejada.` }) }} />}
@@ -2047,21 +2075,31 @@ function BgImportPanel({ bgImport, onClose, onImportDone, onClearBgImport }) {  
 
 function BgNfePanel({ bgNfe, onClose, onDismiss }) {
   const isRunning = bgNfe?.status === 'running'
+  const interventions = bgNfe?.interventions || []
+  const hasInterventions = interventions.length > 0
   const pct = bgNfe?.total > 0 ? Math.min(100, Math.round(((bgNfe.done || 0) / bgNfe.total) * 100)) : null
 
   return (
     <div className="nfOverlay" onClick={(e) => e.target.classList.contains('nfOverlay') && onClose()}>
-      <div className="bgNfePanel">
+      <div className={`bgNfePanel${hasInterventions && !isRunning ? ' bgNfePanelWarning' : ''}`}>
 
         <div className="bgNfePanelHeader">
-          <div className="bgNfePanelAnim">
+          <div className={`bgNfePanelAnim${hasInterventions && !isRunning ? ' bgNfePanelAnimWarn' : ''}`}>
             {isRunning
               ? <Loader2 size={38} style={{ animation: 'verNotaSpin .7s linear infinite', color: 'var(--orange)' }} />
-              : <CheckCircle2 size={38} style={{ color: '#16a34a' }} />}
+              : hasInterventions
+                ? <AlertTriangle size={38} style={{ color: '#d97706' }} />
+                : <CheckCircle2 size={38} style={{ color: '#16a34a' }} />}
           </div>
-          <h3 className="bgNfePanelTitle">{isRunning ? 'Gerando notas fiscais...' : 'Automação concluída'}</h3>
+          <h3 className="bgNfePanelTitle">
+            {isRunning ? 'Gerando notas fiscais...' : hasInterventions ? 'Intervenção necessária' : 'Automação concluída'}
+          </h3>
           <p className="bgNfePanelSubtitle">
-            {isRunning ? 'A IA está processando os pedidos automaticamente.' : 'As notas fiscais foram processadas.'}
+            {isRunning
+              ? 'A IA está processando os pedidos automaticamente.'
+              : hasInterventions
+                ? `${interventions.length} pedido(s) precisam de ação manual para emitir a NF-e.`
+                : 'As notas fiscais foram processadas.'}
           </p>
         </div>
 
@@ -2071,7 +2109,7 @@ function BgNfePanel({ bgNfe, onClose, onDismiss }) {
           </div>
         )}
 
-        {pct !== null && (
+        {pct !== null && isRunning && (
           <div className="bgNfePanelProgressWrap">
             <div className="bgNfePanelProgressBar">
               <div className="bgNfePanelProgressFill" style={{ width: `${pct}%` }} />
@@ -2080,17 +2118,53 @@ function BgNfePanel({ bgNfe, onClose, onDismiss }) {
           </div>
         )}
 
-        {!isRunning && bgNfe?.message && (
+        {!isRunning && bgNfe?.message && !hasInterventions && (
           <div className="bgNfePanelResult">
             <CheckCircle2 size={14} style={{ flexShrink: 0 }} />
             <span>{bgNfe.message}</span>
           </div>
         )}
 
+        {!isRunning && bgNfe?.message && hasInterventions && (
+          <div className="bgNfePanelResultMixed">
+            <CheckCircle2 size={13} style={{ flexShrink: 0, color: '#16a34a' }} />
+            <span>{bgNfe.message}</span>
+          </div>
+        )}
+
+        {!isRunning && hasInterventions && (
+          <div className="bgNfeInterventionList">
+            <div className="bgNfeInterventionListHeader">
+              <AlertTriangle size={13} />
+              <span>Pedidos que requerem atenção manual:</span>
+            </div>
+            {interventions.map((iv) => (
+              <div key={iv.orderId} className="bgNfeInterventionItem">
+                <div className="bgNfeInterventionItemHeader">
+                  <span className="bgNfeInterventionOrderId">Pedido #{iv.orderId}</span>
+                  {iv.errorCode && <span className="bgNfeInterventionCode">cStat {iv.errorCode}</span>}
+                </div>
+                {iv.errorMessage && (
+                  <p className="bgNfeInterventionError">{iv.errorMessage}</p>
+                )}
+                <div className="bgNfeInterventionAction">
+                  <span className="bgNfeInterventionActionLabel">O que fazer:</span>
+                  <p>{iv.actionRequired || 'Verifique os dados do pedido e tente emitir a NF-e manualmente.'}</p>
+                </div>
+              </div>
+            ))}
+            <p className="bgNfeInterventionHint">
+              <Info size={12} /> Após corrigir, a próxima execução automática verificará se os problemas foram resolvidos.
+            </p>
+          </div>
+        )}
+
         <div className="bgNfePanelFooter">
           {isRunning
             ? <p className="bgImportHint"><Info size={14} /> Você pode fechar esta tela — a automação continuará em segundo plano.</p>
-            : <button className="autoActionBtnActivate" style={{ width: '100%', justifyContent: 'center' }} onClick={onDismiss}>Fechar</button>}
+            : hasInterventions
+              ? <button className="autoActionBtnActivate" style={{ width: '100%', justifyContent: 'center', background: '#d97706' }} onClick={onClose}>Fechar</button>
+              : <button className="autoActionBtnActivate" style={{ width: '100%', justifyContent: 'center' }} onClick={onDismiss}>Fechar</button>}
         </div>
       </div>
     </div>

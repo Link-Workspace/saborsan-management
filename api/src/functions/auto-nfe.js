@@ -105,11 +105,13 @@ FORMATO DE RESPOSTA (JSON obrigatório — nenhum texto fora do JSON):
   "reemitir": false,
   "usar_mesma_ref": true,
   "motivo_bloqueio": null,
+  "instrucoes_intervencao": null,
   "payload_corrigido": null
 }
 
 Quando status_decisao = "CORRIGIR_E_REEMITIR", o campo "payload_corrigido" deve conter o payload JSON completo corrigido que será enviado à Focus NF-e.
-Quando status_decisao != "CORRIGIR_E_REEMITIR", "payload_corrigido" deve ser null.`;
+Quando status_decisao != "CORRIGIR_E_REEMITIR", "payload_corrigido" deve ser null.
+Quando status_decisao = "REQUER_INTERVENCAO", o campo "instrucoes_intervencao" deve conter instruções claras e detalhadas para o usuário: qual campo precisa ser corrigido, qual valor é esperado, onde encontrar essa informação no sistema (ex: cadastro do cliente, configuração fiscal do produto) e os passos exatos para resolver o problema.`;
 
 // ── Catálogo de cStat — carregado do arquivo externo ou do fallback embutido ──
 
@@ -800,12 +802,83 @@ async function migrateNfeProgressColumns() {
     IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'AutomationRunLog')
     CREATE TABLE AutomationRunLog (id INT PRIMARY KEY IDENTITY, automation_key NVARCHAR(100) NOT NULL, result_message NVARCHAR(500), created_at DATETIME DEFAULT GETUTCDATE())
   `.catch(() => {});
+  await sql.query`
+    IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'NfeInterventions')
+    CREATE TABLE NfeInterventions (
+      id INT PRIMARY KEY IDENTITY,
+      order_id INT NOT NULL,
+      error_code NVARCHAR(50) NULL,
+      error_message NVARCHAR(MAX) NULL,
+      action_required NVARCHAR(MAX) NULL,
+      resolved BIT NOT NULL DEFAULT 0,
+      created_at DATETIME DEFAULT GETUTCDATE(),
+      resolved_at DATETIME NULL,
+      CONSTRAINT UQ_NfeInterventions_OrderId UNIQUE (order_id)
+    )
+  `.catch(() => {});
+  await sql.query(`IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('AutomationConfig') AND name = 'nfe_interventions_json') ALTER TABLE AutomationConfig ADD nfe_interventions_json NVARCHAR(MAX) NULL`).catch(() => {});
 }
 
-async function setNfeProgress(step, { total = null, done = null, isRunning = true, startNew = false } = {}) {
+function generateInterventionAction(errorCode, errorMessage, aiDecision) {
+  if (aiDecision?.instrucoes_intervencao) return aiDecision.instrucoes_intervencao;
+
+  const code = String(errorCode || '').trim();
+  const msg = String(errorMessage || '');
+
+  const knownActions = {
+    '232': 'Acesse o cadastro do cliente (menu Clientes) e verifique/preencha o campo "Inscrição Estadual" e o "Indicador de IE do Destinatário". A NF-e não pode ser emitida sem essa informação para destinatários contribuintes.',
+    '539': 'O produto possui um cBenef (código de benefício fiscal) inválido ou não cadastrado para a UF de destino. Acesse Configurações Fiscais → Benefícios Fiscais e verifique ou cadastre o cBenef correto para o produto e UF.',
+    '205': 'A NF-e referenciada não existe ou está cancelada. Verifique a chave de acesso da nota referenciada no pedido.',
+    '228': 'A data de emissão é inválida ou está fora do prazo permitido pela SEFAZ. Verifique a data do pedido.',
+    '204': 'Duplicidade de NF-e: já existe uma nota autorizada com os mesmos dados. Verifique se a NF-e já foi emitida para este pedido.',
+    '999': 'Erro interno da SEFAZ. Tente reemitir a nota manualmente em alguns minutos. Se o erro persistir, entre em contato com o suporte fiscal.',
+  };
+
+  if (knownActions[code]) return knownActions[code];
+
+  if (msg) {
+    return `Erro cStat ${code || 'desconhecido'}: "${msg.slice(0, 300)}". Verifique os dados fiscais do pedido (produtos, cliente, CFOP, CST) e tente emitir a nota manualmente. Se o problema persistir, entre em contato com o suporte fiscal.`;
+  }
+
+  return 'Não foi possível identificar o problema automaticamente. Verifique os dados do pedido e dos produtos (NCM, CST, CFOP, IE do destinatário) e tente emitir a nota manualmente ou entre em contato com o suporte fiscal.';
+}
+
+async function resolveInterventions() {
+  try {
+    await sql.query`
+      UPDATE NfeInterventions SET resolved = 1, resolved_at = GETUTCDATE()
+      WHERE resolved = 0
+        AND EXISTS (
+          SELECT 1 FROM GestaoFiscalDocuments fd
+          WHERE fd.orderId = NfeInterventions.order_id AND fd.status = 'AUTHORIZED'
+        )
+    `;
+  } catch (_) {}
+}
+
+async function saveInterventions(needsIntervention) {
+  for (const failed of needsIntervention) {
+    const orderId = failed.orderId;
+    const errCode = String(failed.errorCode || '').slice(0, 50);
+    const errMsg = String(failed.error || '').slice(0, 4000);
+    const actionRequired = generateInterventionAction(failed.errorCode, failed.error, failed.aiDecision || null);
+    try {
+      const existing = await sql.query`SELECT id FROM NfeInterventions WHERE order_id = ${orderId}`;
+      if (existing.recordset.length) {
+        await sql.query`UPDATE NfeInterventions SET error_code = ${errCode}, error_message = ${errMsg}, action_required = ${actionRequired}, resolved = 0, resolved_at = NULL, created_at = GETUTCDATE() WHERE order_id = ${orderId}`;
+      } else {
+        await sql.query`INSERT INTO NfeInterventions (order_id, error_code, error_message, action_required) VALUES (${orderId}, ${errCode}, ${errMsg}, ${actionRequired})`;
+      }
+    } catch (_) {}
+  }
+}
+
+async function setNfeProgress(step, { total = null, done = null, isRunning = true, startNew = false, interventionsJson = null } = {}) {
   try {
     if (startNew) {
-      await sql.query`UPDATE AutomationConfig SET nfe_is_running=1, nfe_current_step=${step}, nfe_run_total=${total}, nfe_run_done=${done}, nfe_run_started_at=GETUTCDATE(), updated_at=GETUTCDATE() WHERE automation_key='generate_nfe'`;
+      await sql.query`UPDATE AutomationConfig SET nfe_is_running=1, nfe_current_step=${step}, nfe_run_total=${total}, nfe_run_done=${done}, nfe_run_started_at=GETUTCDATE(), nfe_interventions_json=NULL, updated_at=GETUTCDATE() WHERE automation_key='generate_nfe'`;
+    } else if (interventionsJson !== null) {
+      await sql.query`UPDATE AutomationConfig SET nfe_is_running=${isRunning?1:0}, nfe_current_step=${step}, nfe_run_total=${total}, nfe_run_done=${done}, nfe_interventions_json=${interventionsJson}, updated_at=GETUTCDATE() WHERE automation_key='generate_nfe'`;
     } else {
       await sql.query`UPDATE AutomationConfig SET nfe_is_running=${isRunning?1:0}, nfe_current_step=${step}, nfe_run_total=${total}, nfe_run_done=${done}, updated_at=GETUTCDATE() WHERE automation_key='generate_nfe'`;
     }
@@ -1021,6 +1094,7 @@ async function runAutoNfe(context) {
       }
 
       context?.log(`[auto-nfe] IA decidiu: ${aiDecision.status_decisao} (confiança: ${aiDecision.confianca})`);
+      failed.aiDecision = aiDecision;
 
       if (aiDecision.status_decisao === 'CORRIGIR_E_REEMITIR' && aiDecision.payload_corrigido && aiDecision.reemitir && Number(aiDecision.confianca || 0) >= 0.80) {
         await setNfeProgress(`Reemitindo NF-e corrigida pela IA para o pedido #${failed.orderId}...`, { total: pendingOrders.length, done: successOrders.length });
@@ -1087,23 +1161,30 @@ async function runAutoNfe(context) {
     }
   }
 
+  // Resolve interventions that were fixed in this run, then persist new ones
+  await resolveInterventions();
+  await saveInterventions(needsIntervention);
+
+  const interventionPayload = needsIntervention.map((f) => ({
+    orderId: f.orderId,
+    errorCode: f.errorCode,
+    errorMessage: f.error,
+    actionRequired: generateInterventionAction(f.errorCode, f.error, f.aiDecision || null),
+  }));
+
   const resultMessage = `${successOrders.length} NF-e autorizada(s), ${aiResolvedOrders.length} corrigida(s) pela IA, ${needsIntervention.length} requer(em) intervenção.`;
   context?.log(`[auto-nfe] Resultado: ${resultMessage}`);
 
   await sql.query`
-    IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'AutomationRunLog')
-    CREATE TABLE AutomationRunLog (
-      id INT PRIMARY KEY IDENTITY,
-      automation_key NVARCHAR(100) NOT NULL,
-      result_message NVARCHAR(500),
-      created_at DATETIME DEFAULT GETUTCDATE()
-    )
-  `.catch(() => {});
-  await sql.query`
     INSERT INTO AutomationRunLog (automation_key, result_message) VALUES ('generate_nfe', ${resultMessage})
   `.catch(() => {});
 
-  await setNfeProgress(resultMessage, { total: pendingOrders.length, done: successOrders.length + aiResolvedOrders.length, isRunning: false });
+  await setNfeProgress(resultMessage, {
+    total: pendingOrders.length,
+    done: successOrders.length + aiResolvedOrders.length,
+    isRunning: false,
+    interventionsJson: JSON.stringify(interventionPayload),
+  });
 
   return {
     success: true,
@@ -1141,13 +1222,30 @@ app.http('auto-nfe-progress', {
       await sql.connect(sqlConfig);
       await migrateNfeProgressColumns();
 
-      const [cfgRes, logRes] = await Promise.all([
-        sql.query`SELECT nfe_is_running, nfe_current_step, nfe_run_total, nfe_run_done, nfe_run_started_at FROM AutomationConfig WHERE automation_key='generate_nfe'`.catch(() => ({ recordset: [] })),
+      const [cfgRes, logRes, intRes] = await Promise.all([
+        sql.query`SELECT nfe_is_running, nfe_current_step, nfe_run_total, nfe_run_done, nfe_run_started_at, nfe_interventions_json FROM AutomationConfig WHERE automation_key='generate_nfe'`.catch(() => ({ recordset: [] })),
         sql.query`SELECT TOP 1 result_message, created_at FROM AutomationRunLog WHERE automation_key='generate_nfe' ORDER BY id DESC`.catch(() => ({ recordset: [] })),
+        sql.query`SELECT order_id, error_code, error_message, action_required, created_at FROM NfeInterventions WHERE resolved = 0 ORDER BY created_at DESC`.catch(() => ({ recordset: [] })),
       ]);
 
       const row = cfgRes.recordset[0] || {};
       const lastRun = logRes.recordset[0] || null;
+
+      // Primary source: nfe_interventions_json stored directly in AutomationConfig
+      let pendingInterventions = [];
+      if (row.nfe_interventions_json) {
+        try { pendingInterventions = JSON.parse(row.nfe_interventions_json) || []; } catch (_) {}
+      }
+      // Fallback: NfeInterventions table (for persistence across restarts)
+      if (pendingInterventions.length === 0 && intRes.recordset.length > 0) {
+        pendingInterventions = intRes.recordset.map((r) => ({
+          orderId: r.order_id,
+          errorCode: r.error_code,
+          errorMessage: r.error_message,
+          actionRequired: r.action_required,
+          createdAt: r.created_at,
+        }));
+      }
 
       return {
         jsonBody: {
@@ -1157,6 +1255,7 @@ app.http('auto-nfe-progress', {
           done: row.nfe_run_done ?? null,
           startedAt: row.nfe_run_started_at || null,
           lastRun: lastRun ? { message: lastRun.result_message, createdAt: lastRun.created_at } : null,
+          pendingInterventions,
         },
       };
     } catch (err) {
