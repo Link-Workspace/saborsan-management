@@ -224,7 +224,11 @@ async function runAutoDelivery(context) {
   const nowUTC3 = new Date(now.getTime() - 3 * 60 * 60 * 1000); // approximate BRT
   const currentTime = `${String(nowUTC3.getHours()).padStart(2, '0')}:${String(nowUTC3.getMinutes()).padStart(2, '0')}`;
   if (cfg.time_start && cfg.time_end) {
-    if (currentTime < cfg.time_start || currentTime > cfg.time_end) {
+    const overnight = cfg.time_end < cfg.time_start;
+    const inWindow = overnight
+      ? (currentTime >= cfg.time_start || currentTime <= cfg.time_end)
+      : (currentTime >= cfg.time_start && currentTime <= cfg.time_end);
+    if (!inWindow) {
       return { skipped: true, reason: 'Fora do horário configurado.' };
     }
   }

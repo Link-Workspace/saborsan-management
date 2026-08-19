@@ -571,7 +571,7 @@ function App() {
             setBgNfe({ status: 'running', step: data.currentStep || 'Processando...', total: data.total, done: data.done, startedAt: data.startedAt });
           } else if (data.lastRun) {
             setBgNfe((prev) => {
-              if (prev?.status === 'running' || !prev) {
+              if (prev?.status === 'running') {
                 return { status: 'done', step: data.currentStep || data.lastRun.message || 'Concluído', total: data.total, done: data.done, message: data.lastRun.message };
               }
               return prev;
@@ -591,8 +591,7 @@ function App() {
     if (prev === 'running' && bgNfe?.status === 'done') {
       addNotif('notifFiscalDocuments', { icon: Settings2, title: 'Automação de NF-e concluída', text: bgNfe.message || 'As notas fiscais foram processadas.' });
       fetchOrders();
-      const t = setTimeout(() => setBgNfe(null), 12000);
-      return () => clearTimeout(t);
+      setBgNfePanelOpen(true);
     }
   }, [bgNfe?.status])
   useEffect(() => { fetchVehicles() }, [])
@@ -888,11 +887,11 @@ function App() {
                 <PackageCheck size={19} />
               </button>
             )}
-            {bgNfe && (
+            {bgNfe?.status === 'running' && (
               <button
-                className={`iconButton bgImportPulse`}
+                className="iconButton bgImportPulse"
                 onClick={() => setBgNfePanelOpen(true)}
-                title={bgNfe.status === 'running' ? 'Gerando notas fiscais automaticamente...' : 'Automação NF-e concluída — clique para ver resultado'}
+                title="Gerando notas fiscais automaticamente..."
               >
                 <Settings2 size={19} />
               </button>
@@ -2053,7 +2052,6 @@ function BgNfePanel({ bgNfe, onClose, onDismiss }) {
   return (
     <div className="nfOverlay" onClick={(e) => e.target.classList.contains('nfOverlay') && onClose()}>
       <div className="bgNfePanel">
-        <button className="nfClose" onClick={onClose}><X size={16} /></button>
 
         <div className="bgNfePanelHeader">
           <div className="bgNfePanelAnim">
@@ -2067,10 +2065,11 @@ function BgNfePanel({ bgNfe, onClose, onDismiss }) {
           </p>
         </div>
 
-        <div className="bgNfePanelStepRow">
-          <span className="bgNfePanelStepLabel">Status:</span>
-          <span className="bgNfePanelStepText">{bgNfe?.step || 'Aguardando próxima execução...'}</span>
-        </div>
+        {isRunning && (
+          <div className="bgNfePanelStepRow">
+            <span className="bgNfePanelStepText">{bgNfe?.step || 'Processando...'}</span>
+          </div>
+        )}
 
         {pct !== null && (
           <div className="bgNfePanelProgressWrap">
@@ -7780,6 +7779,8 @@ function PrintDanfeModal({ order, onClose }) {
   const [selectedPrinter, setSelectedPrinter] = useState('')
   const [printersLoading, setPrintersLoading] = useState(true)
   const nfe = order.nfeData
+  const isNfce = nfe?.documentType === 'NFC-e' || String(nfe?.reference || '').toUpperCase().startsWith('NFCE')
+  const docLabel = isNfce ? 'NFC-e' : 'NF-e'
 
   useEffect(() => {
     fetch(`${API_URL}/api/print-danfe`)
@@ -7787,7 +7788,8 @@ function PrintDanfeModal({ order, onClose }) {
       .then((data) => {
         if (data.printers?.length) {
           setPrinters(data.printers)
-          setSelectedPrinter(data.default || data.printers[0])
+          const preferred = isNfce && data.thermalPrinter ? data.thermalPrinter : (data.default || data.printers[0])
+          setSelectedPrinter(preferred)
         }
       })
       .catch(() => {})
@@ -7820,8 +7822,8 @@ function PrintDanfeModal({ order, onClose }) {
         <div className="modalHeader">
           <div>
             <span>Impressão</span>
-            <h2>Imprimir DANFE</h2>
-            <p>{order.customer}{nfe?.number ? ` • NF-e nº ${nfe.number}` : ''}</p>
+            <h2>Imprimir DAN{isNfce ? 'FC-e' : 'FE'}</h2>
+            <p>{order.customer}{nfe?.number ? ` • ${docLabel} nº ${nfe.number}` : ''}</p>
           </div>
           <Printer size={30} style={{ color: 'var(--navy)', opacity: .35, flexShrink: 0 }} />
         </div>
@@ -7829,7 +7831,7 @@ function PrintDanfeModal({ order, onClose }) {
           {nfe?.number && (
             <div className="printDanfeInfoCard">
               <small>Documento</small>
-              <b>NF-e nº {nfe.number}{nfe.series ? ` — Série ${nfe.series}` : ''}</b>
+              <b>{docLabel} nº {nfe.number}{nfe.series ? ` — Série ${nfe.series}` : ''}</b>
               <span>{order.customer}</span>
             </div>
           )}

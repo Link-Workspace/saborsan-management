@@ -219,18 +219,10 @@ function mapFocusStatus(response) {
     };
   }
   const raw = String(response.status || response.situacao || '').toLowerCase();
-  if (raw.includes('autoriz')) {
-    return {
-      status: 'AUTHORIZED',
-      number: response.numero,
-      series: response.serie,
-      accessKey: response.chave_nfe || response.chave || response.chave_acesso,
-      protocol: response.protocolo || response.numero_protocolo,
-      xmlPath: response.caminho_xml_nota_fiscal || response.caminho_xml,
-      danfePath: response.caminho_danfe || response.caminho_pdf,
-    };
-  }
-  if (raw.includes('process') || raw.includes('fila') || raw.includes('em processamento') || raw.includes('recebido')) {
+  // Sem status_sefaz: não confirmar AUTHORIZED por string — o SEFAZ pode ainda estar processando
+  // ou ter rejeitado. Tratar 'autoriz' como PROCESSING para forçar polling com ?completa=1,
+  // que retornará o status_sefaz definitivo (100 = autorizado, outro = rejeitado).
+  if (raw.includes('process') || raw.includes('fila') || raw.includes('em processamento') || raw.includes('recebido') || raw.includes('autoriz')) {
     return { status: 'PROCESSING' };
   }
   if (raw.includes('cancel')) return { status: 'CANCELLED' };
@@ -665,7 +657,7 @@ async function emitirNfeParaPedido(orderId, context) {
     return { success: false, error: errosCBenef.join('\n'), orderId, skipRetry: true };
   }
 
-  // Verifica se já existe doc ativo
+  // Verifica se já existe doc ativo (bloqueante)
   const existingRes = await sql.query`
     SELECT id, status, focusReference, nfeNumber, nfeSeries, accessKey, protocol
     FROM GestaoFiscalDocuments WHERE orderId = ${orderId} AND status IN ('AUTHORIZED', 'PROCESSING', 'SUBMITTING', 'MANUAL_REVIEW')
@@ -675,6 +667,12 @@ async function emitirNfeParaPedido(orderId, context) {
     if (ex.status === 'AUTHORIZED') return { success: true, orderId, reference: ex.focusReference, alreadyAuthorized: true };
     return { success: false, error: `NF-e em processamento (${ex.status})`, orderId, reference: ex.focusReference };
   }
+
+  // Marca docs REJECTED/SUBMISSION_FAILED anteriores como superados antes de nova tentativa
+  await sql.query`
+    UPDATE GestaoFiscalDocuments SET status = 'SUBMISSION_FAILED', updatedAt = GETUTCDATE()
+    WHERE orderId = ${orderId} AND status IN ('REJECTED', 'SUBMISSION_FAILED')
+  `.catch(() => {});
 
   const purchasePurpose = order.purchasePurpose || 'consumo';
   let stateRegistrationIndicator = 9;
@@ -734,7 +732,7 @@ async function emitirNfeParaPedido(orderId, context) {
     }
 
     await sql.query`UPDATE GestaoFiscalDocuments SET status = 'PROCESSING', responsePayload = ${JSON.stringify(focusRes.data)}, updatedAt = GETUTCDATE() WHERE id = ${docId}`;
-    return { success: false, error: 'NF-e em processamento', orderId, reference, docId, processing: true };
+    return { success: false, error: 'NF-e em processamento', orderId, reference, docId, processing: true, payload, order, items, fiscalConfigs };
   } catch (focusErr) {
     const isDataError = focusErr.httpStatus === 400 || focusErr.httpStatus === 422;
     const docStatus = isDataError ? 'REJECTED' : 'SUBMISSION_FAILED';
@@ -814,6 +812,44 @@ async function setNfeProgress(step, { total = null, done = null, isRunning = tru
   } catch (_) {}
 }
 
+// ── Correção programática para erros com solução determinística ────────────────
+
+async function tryProgrammaticFix(failed, context) {
+  const { errorCode, order, payload } = failed;
+  if (!payload || !order) return null;
+
+  // cStat 232: IE do destinatário não informada — busca indicador/IE do cadastro do cliente
+  if (String(errorCode).trim() === '232') {
+    const cnpjNorm = order.clientCnpj ? String(order.clientCnpj).replace(/\D/g, '') : null;
+    if (!cnpjNorm || cnpjNorm.length !== 14) return null;
+    try {
+      const clientRes = await sql.query`
+        SELECT TOP 1 stateRegistrationIndicator, stateRegistration
+        FROM Clients WHERE cnpjNormalized = ${cnpjNorm}
+      `;
+      if (!clientRes.recordset.length) return null;
+      const { stateRegistrationIndicator: indicator, stateRegistration: ie } = clientRes.recordset[0];
+      if (indicator === null || indicator === undefined) return null;
+
+      const corrected = JSON.parse(JSON.stringify(payload));
+      corrected.indicador_inscricao_estadual_destinatario = indicator;
+      if (indicator === 1 && ie) {
+        corrected.inscricao_estadual_destinatario = String(ie).replace(/\D/g, '');
+      } else {
+        delete corrected.inscricao_estadual_destinatario;
+      }
+      corrected.consumidor_final = (indicator === 9 || (order.purchasePurpose || 'consumo') === 'consumo') ? 1 : 0;
+      context?.log(`[auto-nfe] Correção programática 232: indicador ${indicator}${ie ? `, IE ${ie}` : ''} — pedido ${failed.orderId}`);
+      return corrected;
+    } catch (err) {
+      context?.error('[auto-nfe] tryProgrammaticFix 232:', err);
+      return null;
+    }
+  }
+
+  return null;
+}
+
 // ── Lógica principal da automação ─────────────────────────────────────────────
 
 async function runAutoNfe(context) {
@@ -841,12 +877,16 @@ async function runAutoNfe(context) {
   const nowBRT = new Date(now.getTime() - 3 * 60 * 60 * 1000);
   const currentTime = `${String(nowBRT.getHours()).padStart(2, '0')}:${String(nowBRT.getMinutes()).padStart(2, '0')}`;
   if (cfg.time_start && cfg.time_end) {
-    if (currentTime < cfg.time_start || currentTime > cfg.time_end) {
+    const overnight = cfg.time_end < cfg.time_start;
+    const inWindow = overnight
+      ? (currentTime >= cfg.time_start || currentTime <= cfg.time_end)
+      : (currentTime >= cfg.time_start && currentTime <= cfg.time_end);
+    if (!inWindow) {
       return { skipped: true, reason: 'Fora do horário configurado.' };
     }
   }
 
-  // Busca pedidos Pronto sem NF-e autorizada ou com SUBMISSION_FAILED
+  // Busca pedidos Pronto sem NF-e autorizada ou com SUBMISSION_FAILED / REJECTED (ambos são retentados)
   const pendingOrdersResult = await sql.query`
     SELECT DISTINCT o.id AS orderId
     FROM GestaoOrders o
@@ -859,7 +899,7 @@ async function runAutoNfe(context) {
       AND (
         EXISTS (
           SELECT 1 FROM GestaoFiscalDocuments fd2
-          WHERE fd2.orderId = o.id AND fd2.status = 'SUBMISSION_FAILED'
+          WHERE fd2.orderId = o.id AND fd2.status IN ('SUBMISSION_FAILED', 'REJECTED')
         )
         OR NOT EXISTS (
           SELECT 1 FROM GestaoFiscalDocuments fd3 WHERE fd3.orderId = o.id
@@ -897,7 +937,7 @@ async function runAutoNfe(context) {
           successOrders.push(orderId);
           if (printDanfeAuto && result.reference) await printDanfe(result.reference, context).catch(() => {});
         } else {
-          failedOrders.push({ orderId, errorCode: pollResult.errorCode, error: pollResult.errorMessage || 'Timeout aguardando autorização', payload: null, order: null, items: null, fiscalConfigs: null });
+          failedOrders.push({ orderId, errorCode: pollResult.errorCode, error: pollResult.errorMessage || 'Timeout aguardando autorização', payload: result.payload || null, order: result.order || null, items: result.items || null, fiscalConfigs: result.fiscalConfigs || null });
         }
       } else if (!result.skipRetry) {
         failedOrders.push({ orderId, errorCode: result.errorCode, error: result.error, payload: result.payload, order: result.order, items: result.items, fiscalConfigs: result.fiscalConfigs });
@@ -923,6 +963,40 @@ async function runAutoNfe(context) {
       needsIntervention.push(failed);
       if (notifySellerId) {
         await notifySellerAboutNfeError(notifySellerId, failed.orderId, failed.error, context).catch(() => {});
+      }
+      continue;
+    }
+
+    // Correção determinística antes de acionar a IA
+    const progPayload = await tryProgrammaticFix(failed, context);
+    if (progPayload) {
+      await setNfeProgress(`Corrigindo IE automaticamente para o pedido #${failed.orderId} (cStat ${failed.errorCode})...`, { total: pendingOrders.length, done: successOrders.length });
+      try {
+        await sql.query`UPDATE GestaoFiscalDocuments SET status = 'SUBMISSION_FAILED', updatedAt = GETUTCDATE() WHERE orderId = ${failed.orderId} AND status IN ('REJECTED', 'SUBMISSION_FAILED')`.catch(() => {});
+        const envP = process.env.NODE_ENV === 'production' ? 'PRODUCTION' : 'HOMOLOGATION';
+        const createResP = await sql.query`INSERT INTO GestaoFiscalDocuments (orderId, environment, status) OUTPUT INSERTED.id VALUES (${failed.orderId}, ${envP}, 'SUBMITTING')`;
+        const docIdP = createResP.recordset[0].id;
+        const referenceP = createNfeReference(docIdP);
+        await sql.query`UPDATE GestaoFiscalDocuments SET focusReference = ${referenceP}, requestPayload = ${JSON.stringify(progPayload)}, issuedAt = GETUTCDATE(), updatedAt = GETUTCDATE() WHERE id = ${docIdP}`;
+        const focusResP = await focusRequest(`/v2/nfe?ref=${encodeURIComponent(referenceP)}`, { method: 'POST', body: progPayload });
+        const mappedP = mapFocusStatus(focusResP.data);
+        if (mappedP.status === 'AUTHORIZED') {
+          await sql.query`UPDATE GestaoFiscalDocuments SET status = 'AUTHORIZED', nfeNumber = ${mappedP.number || null}, nfeSeries = ${mappedP.series || null}, accessKey = ${mappedP.accessKey || null}, protocol = ${mappedP.protocol || null}, xmlPath = ${mappedP.xmlPath || null}, danfePath = ${mappedP.danfePath || null}, authorizedAt = GETUTCDATE(), responsePayload = ${JSON.stringify(focusResP.data)}, updatedAt = GETUTCDATE() WHERE id = ${docIdP}`;
+          await sql.query`UPDATE GestaoOrders SET status = N'Pronto', updatedAt = GETUTCDATE() WHERE id = ${failed.orderId}`;
+          await notifyDriverNfeAuthorized(failed.orderId, context);
+          aiResolvedOrders.push(failed.orderId);
+          if (printDanfeAuto) await printDanfe(referenceP, context).catch(() => {});
+        } else if (mappedP.status === 'PROCESSING') {
+          await sql.query`UPDATE GestaoFiscalDocuments SET status = 'PROCESSING', responsePayload = ${JSON.stringify(focusResP.data)}, updatedAt = GETUTCDATE() WHERE id = ${docIdP}`;
+          aiResolvedOrders.push(failed.orderId);
+        } else {
+          const errMsgP = focusResP.data?.mensagem_sefaz || focusResP.data?.mensagem || JSON.stringify(focusResP.data);
+          await sql.query`UPDATE GestaoFiscalDocuments SET status = 'REJECTED', errorCode = ${String(focusResP.data?.status_sefaz || 'PROG_ERR')}, errorMessage = ${errMsgP}, responsePayload = ${JSON.stringify(focusResP.data)}, updatedAt = GETUTCDATE() WHERE id = ${docIdP}`;
+          needsIntervention.push(failed);
+        }
+      } catch (progErr) {
+        context?.error(`[auto-nfe] Erro na correção programática do pedido ${failed.orderId}:`, progErr);
+        needsIntervention.push(failed);
       }
       continue;
     }

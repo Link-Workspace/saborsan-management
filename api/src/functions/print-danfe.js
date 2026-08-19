@@ -3,6 +3,25 @@ const { app } = require('@azure/functions')
 const path = require('path')
 const fs = require('fs')
 const os = require('os')
+const sql = require('mssql')
+
+const sqlConfig = {
+  server:   process.env.SQL_SERVER,
+  database: process.env.SQL_DATABASE,
+  user:     process.env.SQL_USER,
+  password: process.env.SQL_PASSWORD,
+  options:  { encrypt: true, trustServerCertificate: false },
+}
+
+async function getThermalPrinter() {
+  try {
+    const pool = await sql.connect(sqlConfig)
+    const result = await pool.request().query(`SELECT TOP 1 defaultThermalPrinter FROM DeviceSettings ORDER BY id ASC`)
+    return result.recordset[0]?.defaultThermalPrinter || null
+  } catch {
+    return null
+  }
+}
 
 function getFocusConfig() {
   const baseUrl = process.env.FOCUS_NFE_BASE_URL
@@ -40,10 +59,10 @@ app.http('print-danfe', {
     // ── GET: lista impressoras do sistema ─────────────────────────────────
     if (request.method === 'GET') {
       try {
-        const list = await getPrinters()
+        const [list, thermalPrinter] = await Promise.all([getPrinters(), getThermalPrinter()])
         const names = list.map((p) => p.deviceName || p.name || String(p)).filter(Boolean)
         const defaultPrinter = list.find((p) => p.isDefault)?.deviceName || names[0] || null
-        return { jsonBody: { printers: names, default: defaultPrinter } }
+        return { jsonBody: { printers: names, default: defaultPrinter, thermalPrinter } }
       } catch (err) {
         context.error('Erro ao listar impressoras:', err)
         return { status: 500, jsonBody: { error: 'Não foi possível listar as impressoras do sistema.' } }

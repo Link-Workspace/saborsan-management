@@ -1060,30 +1060,33 @@ app.http('emit-nfe', {
 
           const clientRow = clientRes.recordset[0];
 
-          if (clientRow) {
-            const precisaConsultar =
-              clientRow.stateRegistrationIndicator === null ||
-              clientRow.stateRegistrationIndicator === undefined ||
-              !clientRow.nextFiscalLookupAt ||
-              new Date(clientRow.nextFiscalLookupAt) <= new Date() ||
-              clientRow.requiresFiscalReview;
+          const clientUf = String(order.clientCity || '').includes(' - ')
+            ? order.clientCity.split(' - ').pop().trim()
+            : null;
 
-            if (precisaConsultar) {
-              try {
-                const clientUf = String(order.clientCity || '').includes(' - ')
-                  ? order.clientCity.split(' - ').pop().trim()
-                  : null;
+          const precisaConsultar = !clientRow ||
+            clientRow.stateRegistrationIndicator === null ||
+            clientRow.stateRegistrationIndicator === undefined ||
+            !clientRow.nextFiscalLookupAt ||
+            new Date(clientRow.nextFiscalLookupAt) <= new Date() ||
+            clientRow.requiresFiscalReview;
 
-                const focusRes = await focusRequest(`/v2/cnpjs/${cnpjNorm}`);
-                const ieResult = extrairIEDaResposta(focusRes.data, clientUf);
+          if (precisaConsultar) {
+            try {
+              const focusRes = await focusRequest(`/v2/cnpjs/${cnpjNorm}`);
+              const ieResult = extrairIEDaResposta(focusRes.data, clientUf);
 
-                // Preserva IE anterior se a nova consulta não a encontrou
-                const perdeuIE = clientRow.stateRegistrationIndicator === 1 && clientRow.stateRegistration && ieResult.stateRegistrationIndicator !== 1;
-                const novoIndicador = perdeuIE ? clientRow.stateRegistrationIndicator : ieResult.stateRegistrationIndicator;
-                const novaIE = perdeuIE ? clientRow.stateRegistration : ieResult.stateRegistration;
-                const requerRevisao = perdeuIE ? 1 : 0;
-                const proxima = new Date(Date.now() + 15 * 24 * 60 * 60 * 1000);
+              // Preserva IE anterior se a nova consulta não a encontrou
+              const perdeuIE = clientRow &&
+                clientRow.stateRegistrationIndicator === 1 &&
+                clientRow.stateRegistration &&
+                ieResult.stateRegistrationIndicator !== 1;
+              const novoIndicador = perdeuIE ? clientRow.stateRegistrationIndicator : ieResult.stateRegistrationIndicator;
+              const novaIE = perdeuIE ? clientRow.stateRegistration : ieResult.stateRegistration;
+              const requerRevisao = perdeuIE ? 1 : 0;
+              const proxima = new Date(Date.now() + 15 * 24 * 60 * 60 * 1000);
 
+              if (clientRow) {
                 await sql.query`
                   UPDATE Clients SET
                     cnpjNormalized                  = ${cnpjNorm},
@@ -1100,15 +1103,17 @@ app.http('emit-nfe', {
                     fiscalLookupResponseJson        = ${JSON.stringify(focusRes.data)}
                   WHERE id = ${clientRow.id}
                 `;
+              }
 
-                stateRegistrationIndicator = novoIndicador;
-                stateRegistration = novaIE;
-              } catch (consultaErr) {
-                // Focus indisponível: usa último dado válido se existir
-                if (clientRow.stateRegistrationIndicator !== null && clientRow.stateRegistrationIndicator !== undefined) {
-                  stateRegistrationIndicator = clientRow.stateRegistrationIndicator;
-                  stateRegistration = clientRow.stateRegistration;
-                }
+              stateRegistrationIndicator = novoIndicador;
+              stateRegistration = novaIE;
+            } catch (consultaErr) {
+              // Focus indisponível: usa último dado válido se existir
+              if (clientRow && clientRow.stateRegistrationIndicator !== null && clientRow.stateRegistrationIndicator !== undefined) {
+                stateRegistrationIndicator = clientRow.stateRegistrationIndicator;
+                stateRegistration = clientRow.stateRegistration;
+              }
+              if (clientRow) {
                 try {
                   const errMsg = String(consultaErr.message || 'Erro na consulta CNPJ').slice(0, 490);
                   await sql.query`
@@ -1119,13 +1124,11 @@ app.http('emit-nfe', {
                   `;
                 } catch (_) {}
               }
-            } else {
-              // Dados ainda válidos
-              if (clientRow.stateRegistrationIndicator !== null && clientRow.stateRegistrationIndicator !== undefined) {
-                stateRegistrationIndicator = clientRow.stateRegistrationIndicator;
-                stateRegistration = clientRow.stateRegistration;
-              }
             }
+          } else {
+            // Dados ainda válidos
+            stateRegistrationIndicator = clientRow.stateRegistrationIndicator;
+            stateRegistration = clientRow.stateRegistration;
           }
         }
 
