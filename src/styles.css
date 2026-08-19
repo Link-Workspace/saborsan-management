@@ -466,6 +466,21 @@ p{margin:0}.appShell{min-height:100vh;display:grid;grid-template-columns:300px 1
 .settingsSectionH2{font-size:1.5rem;letter-spacing:-.03em;margin-top:2px}
 @keyframes bgImportPulse{0%,100%{box-shadow:0 0 0 0 rgba(255,122,0,.5);border-color:var(--orange)}50%{box-shadow:0 0 0 5px rgba(255,122,0,0);border-color:#f25c00}}
 .bgImportPulse{border-color:var(--orange)!important;color:var(--orange)!important;animation:bgImportPulse 1.1s ease-in-out infinite}
+/* NF-e background automation panel */
+.bgNfePanel{background:#fff;border-radius:24px;padding:28px 24px 24px;width:100%;max-width:420px;box-shadow:0 40px 120px rgba(6,54,111,.22);position:relative}
+.bgNfePanelHeader{display:flex;flex-direction:column;align-items:center;gap:10px;margin-bottom:20px}
+.bgNfePanelAnim{width:64px;height:64px;border-radius:20px;background:linear-gradient(135deg,#fff7ed,#ffedd5);display:grid;place-items:center;border:2px solid #fed7aa}
+.bgNfePanelTitle{font-size:1.1rem;font-family:'Montserrat',sans-serif;color:var(--navy-dark);margin:0;text-align:center}
+.bgNfePanelSubtitle{color:var(--muted);font-size:.85rem;font-weight:600;margin:0;text-align:center}
+.bgNfePanelStepRow{display:flex;flex-direction:column;gap:4px;background:#f8fafc;border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-bottom:14px}
+.bgNfePanelStepLabel{font-size:.75rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+.bgNfePanelStepText{font-size:.88rem;font-weight:600;color:var(--navy-dark);line-height:1.45}
+.bgNfePanelProgressWrap{margin-bottom:14px}
+.bgNfePanelProgressBar{height:6px;background:#e2e8f0;border-radius:99px;overflow:hidden;margin-bottom:6px}
+.bgNfePanelProgressFill{height:100%;background:linear-gradient(90deg,var(--orange),#ff9c2c);border-radius:99px;transition:width .4s ease}
+.bgNfePanelProgressLabel{font-size:.8rem;color:var(--muted);font-weight:600}
+.bgNfePanelResult{display:flex;align-items:flex-start;gap:7px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:12px;padding:10px 14px;font-size:.86rem;font-weight:700;color:#15803d;margin-bottom:14px}
+.bgNfePanelFooter{margin-top:4px}
 /* Automation Action Dialog */
 .autoActionDialog{background:#fff;border-radius:28px;padding:32px 28px 28px;width:100%;max-width:400px;box-shadow:0 40px 120px rgba(6,54,111,.22);position:relative;text-align:center}
 .autoActionIcon{width:56px;height:56px;border-radius:18px;background:linear-gradient(135deg,var(--navy-dark),var(--navy));color:#fff;display:grid;place-items:center;margin:0 auto 16px}

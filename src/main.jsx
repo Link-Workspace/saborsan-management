@@ -428,6 +428,10 @@ function App() {
   const [apiProductsState, setApiProductsState] = useState([])
   const [bgImport, setBgImport] = useState(null)
   const [bgImportPanelOpen, setBgImportPanelOpen] = useState(false)
+  const [bgNfe, setBgNfe] = useState(null)
+  const [bgNfePanelOpen, setBgNfePanelOpen] = useState(false)
+  const bgNfeIntervalRef = useRef(null)
+  const prevBgNfeStatusRef = useRef(null)
   const [receiveOrdersActive, setReceiveOrdersActive] = useState(false)
   const [generateNfeActive, setGenerateNfeActive] = useState(false)
 
@@ -553,6 +557,44 @@ function App() {
       .then((data) => { setGenerateNfeActive(!!(data?.config?.isActive)) })
       .catch(() => {})
   }, [])
+
+  useEffect(() => {
+    if (!generateNfeActive) {
+      if (bgNfeIntervalRef.current) { clearInterval(bgNfeIntervalRef.current); bgNfeIntervalRef.current = null; }
+      return;
+    }
+    const poll = () => {
+      fetch(`${API_URL}/api/auto-nfe-progress`)
+        .then((r) => r.json())
+        .then((data) => {
+          if (data.isRunning) {
+            setBgNfe({ status: 'running', step: data.currentStep || 'Processando...', total: data.total, done: data.done, startedAt: data.startedAt });
+          } else if (data.lastRun) {
+            setBgNfe((prev) => {
+              if (prev?.status === 'running' || !prev) {
+                return { status: 'done', step: data.currentStep || data.lastRun.message || 'Concluído', total: data.total, done: data.done, message: data.lastRun.message };
+              }
+              return prev;
+            });
+          }
+        })
+        .catch(() => {});
+    };
+    bgNfeIntervalRef.current = setInterval(poll, 3000);
+    poll();
+    return () => { if (bgNfeIntervalRef.current) { clearInterval(bgNfeIntervalRef.current); bgNfeIntervalRef.current = null; } };
+  }, [generateNfeActive])
+
+  useEffect(() => {
+    const prev = prevBgNfeStatusRef.current;
+    prevBgNfeStatusRef.current = bgNfe?.status ?? null;
+    if (prev === 'running' && bgNfe?.status === 'done') {
+      addNotif('notifFiscalDocuments', { icon: Settings2, title: 'Automação de NF-e concluída', text: bgNfe.message || 'As notas fiscais foram processadas.' });
+      fetchOrders();
+      const t = setTimeout(() => setBgNfe(null), 12000);
+      return () => clearTimeout(t);
+    }
+  }, [bgNfe?.status])
   useEffect(() => { fetchVehicles() }, [])
   useEffect(() => { fetchClients() }, [])
   useEffect(() => { fetchPayments() }, [])
@@ -846,6 +888,15 @@ function App() {
                 <PackageCheck size={19} />
               </button>
             )}
+            {bgNfe && (
+              <button
+                className={`iconButton bgImportPulse`}
+                onClick={() => setBgNfePanelOpen(true)}
+                title={bgNfe.status === 'running' ? 'Gerando notas fiscais automaticamente...' : 'Automação NF-e concluída — clique para ver resultado'}
+              >
+                <Settings2 size={19} />
+              </button>
+            )}
             <button className="iconButton" onClick={() => setNotifOpen(!notifOpen)}><Bell size={19} />{systemNotifications.length > 0 && <span>{systemNotifications.length}</span>}</button>
           </div>
         </header>
@@ -897,6 +948,13 @@ function App() {
             setBgImportPanelOpen(false)
           }}
           onClearBgImport={() => { setBgImport(null); setBgImportPanelOpen(false) }}
+        />
+      )}
+      {bgNfePanelOpen && bgNfe && (
+        <BgNfePanel
+          bgNfe={bgNfe}
+          onClose={() => setBgNfePanelOpen(false)}
+          onDismiss={() => { setBgNfe(null); setBgNfePanelOpen(false); }}
         />
       )}
       {newDeliveryOpen && <NewDeliveryModal onClose={() => setNewDeliveryOpen(false)} orders={orders} vehicles={vehiclesState} onCreate={(d) => { setDeliveriesState((prev) => [d, ...prev]); notify(`Entrega ${d.id} criada com sucesso! O entregador será notificado sobre os pedidos em separação.`); addNotif('notifDeliveries', { icon: Truck, title: 'Nova entrega criada', text: `Entrega ${d.id} com ${d.driver} foi criada e está planejada.` }) }} />}
@@ -1811,8 +1869,7 @@ function NewProductModal({ onClose, onCreated, editProduct, onUpdated, bgImport,
   )
 }
 
-function BgImportPanel({ bgImport, onClose, onImportDone, onClearBgImport }) {
-  const [uploadResult, setUploadResult] = useState(null)
+function BgImportPanel({ bgImport, onClose, onImportDone, onClearBgImport }) {  const [uploadResult, setUploadResult] = useState(null)
   const [uploadSubmitting, setUploadSubmitting] = useState(false)
   const [uploadError, setUploadError] = useState('')
   const [rowUpdatedSet, setRowUpdatedSet] = useState(new Set())
@@ -1983,6 +2040,58 @@ function BgImportPanel({ bgImport, onClose, onImportDone, onClearBgImport }) {
               ) : null
             })()}
           </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function BgNfePanel({ bgNfe, onClose, onDismiss }) {
+  const isRunning = bgNfe?.status === 'running'
+  const pct = bgNfe?.total > 0 ? Math.min(100, Math.round(((bgNfe.done || 0) / bgNfe.total) * 100)) : null
+
+  return (
+    <div className="nfOverlay" onClick={(e) => e.target.classList.contains('nfOverlay') && onClose()}>
+      <div className="bgNfePanel">
+        <button className="nfClose" onClick={onClose}><X size={16} /></button>
+
+        <div className="bgNfePanelHeader">
+          <div className="bgNfePanelAnim">
+            {isRunning
+              ? <Loader2 size={38} style={{ animation: 'verNotaSpin .7s linear infinite', color: 'var(--orange)' }} />
+              : <CheckCircle2 size={38} style={{ color: '#16a34a' }} />}
+          </div>
+          <h3 className="bgNfePanelTitle">{isRunning ? 'Gerando notas fiscais...' : 'Automação concluída'}</h3>
+          <p className="bgNfePanelSubtitle">
+            {isRunning ? 'A IA está processando os pedidos automaticamente.' : 'As notas fiscais foram processadas.'}
+          </p>
+        </div>
+
+        <div className="bgNfePanelStepRow">
+          <span className="bgNfePanelStepLabel">Status:</span>
+          <span className="bgNfePanelStepText">{bgNfe?.step || 'Aguardando próxima execução...'}</span>
+        </div>
+
+        {pct !== null && (
+          <div className="bgNfePanelProgressWrap">
+            <div className="bgNfePanelProgressBar">
+              <div className="bgNfePanelProgressFill" style={{ width: `${pct}%` }} />
+            </div>
+            <span className="bgNfePanelProgressLabel">{bgNfe.done || 0} de {bgNfe.total} pedido(s)</span>
+          </div>
+        )}
+
+        {!isRunning && bgNfe?.message && (
+          <div className="bgNfePanelResult">
+            <CheckCircle2 size={14} style={{ flexShrink: 0 }} />
+            <span>{bgNfe.message}</span>
+          </div>
+        )}
+
+        <div className="bgNfePanelFooter">
+          {isRunning
+            ? <p className="bgImportHint"><Info size={14} /> Você pode fechar esta tela — a automação continuará em segundo plano.</p>
+            : <button className="autoActionBtnActivate" style={{ width: '100%', justifyContent: 'center' }} onClick={onDismiss}>Fechar</button>}
         </div>
       </div>
     </div>

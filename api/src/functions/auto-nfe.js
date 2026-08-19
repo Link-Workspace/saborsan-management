@@ -790,10 +790,35 @@ async function pollProcessingNfe(reference, docId, orderId, context) {
   return { timeout: true };
 }
 
+// ── Progresso em tempo real ───────────────────────────────────────────────────
+
+async function migrateNfeProgressColumns() {
+  const cols = ['nfe_is_running BIT NOT NULL DEFAULT 0', 'nfe_current_step NVARCHAR(500) NULL', 'nfe_run_total INT NULL', 'nfe_run_done INT NULL', 'nfe_run_started_at DATETIME NULL'];
+  const names = ['nfe_is_running', 'nfe_current_step', 'nfe_run_total', 'nfe_run_done', 'nfe_run_started_at'];
+  for (let i = 0; i < names.length; i++) {
+    await sql.query(`IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('AutomationConfig') AND name = '${names[i]}') ALTER TABLE AutomationConfig ADD ${cols[i]}`).catch(() => {});
+  }
+  await sql.query`
+    IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'AutomationRunLog')
+    CREATE TABLE AutomationRunLog (id INT PRIMARY KEY IDENTITY, automation_key NVARCHAR(100) NOT NULL, result_message NVARCHAR(500), created_at DATETIME DEFAULT GETUTCDATE())
+  `.catch(() => {});
+}
+
+async function setNfeProgress(step, { total = null, done = null, isRunning = true, startNew = false } = {}) {
+  try {
+    if (startNew) {
+      await sql.query`UPDATE AutomationConfig SET nfe_is_running=1, nfe_current_step=${step}, nfe_run_total=${total}, nfe_run_done=${done}, nfe_run_started_at=GETUTCDATE(), updated_at=GETUTCDATE() WHERE automation_key='generate_nfe'`;
+    } else {
+      await sql.query`UPDATE AutomationConfig SET nfe_is_running=${isRunning?1:0}, nfe_current_step=${step}, nfe_run_total=${total}, nfe_run_done=${done}, updated_at=GETUTCDATE() WHERE automation_key='generate_nfe'`;
+    }
+  } catch (_) {}
+}
+
 // ── Lógica principal da automação ─────────────────────────────────────────────
 
 async function runAutoNfe(context) {
   await sql.connect(sqlConfig);
+  await migrateNfeProgressColumns();
 
   // Carrega config da automação
   const cfgResult = await sql.query`
@@ -849,11 +874,13 @@ async function runAutoNfe(context) {
   }
 
   context?.log(`[auto-nfe] Processando ${pendingOrders.length} pedido(s)...`);
+  await setNfeProgress(`Encontrado(s) ${pendingOrders.length} pedido(s) para emitir NF-e...`, { total: pendingOrders.length, done: 0, startNew: true });
 
   const successOrders = [];
   const failedOrders = [];
 
-  for (const { orderId } of pendingOrders) {
+  for (const [idx, { orderId }] of pendingOrders.entries()) {
+    await setNfeProgress(`Emitindo NF-e do pedido #${orderId}...`, { total: pendingOrders.length, done: idx });
     try {
       const result = await emitirNfeParaPedido(orderId, context);
 
@@ -864,6 +891,7 @@ async function runAutoNfe(context) {
         }
       } else if (result.processing && result.reference) {
         // Tenta polling para aguardar autorização
+        await setNfeProgress(`Aguardando autorização SEFAZ do pedido #${orderId}...`, { total: pendingOrders.length, done: idx });
         const pollResult = await pollProcessingNfe(result.reference, result.docId, orderId, context);
         if (pollResult.authorized) {
           successOrders.push(orderId);
@@ -901,6 +929,7 @@ async function runAutoNfe(context) {
 
     // Modo: IA tenta corrigir
     context?.log(`[auto-nfe] Tentando correção IA para pedido ${failed.orderId} (cStat ${failed.errorCode})...`);
+    await setNfeProgress(`IA analisando e corrigindo erro da NF-e do pedido #${failed.orderId} (cStat ${failed.errorCode || '?'})...`, { total: pendingOrders.length, done: successOrders.length });
     try {
       const aiDecision = await aiAnalyzeAndFix({
         orderId: failed.orderId,
@@ -920,6 +949,7 @@ async function runAutoNfe(context) {
       context?.log(`[auto-nfe] IA decidiu: ${aiDecision.status_decisao} (confiança: ${aiDecision.confianca})`);
 
       if (aiDecision.status_decisao === 'CORRIGIR_E_REEMITIR' && aiDecision.payload_corrigido && aiDecision.reemitir && Number(aiDecision.confianca || 0) >= 0.80) {
+        await setNfeProgress(`Reemitindo NF-e corrigida pela IA para o pedido #${failed.orderId}...`, { total: pendingOrders.length, done: successOrders.length });
         // Marca o doc anterior como superado
         try {
           await sql.query`
@@ -999,6 +1029,8 @@ async function runAutoNfe(context) {
     INSERT INTO AutomationRunLog (automation_key, result_message) VALUES ('generate_nfe', ${resultMessage})
   `.catch(() => {});
 
+  await setNfeProgress(resultMessage, { total: pendingOrders.length, done: successOrders.length + aiResolvedOrders.length, isRunning: false });
+
   return {
     success: true,
     authorized: successOrders.length,
@@ -1020,6 +1052,40 @@ app.http('auto-nfe', {
       return { jsonBody: result };
     } catch (err) {
       context.error('[auto-nfe] Erro:', err);
+      return { status: 500, jsonBody: { error: err.message } };
+    }
+  },
+});
+
+// ── HTTP trigger — progresso em tempo real ────────────────────────────────────
+
+app.http('auto-nfe-progress', {
+  methods: ['GET'],
+  authLevel: 'anonymous',
+  handler: async (request, context) => {
+    try {
+      await sql.connect(sqlConfig);
+      await migrateNfeProgressColumns();
+
+      const [cfgRes, logRes] = await Promise.all([
+        sql.query`SELECT nfe_is_running, nfe_current_step, nfe_run_total, nfe_run_done, nfe_run_started_at FROM AutomationConfig WHERE automation_key='generate_nfe'`.catch(() => ({ recordset: [] })),
+        sql.query`SELECT TOP 1 result_message, created_at FROM AutomationRunLog WHERE automation_key='generate_nfe' ORDER BY id DESC`.catch(() => ({ recordset: [] })),
+      ]);
+
+      const row = cfgRes.recordset[0] || {};
+      const lastRun = logRes.recordset[0] || null;
+
+      return {
+        jsonBody: {
+          isRunning: !!row.nfe_is_running,
+          currentStep: row.nfe_current_step || null,
+          total: row.nfe_run_total ?? null,
+          done: row.nfe_run_done ?? null,
+          startedAt: row.nfe_run_started_at || null,
+          lastRun: lastRun ? { message: lastRun.result_message, createdAt: lastRun.created_at } : null,
+        },
+      };
+    } catch (err) {
       return { status: 500, jsonBody: { error: err.message } };
     }
   },
