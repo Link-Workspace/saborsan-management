@@ -434,6 +434,7 @@ function App() {
   const prevBgNfeStatusRef = useRef(null)
   const [receiveOrdersActive, setReceiveOrdersActive] = useState(false)
   const [generateNfeActive, setGenerateNfeActive] = useState(false)
+  const [stockReplenishmentActive, setStockReplenishmentActive] = useState(false)
 
   const [systemNotifications, setSystemNotifications] = useState([])
   const [notifSettings, setNotifSettings] = useState(() => {
@@ -555,6 +556,12 @@ function App() {
     fetch(`${API_URL}/api/automation-config?key=generate_nfe`)
       .then((r) => r.json())
       .then((data) => { setGenerateNfeActive(!!(data?.config?.isActive)) })
+      .catch(() => {})
+  }, [])
+  useEffect(() => {
+    fetch(`${API_URL}/api/automation-config?key=stock_replenishment`)
+      .then((r) => r.json())
+      .then((data) => { setStockReplenishmentActive(!!(data?.config?.isActive)) })
       .catch(() => {})
   }, [])
 
@@ -941,7 +948,7 @@ function App() {
         {active === 'pagamentos' && <Payments paymentsData={paymentsState} paymentsLoading={paymentsLoading} onSelectPayment={setSelectedPayment} onNewPayment={() => setNewPaymentOpen(true)} search={topbarSearch} />}
         {active === 'financeiro' && <Finance />}
         {active === 'relatorios' && <Reports />}
-        {active === 'automacao' && <Automation aiEnabled={aiEnabled} setAiEnabled={setAiEnabled} notify={notify} receiveOrdersActive={receiveOrdersActive} setReceiveOrdersActive={setReceiveOrdersActive} generateNfeActive={generateNfeActive} setGenerateNfeActive={setGenerateNfeActive} />}
+        {active === 'automacao' && <Automation aiEnabled={aiEnabled} setAiEnabled={setAiEnabled} notify={notify} receiveOrdersActive={receiveOrdersActive} setReceiveOrdersActive={setReceiveOrdersActive} generateNfeActive={generateNfeActive} setGenerateNfeActive={setGenerateNfeActive} stockReplenishmentActive={stockReplenishmentActive} setStockReplenishmentActive={setStockReplenishmentActive} />}
         {active === 'configuracoes' && <Settings notify={notify} onNotifSettingChange={(key, val) => setNotifSettings((p) => ({ ...p, [key]: val }))} />}
       </main>
 
@@ -1260,7 +1267,7 @@ function Orders({ orders, ordersLoading, onSelect, updateOrderStatus, createInvo
               <button onClick={() => onSelect(order)}>Detalhes</button>
               {order.status === 'Recebido' && (
                 receiveOrdersActive
-                  ? <button style={{background:'var(--orange)',color:'#fff',opacity:0.5,cursor:'not-allowed'}} disabled title="Desabilitado porque a automação 'Receber pedidos do app' está ativada">Separar</button>
+                  ? <button style={{background:'var(--orange)',color:'#fff',opacity:0.5,cursor:'not-allowed'}} disabled title="Desabilitado porque a automação 'Criar entregas' está ativada">Separar</button>
                   : <button style={{background:'var(--orange)',color:'#fff'}} onClick={() => updateOrderStatus(order.id, 'Separação')}>Separar</button>
               )}
               {order.status === 'Pronto' && (!order.nfeData || (order.nfeData.nfeStatus !== 'AUTHORIZED' && order.nfeData.nfeStatus !== 'PROCESSING' && order.nfeData.nfeStatus !== 'SUBMITTING' && order.nfeData.nfeStatus !== 'MANUAL_REVIEW')) && (
@@ -2480,22 +2487,6 @@ function SupplierDetailModal({ supplier, onClose, onEdit, onRemove }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id: purchase.id }),
       })
-      // Also try to remove the corresponding planning item by title
-      const planRes = await fetch(`${API_URL}/api/purchase-planning`)
-      if (planRes.ok) {
-        const planData = await planRes.json()
-        const titlePattern = `Compra: ${purchase.purchaseName} com ${supplier.name}`.toLowerCase()
-        const matching = (planData.items || []).find(
-          (item) => item.title?.toLowerCase() === titlePattern && !item.completed
-        )
-        if (matching) {
-          await fetch(`${API_URL}/api/purchase-planning`, {
-            method: 'DELETE',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ id: matching.id }),
-          })
-        }
-      }
       setPurchases((prev) => prev.filter((p) => p.id !== purchase.id))
       setConfirmRemovePurchase(null)
     } catch {
@@ -4786,7 +4777,7 @@ function AutomationAdjustModal({ onClose, onActivate, isActive, notify }) {
           <div className="autoAdjustHeaderInfo">
             <div>
               <span>Automação</span>
-              <h2>Receber pedidos do app</h2>
+              <h2>Criar entregas</h2>
               <p>Configure como esta automação deve funcionar</p>
             </div>
           </div>
@@ -4937,24 +4928,27 @@ function AutomationAdjustModal({ onClose, onActivate, isActive, notify }) {
   )
 }
 
-function Automation({ aiEnabled, setAiEnabled, notify, receiveOrdersActive, setReceiveOrdersActive, generateNfeActive, setGenerateNfeActive }) {
+function Automation({ aiEnabled, setAiEnabled, notify, receiveOrdersActive, setReceiveOrdersActive, generateNfeActive, setGenerateNfeActive, stockReplenishmentActive, setStockReplenishmentActive }) {
   const [dialogOpen, setDialogOpen] = useState(false)
   const [adjustOpen, setAdjustOpen] = useState(false)
   const [nfeDialogOpen, setNfeDialogOpen] = useState(false)
   const [nfeAdjustOpen, setNfeAdjustOpen] = useState(false)
   const [nfeFiscalWarning, setNfeFiscalWarning] = useState(false)
+  const [srDialogOpen, setSrDialogOpen] = useState(false)
+  const [srAdjustOpen, setSrAdjustOpen] = useState(false)
 
   const automations = [
-    ['Receber pedidos do app', 'Captura solicitações, organiza itens e direciona para separação.', true],
-    ['Sugerir reposição de estoque', 'Analisa mínimo, giro e produtos em atenção.', true],
+    ['Criar entregas', 'Recebe pedidos do app, organiza itens e gera entregas automaticamente para os vendedores.', true],
     ['Gerar nota fiscal', 'Emite automaticamente a NF-e dos pedidos prontos e corrige erros com IA.', true],
+    ['Reposição de estoque', 'Analisa níveis de estoque, identifica itens críticos e comunica fornecedores automaticamente.', true],
     ['Otimizar rotas de entrega', 'Agrupa regiões, horários e veículos refrigerados.', true],
     ['Comunicar fornecedores', 'Monta mensagens de cotação e reposição.', false],
     ['Acompanhar clientes parados', 'Identifica clientes que podem receber nova oferta.', true],
   ]
 
   const handleCardClick = async (title) => {
-    if (title === 'Receber pedidos do app') { setDialogOpen(true); return }
+    if (title === 'Criar entregas') { setDialogOpen(true); return }
+    if (title === 'Reposição de estoque') { setSrDialogOpen(true); return }
     if (title === 'Gerar nota fiscal') {
       // Verifica se todos os produtos têm configuração fiscal completa (ibsCbsCst e ibsCbsClassTrib)
       try {
@@ -4986,7 +4980,7 @@ function Automation({ aiEnabled, setAiEnabled, notify, receiveOrdersActive, setR
       })
       if (res.ok) {
         setReceiveOrdersActive(newVal)
-        notify(newVal ? 'Automação "Receber pedidos do app" ativada.' : 'Automação desativada.')
+        notify(newVal ? 'Automação "Criar entregas" ativada.' : 'Automação desativada.')
       }
     } catch { notify('Erro ao alterar status da automação.') }
     setDialogOpen(false)
@@ -5010,9 +5004,27 @@ function Automation({ aiEnabled, setAiEnabled, notify, receiveOrdersActive, setR
     setNfeAdjustOpen(false)
   }
 
+  const handleSrActivateToggle = async () => {
+    const newVal = !stockReplenishmentActive
+    try {
+      const res = await fetch(`${API_URL}/api/automation-config`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: 'stock_replenishment', config: { isActive: newVal } }),
+      })
+      if (res.ok) {
+        setStockReplenishmentActive(newVal)
+        notify(newVal ? 'Automação "Reposição de estoque" ativada.' : 'Automação "Reposição de estoque" desativada.')
+      } else { notify('Erro ao alterar status da automação.') }
+    } catch { notify('Erro ao alterar status da automação.') }
+    setSrDialogOpen(false)
+    setSrAdjustOpen(false)
+  }
+
   const isCardActive = (title) => {
-    if (title === 'Receber pedidos do app') return receiveOrdersActive
+    if (title === 'Criar entregas') return receiveOrdersActive
     if (title === 'Gerar nota fiscal') return generateNfeActive
+    if (title === 'Reposição de estoque') return stockReplenishmentActive
     return aiEnabled
   }
 
@@ -5029,7 +5041,7 @@ function Automation({ aiEnabled, setAiEnabled, notify, receiveOrdersActive, setR
             <article
               key={title}
               className={isCardActive(title) ? 'on' : ''}
-              style={{ cursor: (title === 'Receber pedidos do app' || title === 'Gerar nota fiscal') ? 'pointer' : undefined }}
+              style={{ cursor: (title === 'Criar entregas' || title === 'Gerar nota fiscal' || title === 'Reposição de estoque') ? 'pointer' : undefined }}
               onClick={() => handleCardClick(title)}
             >
               <Settings2 size={22} />
@@ -5042,7 +5054,7 @@ function Automation({ aiEnabled, setAiEnabled, notify, receiveOrdersActive, setR
 
       {dialogOpen && (
         <AutomationActionDialog
-          automation="Receber pedidos do app"
+          automation="Criar entregas"
           isActive={receiveOrdersActive}
           onClose={() => setDialogOpen(false)}
           onActivate={handleActivateToggle}
@@ -5092,6 +5104,25 @@ function Automation({ aiEnabled, setAiEnabled, notify, receiveOrdersActive, setR
           isActive={generateNfeActive}
           onClose={() => setNfeAdjustOpen(false)}
           onActivate={handleNfeActivateToggle}
+          notify={notify}
+        />
+      )}
+
+      {srDialogOpen && (
+        <AutomationActionDialog
+          automation="Reposição de estoque"
+          isActive={stockReplenishmentActive}
+          onClose={() => setSrDialogOpen(false)}
+          onActivate={handleSrActivateToggle}
+          onAdjust={() => { setSrDialogOpen(false); setSrAdjustOpen(true) }}
+        />
+      )}
+
+      {srAdjustOpen && (
+        <AutomationStockAdjustModal
+          isActive={stockReplenishmentActive}
+          onClose={() => setSrAdjustOpen(false)}
+          onActivate={handleSrActivateToggle}
           notify={notify}
         />
       )}
@@ -5263,6 +5294,292 @@ function AutomationNfeAdjustModal({ onClose, onActivate, isActive, notify }) {
                   <span>Fim</span>
                   <TimePickerInput value={config.timeEnd} onChange={(v) => setC('timeEnd', v)} dropUp />
                 </label>
+              </div>
+            </div>
+
+          </div>
+        )}
+
+        <div className="autoAdjustFooter">
+          <button className="autoAdjustSaveBtn" onClick={() => handleSave()} disabled={saving || loading || !isDirty}>
+            {saving ? <><Loader2 size={15} className="verNotaDetailsSpinner" /> Salvando...</> : 'Salvar'}
+          </button>
+          <button className="autoAdjustActivateBtn" onClick={handleActivate} disabled={activating || loading}>
+            {activating
+              ? <><Loader2 size={15} className="verNotaDetailsSpinner" /> {isActive ? 'Desativando...' : 'Ativando...'}</>
+              : isActive ? <><X size={15} /> Desativar automação</> : <><Sparkles size={15} /> Ativar automação</>
+            }
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function AutomationStockAdjustModal({ onClose, onActivate, isActive, notify }) {
+  const SR_CATEGORIES = ['Assados', 'Frutas', 'Salgados', 'Condimentos', 'Legumes', 'Polpa de fruta', 'Doces', 'Pizza', 'Bebidas']
+
+  const [suppliers, setSuppliers] = useState([])
+  const [saving, setSaving] = useState(false)
+  const [activating, setActivating] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [config, setConfig] = useState({
+    minStockQty: 5,
+    maxPurchaseQty: 50,
+    timeIntervalMinutes: 30,
+    timeStart: '07:00',
+    timeEnd: '18:00',
+    notifyTimes: [],
+  })
+  const [categoryBindings, setCategoryBindings] = useState([])
+  const [savedConfig, setSavedConfig] = useState(null)
+  const [savedCategoryBindings, setSavedCategoryBindings] = useState(null)
+  const [newNotifyTime, setNewNotifyTime] = useState('')
+  const [bindingSelectors, setBindingSelectors] = useState({})
+
+  useEffect(() => {
+    const fetchAll = async () => {
+      setLoading(true)
+      try {
+        const [suppliersRes, cfgRes] = await Promise.all([
+          fetch(`${API_URL}/api/suppliers`).then((r) => r.json()).catch(() => ({ suppliers: [] })),
+          fetch(`${API_URL}/api/automation-config?key=stock_replenishment`).then((r) => r.json()).catch(() => null),
+        ])
+        if (suppliersRes.suppliers) setSuppliers(suppliersRes.suppliers)
+        if (cfgRes?.config) {
+          const loaded = {
+            minStockQty: cfgRes.config.srMinStockQty ?? 5,
+            maxPurchaseQty: cfgRes.config.srMaxPurchaseQty ?? 50,
+            timeIntervalMinutes: cfgRes.config.timeIntervalMinutes ?? 30,
+            timeStart: cfgRes.config.timeStart ?? '07:00',
+            timeEnd: cfgRes.config.timeEnd ?? '18:00',
+            notifyTimes: cfgRes.config.srNotifyTimes ?? [],
+          }
+          const loadedBindings = cfgRes.categoryBindings ?? []
+          setConfig(loaded)
+          setSavedConfig(loaded)
+          setCategoryBindings(loadedBindings)
+          setSavedCategoryBindings(loadedBindings)
+        } else {
+          const def = { minStockQty: 5, maxPurchaseQty: 50, timeIntervalMinutes: 30, timeStart: '07:00', timeEnd: '18:00', notifyTimes: [] }
+          setSavedConfig(def)
+          setSavedCategoryBindings([])
+        }
+      } catch { /* ignore */ }
+      finally { setLoading(false) }
+    }
+    fetchAll()
+  }, [])
+
+  const setC = (k, v) => setConfig((p) => ({ ...p, [k]: v }))
+
+  const addNotifyTime = () => {
+    if (!newNotifyTime || config.notifyTimes.includes(newNotifyTime)) return
+    setC('notifyTimes', [...config.notifyTimes, newNotifyTime].sort())
+    setNewNotifyTime('')
+  }
+
+  const removeNotifyTime = (t) => setC('notifyTimes', config.notifyTimes.filter((x) => x !== t))
+
+  const getBindingsForCategory = (category) => categoryBindings.filter((b) => b.category === category)
+
+  const addCategoryBinding = (category, supplierId) => {
+    if (!supplierId) return
+    const supplier = suppliers.find((s) => String(s.id) === String(supplierId))
+    if (!supplier) return
+    if (categoryBindings.find((b) => b.category === category && b.supplierId === Number(supplierId))) return
+    setCategoryBindings((prev) => [...prev, { supplierId: Number(supplierId), supplierName: supplier.name, category }])
+    setBindingSelectors((p) => ({ ...p, [category]: '' }))
+  }
+
+  const removeCategoryBinding = (category, supplierId) => {
+    setCategoryBindings((prev) => prev.filter((b) => !(b.category === category && b.supplierId === supplierId)))
+  }
+
+  const allCategoriesCovered = SR_CATEGORIES.every((cat) => categoryBindings.some((b) => b.category === cat))
+
+  const bindingsKey = (arr) => JSON.stringify(
+    (arr ?? []).map(({ supplierId, category }) => ({ supplierId, category }))
+      .sort((a, b) => a.category.localeCompare(b.category) || a.supplierId - b.supplierId)
+  )
+  const isDirty = savedConfig !== null && (
+    JSON.stringify(config) !== JSON.stringify(savedConfig) ||
+    bindingsKey(categoryBindings) !== bindingsKey(savedCategoryBindings)
+  )
+
+  const handleSave = async (silent = false) => {
+    setSaving(true)
+    try {
+      const res = await fetch(`${API_URL}/api/automation-config`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          key: 'stock_replenishment',
+          config: {
+            srMinStockQty: config.minStockQty,
+            srMaxPurchaseQty: config.maxPurchaseQty,
+            timeIntervalMinutes: config.timeIntervalMinutes,
+            timeStart: config.timeStart,
+            timeEnd: config.timeEnd,
+            srNotifyTimes: config.notifyTimes,
+          },
+          categoryBindings,
+        }),
+      })
+      if (res.ok) {
+        if (!silent) notify('Configurações salvas com sucesso.')
+        setSavedConfig(config)
+        setSavedCategoryBindings(categoryBindings)
+      } else if (!silent) notify('Erro ao salvar configurações.')
+      return res.ok
+    } catch {
+      if (!silent) notify('Erro ao salvar configurações.')
+      return false
+    } finally { setSaving(false) }
+  }
+
+  const handleActivate = async () => {
+    if (!isActive && !allCategoriesCovered) {
+      notify('Todas as categorias devem ter pelo menos um fornecedor vinculado para ativar a automação.')
+      return
+    }
+    setActivating(true)
+    try {
+      const saved = await handleSave(true)
+      if (saved) await onActivate()
+      else notify('Erro ao salvar configurações.')
+    } finally { setActivating(false) }
+  }
+
+  return (
+    <div className="nfOverlay" onClick={(e) => e.target.classList.contains('nfOverlay') && onClose()}>
+      <div className="autoAdjustModal">
+        <div className="autoAdjustHeader">
+          <div className="autoAdjustHeaderInfo">
+            <div>
+              <span>Automação</span>
+              <h2>Reposição de estoque</h2>
+              <p>Configure como esta automação deve funcionar</p>
+            </div>
+          </div>
+          <button className="nfClose" style={{ position: 'static' }} onClick={onClose}><X size={16} /></button>
+        </div>
+
+        {loading ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '32px 28px', color: 'var(--muted)', fontWeight: 700 }}>
+            <Loader2 size={18} className="verNotaDetailsSpinner" /> Carregando configurações...
+          </div>
+        ) : (
+          <div className="autoAdjustBody">
+
+            {/* Limites de estoque */}
+            <div className="autoAdjustSection">
+              <div className="autoAdjustSectionTitle"><Package size={15} /> Limites de estoque</div>
+              <div className="autoAdjustRow">
+                <label>
+                  <span>Qtd. mínima (estoque baixo)</span>
+                  <input type="number" min={0} value={config.minStockQty}
+                    onChange={(e) => setC('minStockQty', Math.max(0, Number(e.target.value)))} />
+                </label>
+                <label>
+                  <span>Qtd. máxima por compra</span>
+                  <input type="number" min={1} value={config.maxPurchaseQty}
+                    onChange={(e) => setC('maxPurchaseQty', Math.max(1, Number(e.target.value)))} />
+                </label>
+              </div>
+            </div>
+
+            {/* Período de execução */}
+            <div className="autoAdjustSection">
+              <div className="autoAdjustSectionTitle"><Clock3 size={15} /> Período de execução</div>
+              <div className="autoAdjustRow">
+                <label>
+                  <span>Intervalo (minutos)</span>
+                  <input type="number" min={5} max={1440} value={config.timeIntervalMinutes}
+                    onChange={(e) => setC('timeIntervalMinutes', Math.max(5, Number(e.target.value)))} />
+                </label>
+                <label>
+                  <span>Início</span>
+                  <TimePickerInput value={config.timeStart} onChange={(v) => setC('timeStart', v)} />
+                </label>
+                <label>
+                  <span>Fim</span>
+                  <TimePickerInput value={config.timeEnd} onChange={(v) => setC('timeEnd', v)} />
+                </label>
+              </div>
+            </div>
+
+            {/* Horários de comunicação ao fornecedor */}
+            <div className="autoAdjustSection">
+              <div className="autoAdjustSectionTitle"><Bell size={15} /> Horários de comunicação ao fornecedor</div>
+              <p style={{ fontSize: '.83rem', color: 'var(--muted)', fontWeight: 600, margin: '0 0 12px' }}>
+                Defina os horários em que a automação poderá criar compras e comunicar os fornecedores. Se nenhum horário for adicionado, a automação seguirá o intervalo configurado.
+              </p>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 10 }}>
+                <TimePickerInput value={newNotifyTime} onChange={setNewNotifyTime} />
+                <button className="autoAdjustAddBinding" onClick={addNotifyTime} disabled={!newNotifyTime}><Plus size={15} /></button>
+              </div>
+              {config.notifyTimes.length > 0 && (
+                <div className="autoAdjustBindingList">
+                  {config.notifyTimes.map((t) => (
+                    <div key={t} className="autoAdjustBindingItem">
+                      <Bell size={13} />
+                      <span style={{ fontWeight: 600 }}>{t}</span>
+                      <button onClick={() => removeNotifyTime(t)}><X size={13} /></button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Vínculos fornecedor-categoria */}
+            <div className="autoAdjustSection">
+              <div className="autoAdjustSectionTitle"><Truck size={15} /> Vínculo fornecedor → categoria de produto</div>
+              <p style={{ fontSize: '.83rem', color: 'var(--muted)', fontWeight: 600, margin: '0 0 12px' }}>
+                Vincule ao menos um fornecedor a cada categoria. Será usado quando não houver histórico de compra do produto que precisar de reposição.
+              </p>
+              {!allCategoriesCovered && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '8px 12px', background: 'var(--orange-light, #fff3e0)', borderRadius: 8, marginBottom: 12, fontSize: '.82rem', color: 'var(--orange, #f57c00)', fontWeight: 700 }}>
+                  <AlertCircle size={14} /> Todas as categorias precisam de ao menos um fornecedor para ativar a automação
+                </div>
+              )}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {SR_CATEGORIES.map((cat) => {
+                  const bound = getBindingsForCategory(cat)
+                  const isCovered = bound.length > 0
+                  return (
+                    <div key={cat} style={{ background: 'var(--surface)', borderRadius: 10, padding: '10px 12px', border: `1px solid ${isCovered ? 'var(--border)' : 'var(--border)'}` }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 8 }}>
+                        <span style={{ fontWeight: 700, fontSize: '.88rem', flex: 1 }}>{cat}</span>
+                        {isCovered
+                          ? <span style={{ fontSize: '.75rem', color: 'var(--success, #2e7d32)', fontWeight: 700, background: '#e8f5e9', padding: '2px 8px', borderRadius: 99 }}>Vinculado</span>
+                          : <span style={{ fontSize: '.75rem', color: '#e65100', fontWeight: 700, background: '#fff3e0', padding: '2px 8px', borderRadius: 99 }}>Sem fornecedor</span>
+                        }
+                      </div>
+                      {bound.length > 0 && (
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
+                          {bound.map((b) => (
+                            <div key={b.supplierId} style={{ display: 'flex', alignItems: 'center', gap: 5, background: 'var(--chip-bg, #eef2ff)', padding: '3px 10px 3px 8px', borderRadius: 99, fontSize: '.81rem', fontWeight: 600 }}>
+                              <Truck size={11} />{b.supplierName}
+                              <button onClick={() => removeCategoryBinding(cat, b.supplierId)} style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', padding: 0, marginLeft: 2 }}><X size={11} /></button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      <div style={{ display: 'flex', gap: 7 }}>
+                        <CustomSelect
+                          value={bindingSelectors[cat] || ''}
+                          onChange={(v) => setBindingSelectors((p) => ({ ...p, [cat]: v }))}
+                          placeholder="Selecionar fornecedor"
+                          options={suppliers
+                            .filter((s) => !categoryBindings.find((b) => b.category === cat && b.supplierId === s.id))
+                            .map((s) => ({ value: String(s.id), label: s.name }))}
+                        />
+                        <button className="autoAdjustAddBinding" onClick={() => addCategoryBinding(cat, bindingSelectors[cat])} disabled={!bindingSelectors[cat]}><Plus size={15} /></button>
+                      </div>
+                    </div>
+                  )
+                })}
               </div>
             </div>
 
@@ -5702,7 +6019,7 @@ function NewOrderModal({ onClose, onCreateOrder, onUpdateOrder, editOrder, clien
                   placeholder={clients.length === 0 ? 'Carregando clientes...' : 'Selecione o cliente'}
                   options={clients.map((c) => ({ value: String(c.id), label: `${c.establishmentName}${c.city ? ` — ${c.city}` : ''}` }))}
                 />
-                {automationLockClient && <small style={{color:'var(--muted)',fontWeight:600,marginTop:4,display:'block'}}>Campo desabilitado — automação 'Receber pedidos do app' está ativada</small>}
+                {automationLockClient && <small style={{color:'var(--muted)',fontWeight:600,marginTop:4,display:'block'}}>Campo desabilitado — automação 'Criar entregas' está ativada</small>}
               </label>
             </div>
             {selectedClientId && (() => {
@@ -5809,7 +6126,7 @@ function OrderModal({ order, onClose, updateOrderStatus, createInvoice, onRemove
           {onReactivate && <button className="orderModalBtn orderModalBtnPrimary" style={{background:'var(--green, #22c55e)',borderColor:'var(--green, #22c55e)'}} onClick={onReactivate}>Reativar</button>}
           {!onReactivate && canRemove && (
             receiveOrdersActive && order.status === 'Recebido'
-              ? <button className="orderModalBtn orderModalBtnDanger" disabled style={{opacity:0.5,cursor:'not-allowed'}} title="Desabilitado porque a automação 'Receber pedidos do app' está ativada">Remover</button>
+              ? <button className="orderModalBtn orderModalBtnDanger" disabled style={{opacity:0.5,cursor:'not-allowed'}} title="Desabilitado porque a automação 'Criar entregas' está ativada">Remover</button>
               : <button className="orderModalBtn orderModalBtnDanger" onClick={onRemove}>Remover</button>
           )}
           {!onReactivate && <button className="orderModalBtn orderModalBtnPrimary" onClick={onEdit}>Editar</button>}

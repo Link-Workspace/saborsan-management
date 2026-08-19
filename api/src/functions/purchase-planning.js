@@ -34,6 +34,11 @@ async function ensureTable() {
         INCLUDE (title, completed);
     END
   `;
+  // Migration: link back to SupplierPurchases for cascade delete
+  await sql.query`
+    IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('PurchasePlanningItems') AND name = 'supplier_purchase_id')
+      ALTER TABLE PurchasePlanningItems ADD supplier_purchase_id INT NULL
+  `.catch(() => {});
 }
 
 function mapItem(row) {
@@ -148,7 +153,17 @@ app.http('purchase-planning', {
           return { status: 400, jsonBody: { error: 'id é obrigatório.' } };
         }
 
+        const linkRow = await sql.query`
+          SELECT supplier_purchase_id FROM PurchasePlanningItems WHERE id = ${id}
+        `.catch(() => ({ recordset: [] }));
+        const linkedPurchaseId = linkRow.recordset[0]?.supplier_purchase_id ?? null;
+
         await sql.query`DELETE FROM PurchasePlanningItems WHERE id = ${id}`;
+
+        if (linkedPurchaseId) {
+          await sql.query`DELETE FROM SupplierPurchases WHERE id = ${linkedPurchaseId}`.catch(() => {});
+        }
+
         return { jsonBody: { ok: true } };
       }
 
