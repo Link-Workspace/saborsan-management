@@ -33,7 +33,7 @@ p{margin:0}.appShell{min-height:100vh;display:grid;grid-template-columns:300px 1
 .newOrderModal{max-width:680px;max-height:92vh;overflow:hidden;display:flex;flex-direction:column;padding:0}
 .newOrderModal .modalHeader{padding:26px 26px 0;margin-bottom:20px}
 .newOrderModal form{display:flex;flex-direction:column;flex:1;overflow:hidden;min-height:0}
-.newOrderScrollArea{flex:1;overflow-y:auto;padding:0 26px 16px}
+.newOrderScrollArea{flex:1;overflow-y:auto;padding:16px 26px 16px}
 .newOrderFooter{flex-shrink:0;border-top:1px solid var(--line);background:#fff;padding:16px 26px;display:flex;align-items:center;justify-content:space-between;gap:16px}
 .newOrderTotalInline{display:flex;flex-direction:column;gap:2px}
 .newOrderTotalInline span{font-size:.82rem;font-weight:800;color:var(--muted)}

@@ -956,7 +956,7 @@ function App() {
         </section>
 
         {active === 'dashboard' && <Dashboard totals={totals} orders={orders} aiEnabled={aiEnabled} setActive={setActive} />}
-        {active === 'pedidos' && <Orders orders={orders} ordersLoading={ordersLoading} onSelect={setSelectedOrder} updateOrderStatus={updateOrderStatus} createInvoice={createInvoice} onGerarNota={openGerarNota} onNewOrder={() => setNewOrderOpen(true)} onVerNota={setVerNotaOrder} onPayment={setBalcaoPaymentOrder} search={topbarSearch} receiveOrdersActive={receiveOrdersActive} generateNfeActive={generateNfeActive} />}
+        {active === 'pedidos' && <Orders orders={orders} ordersLoading={ordersLoading} onSelect={setSelectedOrder} updateOrderStatus={updateOrderStatus} createInvoice={createInvoice} onGerarNota={openGerarNota} onNewOrder={() => setNewOrderOpen(true)} onVerNota={setVerNotaOrder} onPayment={(order) => { const client = clientsState.find(c => c.establishmentName === order.customer); setBalcaoPaymentOrder({ ...order, cpf: client?.cpf || order.cpf || '' }) }} search={topbarSearch} receiveOrdersActive={receiveOrdersActive} generateNfeActive={generateNfeActive} />}
         {active === 'vendedores' && <Sellers search={topbarSearch} addNotif={addNotif} />}
         {active === 'notas' && <Invoices orders={orders} onGerarNota={openGerarNota} onVerNota={setVerNotaOrder} search={topbarSearch} generateNfeActive={generateNfeActive} />}
         {active === 'estoque' && <Stock onProduct={setSelectedProduct} refreshKey={stockRefreshKey} search={topbarSearch} addNotif={addNotif} bgImport={bgImport} onStartBgAnalysis={startBackgroundAnalysis} onClearBgImport={() => setBgImport(null)} />}
@@ -1016,7 +1016,7 @@ function App() {
       {selectedDelivery && <DeliveryDetailModal delivery={deliveriesState.find((d) => d.id === selectedDelivery.id) || selectedDelivery} onClose={() => setSelectedDelivery(null)} orders={orders} onCancel={cancelDelivery} onRemove={removeDelivery} onReactivate={reactivateDelivery} onEdit={(d) => { setEditDelivery(d); setSelectedDelivery(null) }} onSelectOrder={setSelectedOrder} />}
       {selectedOrder && (() => {
         const _linkedDelivery = deliveriesState.find((d) => d.orderIds?.includes(selectedOrder.id))
-        const _canRemove = !selectedOrder.isDeleted && selectedOrder.status !== 'Entregue' && selectedOrder.status !== 'Rota'
+        const _canRemove = !selectedOrder.isDeleted && selectedOrder.status !== 'Entregue' && selectedOrder.status !== 'Rota' && !(selectedOrder.status === 'Balcão' && selectedOrder.balcaoData?.balcaoStatus === 'entregue')
         return <OrderModal order={selectedOrder} onClose={() => setSelectedOrder(null)} updateOrderStatus={updateOrderStatus} createInvoice={createInvoice} onRemove={_canRemove ? () => setRemoveConfirmOrder(selectedOrder) : null} canRemove={_canRemove} onReactivate={selectedOrder.isDeleted ? () => setReactivateConfirmOrder(selectedOrder) : null} onEdit={() => { setEditOrder(selectedOrder); setSelectedOrder(null) }} receiveOrdersActive={receiveOrdersActive} />
       })()}
       {vehiclesOpen && <VehiclesModal
@@ -1053,7 +1053,7 @@ function App() {
         const _linkedDelivery = editOrder ? deliveriesState.find((d) => d.orderIds?.includes(editOrder.id)) : null
         const _lockedEdit = !!(editOrder && editOrder.status === 'Rota' && _linkedDelivery?.status === 'Em rota')
         const _notesOnlyEdit = !!(editOrder && editOrder.status === 'Entregue')
-        return <NewOrderModal onClose={() => { setNewOrderOpen(false); setEditOrder(null) }} onCreateOrder={createOrder} onUpdateOrder={updateOrder} editOrder={editOrder} clients={clientsState} lockedEdit={_lockedEdit} notesOnlyEdit={_notesOnlyEdit} products={apiProductsState} automationLockClient={!!(receiveOrdersActive && editOrder && editOrder.status === 'Recebido')} onAddClient={(c) => { setClientsState((prev) => [c, ...prev]); addNotif('notifClients', { icon: Users, title: 'Novo cliente cadastrado', text: `${c.establishmentName} foi adicionado à carteira de clientes.` }) }} />
+        return <NewOrderModal onClose={() => { setNewOrderOpen(false); setEditOrder(null) }} onCreateOrder={createOrder} onUpdateOrder={updateOrder} editOrder={editOrder} clients={clientsState} lockedEdit={_lockedEdit} notesOnlyEdit={_notesOnlyEdit} balcaoNotesOnlyEdit={!!(editOrder?.status === 'Balcão' && editOrder?.balcaoData?.balcaoStatus === 'entregue')} products={apiProductsState} automationLockClient={!!(receiveOrdersActive && editOrder && editOrder.status === 'Recebido')} onAddClient={(c) => { setClientsState((prev) => [c, ...prev]); addNotif('notifClients', { icon: Users, title: 'Novo cliente cadastrado', text: `${c.establishmentName} foi adicionado à carteira de clientes.` }) }} />
       })()}
       {editProduct && <NewProductModal editProduct={editProduct} onClose={() => setEditProduct(null)} onCreated={() => {}} onUpdated={() => { setStockRefreshKey((k) => k + 1); notify('Produto atualizado com sucesso!') }} />}
       {removeConfirmOrder && (
@@ -1318,7 +1318,14 @@ function Orders({ orders, ordersLoading, onSelect, updateOrderStatus, createInvo
 
 function Invoices({ orders, onGerarNota, onVerNota, search = '', generateNfeActive = false }) {
   const fiscalHistory = orders.filter((o) => o.nfeData && (!search || o.customer.toLowerCase().includes(search.toLowerCase())))
-  const readyToEmit = orders.filter((o) => !o.isDeleted && o.status === 'Pronto' && (!o.nfeData || (o.nfeData.nfeStatus !== 'AUTHORIZED' && o.nfeData.nfeStatus !== 'PROCESSING' && o.nfeData.nfeStatus !== 'SUBMITTING' && o.nfeData.nfeStatus !== 'MANUAL_REVIEW')) && (!search || o.customer.toLowerCase().includes(search.toLowerCase())))
+  const readyToEmit = orders.filter((o) => {
+    if (o.isDeleted) return false
+    const noNfe = !o.nfeData || (o.nfeData.nfeStatus !== 'AUTHORIZED' && o.nfeData.nfeStatus !== 'PROCESSING' && o.nfeData.nfeStatus !== 'SUBMITTING' && o.nfeData.nfeStatus !== 'MANUAL_REVIEW')
+    const matchSearch = !search || o.customer.toLowerCase().includes(search.toLowerCase())
+    const isPronto = o.status === 'Pronto'
+    const isBalcaoPago = o.status === 'Balcão' && o.balcaoData?.balcaoStatus === 'pago'
+    return (isPronto || isBalcaoPago) && noNfe && matchSearch
+  })
 
   const [printOrder, setPrintOrder] = useState(null)
 
@@ -5891,8 +5898,8 @@ function ProductSelect({ value, onChange, disabled, products: productList = [] }
   )
 }
 
-function NewOrderModal({ onClose, onCreateOrder, onUpdateOrder, editOrder, clients = [], lockedEdit = false, notesOnlyEdit = false, products = [], automationLockClient = false, onAddClient }) {
-  const [tab, setTab] = useState('pedido')
+function NewOrderModal({ onClose, onCreateOrder, onUpdateOrder, editOrder, clients = [], lockedEdit = false, notesOnlyEdit = false, balcaoNotesOnlyEdit = false, products = [], automationLockClient = false, onAddClient }) {
+  const [tab, setTab] = useState((balcaoNotesOnlyEdit || editOrder?.status === 'Balcão') ? 'balcao' : 'pedido')
   const [localClients, setLocalClients] = useState(clients)
   const [balcaoNewClientOpen, setBalcaoNewClientOpen] = useState(false)
 
@@ -5934,10 +5941,25 @@ function NewOrderModal({ onClose, onCreateOrder, onUpdateOrder, editOrder, clien
   const [submitting, setSubmitting] = useState(false)
 
   // ── Balcão form state ────────────────────────────────────────────────────
-  const [balcaoClientId, setBalcaoClientId] = useState('')
-  const [balcaoItems, setBalcaoItems] = useState([{ productId: null, qty: 0 }])
-  const [balcaoNotes, setBalcaoNotes] = useState('')
-  const [balcaoPurpose, setBalcaoPurpose] = useState('consumo')
+  const isBalcaoEdit = !!(editOrder?.status === 'Balcão')
+  const [balcaoClientId, setBalcaoClientId] = useState(() => {
+    if (editOrder?.status === 'Balcão' && editOrder) {
+      const match = clients.find((c) => c.establishmentName === editOrder.customer)
+      return match ? String(match.id) : ''
+    }
+    return ''
+  })
+  const [balcaoItems, setBalcaoItems] = useState(() => {
+    if (editOrder?.status === 'Balcão' && editOrder?.products?.length > 0) {
+      return editOrder.products.map((p) => {
+        const product = products.find((pr) => pr.name === p.name)
+        return { productId: product ? product.id : null, qty: p.qty }
+      })
+    }
+    return [{ productId: null, qty: 0 }]
+  })
+  const [balcaoNotes, setBalcaoNotes] = useState(editOrder?.status === 'Balcão' && editOrder ? editOrder.notes || '' : '')
+  const [balcaoPurpose, setBalcaoPurpose] = useState(editOrder?.status === 'Balcão' && editOrder ? editOrder.purchasePurpose || 'consumo' : 'consumo')
   const [balcaoCnpj, setBalcaoCnpj] = useState('')
   const [balcaoSubmitError, setBalcaoSubmitError] = useState('')
   const [balcaoSubmitting, setBalcaoSubmitting] = useState(false)
@@ -5956,7 +5978,18 @@ function NewOrderModal({ onClose, onCreateOrder, onUpdateOrder, editOrder, clien
   const balcaoClient = localClients.find((c) => String(c.id) === String(balcaoClientId))
   const balcaoClientHasCnpj = !!(balcaoClient?.cnpj)
   const balcaoNeedsCnpj = !!balcaoClientId && !balcaoClientHasCnpj
-  const balcaoCanSubmit = !!balcaoClientId && balcaoItems.some((i) => i.productId && i.qty > 0) && (!balcaoNeedsCnpj || balcaoCnpj.trim() !== '')
+  const balcaoIsDirty = !isBalcaoEdit || (() => {
+    if (!editOrder) return true
+    const origClient = clients.find((c) => c.establishmentName === editOrder.customer)
+    if (balcaoClientId !== (origClient ? String(origClient.id) : '')) return true
+    if (balcaoNotes !== (editOrder.notes || '')) return true
+    if (balcaoPurpose !== (editOrder.purchasePurpose || 'consumo')) return true
+    const origItems = (editOrder.products || []).map((p) => ({ productId: products.find((pr) => pr.name === p.name)?.id ?? null, qty: p.qty })).filter((i) => i.productId && i.qty > 0)
+    const curItems = balcaoItems.filter((i) => i.productId && i.qty > 0)
+    if (curItems.length !== origItems.length) return true
+    return curItems.some((ci, idx) => ci.productId !== origItems[idx]?.productId || ci.qty !== origItems[idx]?.qty)
+  })()
+  const balcaoCanSubmit = !!balcaoClientId && balcaoItems.some((i) => i.productId && i.qty > 0) && (!balcaoNeedsCnpj || balcaoCnpj.trim() !== '') && balcaoIsDirty
 
   const submitBalcao = async (e) => {
     e.preventDefault()
@@ -5990,6 +6023,7 @@ function NewOrderModal({ onClose, onCreateOrder, onUpdateOrder, editOrder, clien
         status: 'Balcão',
         source: 'Balcão',
         cnpj: effectiveCnpj || data.order.cnpj || '',
+        cpf: balcaoClient?.cpf || '',
         purchasePurpose: balcaoPurpose,
         balcaoData: { balcaoStatus: 'aguardando_pagamento', paymentMethod: null, paymentConfirmedAt: null },
       }
@@ -5997,6 +6031,85 @@ function NewOrderModal({ onClose, onCreateOrder, onUpdateOrder, editOrder, clien
       onClose()
     } catch (err) {
       setBalcaoSubmitError(err.message || 'Erro ao criar pedido. Tente novamente.')
+    } finally {
+      setBalcaoSubmitting(false)
+    }
+  }
+
+  const submitBalcaoEdit = async (e) => {
+    e.preventDefault()
+    if (!balcaoCanSubmit || balcaoSubmitting) return
+    setBalcaoSubmitError('')
+    setBalcaoSubmitting(true)
+    try {
+      const effectiveCnpj = balcaoClientHasCnpj ? (balcaoClient?.cnpj || null) : (balcaoCnpj.trim() || null)
+      const payload = {
+        orderId: editOrder.id,
+        clientId: Number(balcaoClientId),
+        clientName: balcaoClient?.establishmentName || '',
+        clientCnpj: effectiveCnpj,
+        clientCity: balcaoClient?.city || null,
+        clientPhone: balcaoClient?.contactNumber || null,
+        totalValue: balcaoTotal,
+        observations: balcaoNotes || null,
+        purchasePurpose: balcaoPurpose,
+        items: balcaoOrderProducts.map((p) => ({ productName: p.name, quantity: p.qty, unit: p.unit, unitPrice: p.price })),
+      }
+      const res = await fetch(`${API_URL}/api/orders`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Erro ao atualizar pedido')
+      const updatedOrder = {
+        ...editOrder,
+        customer: balcaoClient?.establishmentName || '',
+        cnpj: effectiveCnpj || '',
+        city: balcaoClient?.city || '',
+        whatsapp: balcaoClient?.contactNumber || '',
+        value: balcaoTotal,
+        products: balcaoOrderProducts.map((p) => ({ name: p.name, qty: p.qty, unit: p.unit, price: p.price })),
+        notes: balcaoNotes || '',
+        purchasePurpose: balcaoPurpose,
+      }
+      onUpdateOrder(updatedOrder)
+      onClose()
+    } catch (err) {
+      setBalcaoSubmitError(err.message || 'Erro ao atualizar pedido. Tente novamente.')
+    } finally {
+      setBalcaoSubmitting(false)
+    }
+  }
+
+  const submitBalcaoNotesOnly = async (e) => {
+    e.preventDefault()
+    if (balcaoSubmitting) return
+    setBalcaoSubmitError('')
+    setBalcaoSubmitting(true)
+    try {
+      const payload = {
+        orderId: editOrder.id,
+        clientId: null,
+        clientName: editOrder.customer,
+        clientCnpj: editOrder.cnpj || null,
+        clientCity: editOrder.city || null,
+        clientPhone: editOrder.whatsapp || null,
+        totalValue: editOrder.value,
+        observations: balcaoNotes || null,
+        items: editOrder.products.map((p) => ({ productName: p.name, quantity: p.qty, unit: p.unit, unitPrice: p.price })),
+      }
+      const res = await fetch(`${API_URL}/api/orders`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Erro ao atualizar pedido')
+      onUpdateOrder({ ...editOrder, notes: balcaoNotes || '' })
+      onClose()
+    } catch (err) {
+      setBalcaoSubmitError(err.message || 'Erro ao salvar. Tente novamente.')
     } finally {
       setBalcaoSubmitting(false)
     }
@@ -6118,13 +6231,13 @@ function NewOrderModal({ onClose, onCreateOrder, onUpdateOrder, editOrder, clien
         <button className="closeBtn" onClick={onClose}><X /></button>
         <div className="modalHeader">
           <div>
-            <span>Pedido {editOrder ? 'existente' : 'manual'}</span>
-            <h2>{editOrder ? 'Editar pedido' : 'Novo pedido'}</h2>
-            <p>{notesOnlyEdit ? 'Pedido entregue — apenas Observações pode ser editado' : editOrder ? 'Altere os dados do pedido e salve as modificações' : tab === 'balcao' ? 'Registre uma venda direta no balcão da Saborsan' : 'Preencha os dados do cliente e os produtos solicitados'}</p>
+            <span>{isBalcaoEdit ? 'Venda no balcão' : editOrder ? 'Pedido existente' : 'Pedido manual'}</span>
+            <h2>{isBalcaoEdit ? 'Editar venda no balcão' : editOrder ? 'Editar pedido' : 'Novo pedido'}</h2>
+            <p>{balcaoNotesOnlyEdit ? 'Venda entregue — apenas Observações pode ser editado' : isBalcaoEdit ? 'Altere os dados da venda no balcão e salve as modificações' : notesOnlyEdit ? 'Pedido entregue — apenas Observações pode ser editado' : editOrder ? 'Altere os dados do pedido e salve as modificações' : tab === 'balcao' ? 'Registre uma venda direta no balcão da Saborsan' : 'Preencha os dados do cliente e os produtos solicitados'}</p>
           </div>
         </div>
 
-        {!editOrder && (
+        {!editOrder && !balcaoNotesOnlyEdit && (
           <div className="newProductTabs">
             <button className={`newProductTab${tab === 'pedido' ? ' active' : ''}`} onClick={() => setTab('pedido')}>
               <ClipboardEdit size={16} /> Pedido
@@ -6135,7 +6248,7 @@ function NewOrderModal({ onClose, onCreateOrder, onUpdateOrder, editOrder, clien
           </div>
         )}
 
-        {(editOrder || tab === 'pedido') && (
+        {((!isBalcaoEdit && editOrder) || tab === 'pedido') && (
         <form onSubmit={submit}>
           <div className="newOrderScrollArea">
             <h3>Dados do cliente</h3>
@@ -6227,8 +6340,8 @@ function NewOrderModal({ onClose, onCreateOrder, onUpdateOrder, editOrder, clien
         </form>
         )}
 
-        {!editOrder && tab === 'balcao' && (
-        <form onSubmit={submitBalcao}>
+        {(isBalcaoEdit || (!editOrder && tab === 'balcao')) && (
+        <form onSubmit={balcaoNotesOnlyEdit ? submitBalcaoNotesOnly : isBalcaoEdit ? submitBalcaoEdit : submitBalcao}>
           <div className="newOrderScrollArea">
             <h3>Dados do cliente</h3>
             <div className="settingsForm">
@@ -6236,6 +6349,7 @@ function NewOrderModal({ onClose, onCreateOrder, onUpdateOrder, editOrder, clien
                 <CustomSelect
                   value={balcaoClientId}
                   onChange={handleBalcaoClientSelect}
+                  disabled={balcaoNotesOnlyEdit}
                   placeholder={localClients.length === 0 ? 'Carregando clientes...' : 'Selecione o cliente'}
                   options={[
                     { value: '__new__', label: '+ Cadastrar novo cliente' },
@@ -6273,32 +6387,33 @@ function NewOrderModal({ onClose, onCreateOrder, onUpdateOrder, editOrder, clien
                   <div className="newOrderItem" key={idx}>
                     <ProductSelect
                       value={item.productId}
+                      disabled={balcaoNotesOnlyEdit}
                       products={products}
                       onChange={(val) => setBalcaoItems((prev) => prev.map((it, j) => j === idx ? { ...it, productId: val, qty: Math.max(1, it.qty) } : it))}
                     />
-                    <input type="number" min={item.productId ? 1 : 0} value={item.qty} disabled={!item.productId} onChange={(e) => setBalcaoItems((prev) => prev.map((it, j) => j === idx ? { ...it, qty: Math.max(1, Number(e.target.value)) } : it))} />
+                    <input type="number" min={item.productId ? 1 : 0} value={item.qty} disabled={balcaoNotesOnlyEdit || !item.productId} onChange={(e) => setBalcaoItems((prev) => prev.map((it, j) => j === idx ? { ...it, qty: Math.max(1, Number(e.target.value)) } : it))} />
                     <span className="newOrderUnit">{product ? product.unit : ''}</span>
                     <span className="newOrderItemPrice">{product && item.qty > 0 ? money(product.price * item.qty) : ''}</span>
-                    {balcaoItems.length > 1 && (
+                    {!balcaoNotesOnlyEdit && balcaoItems.length > 1 && (
                       <button type="button" className="newOrderRemoveBtn" onClick={() => setBalcaoItems((prev) => prev.filter((_, j) => j !== idx))}><X size={14} /></button>
                     )}
                   </div>
                 )
               })}
-              <button type="button" className="newOrderAddBtn" onClick={() => setBalcaoItems((prev) => [...prev, { productId: null, qty: 0 }])}>
+              {!balcaoNotesOnlyEdit && <button type="button" className="newOrderAddBtn" onClick={() => setBalcaoItems((prev) => [...prev, { productId: null, qty: 0 }])}>
                 <Plus size={15} /> Adicionar produto
-              </button>
+              </button>}
             </div>
 
             <h3 className="newOrderSectionTitle">Finalidade da compra</h3>
-            <div className="nfFinalidadeOpts">
+            <div className="nfFinalidadeOpts" style={balcaoNotesOnlyEdit ? { pointerEvents: 'none', opacity: 0.75 } : {}}>
               <label className={`nfFinalidadeOpt${balcaoPurpose === 'consumo' ? ' selected' : ''}`}>
-                <input type="radio" name="balcaoPurpose" value="consumo" checked={balcaoPurpose === 'consumo'} onChange={() => setBalcaoPurpose('consumo')} />
+                <input type="radio" name="balcaoPurpose" value="consumo" checked={balcaoPurpose === 'consumo'} onChange={() => !balcaoNotesOnlyEdit && setBalcaoPurpose('consumo')} />
                 <span>Consumo próprio</span>
                 <small>Uso interno, sem revenda</small>
               </label>
               <label className={`nfFinalidadeOpt${balcaoPurpose === 'revenda' ? ' selected' : ''}`}>
-                <input type="radio" name="balcaoPurpose" value="revenda" checked={balcaoPurpose === 'revenda'} onChange={() => setBalcaoPurpose('revenda')} />
+                <input type="radio" name="balcaoPurpose" value="revenda" checked={balcaoPurpose === 'revenda'} onChange={() => !balcaoNotesOnlyEdit && setBalcaoPurpose('revenda')} />
                 <span>Revenda / Industrialização</span>
                 <small>Requer CNPJ cadastrado</small>
               </label>
@@ -6317,7 +6432,7 @@ function NewOrderModal({ onClose, onCreateOrder, onUpdateOrder, editOrder, clien
             </div>
             {balcaoSubmitError && <small className="errorText">{balcaoSubmitError}</small>}
             <div className="newOrderFooterActions">
-              <button type="submit" className="btnPrimary" disabled={!balcaoCanSubmit || balcaoSubmitting}><CheckCircle2 size={17} /> {balcaoSubmitting ? 'Criando...' : 'Registrar venda'}</button>
+              <button type="submit" className="btnPrimary" disabled={balcaoNotesOnlyEdit ? balcaoSubmitting : (!balcaoCanSubmit || balcaoSubmitting)}><CheckCircle2 size={17} /> {balcaoSubmitting ? (isBalcaoEdit ? 'Salvando...' : 'Criando...') : isBalcaoEdit ? 'Salvar alterações' : 'Registrar venda'}</button>
             </div>
           </div>
         </form>
@@ -6366,7 +6481,10 @@ function BalcaoPaymentModal({ order, onClose, onConfirm }) {
           <h3 className="newOrderSectionTitle" style={{ marginTop: 0 }}>Cliente</h3>
           <div className="supplierDetailGrid" style={{ marginBottom: 16 }}>
             <div className="supplierDetailItem"><span>Nome</span><b>{order.customer}</b></div>
-            {order.cnpj && <div className="supplierDetailItem"><span>CNPJ</span><b>{order.cnpj}</b></div>}
+            {order.purchasePurpose === 'consumo'
+              ? (order.cpf && <div className="supplierDetailItem"><span>CPF</span><b>{order.cpf}</b></div>)
+              : (order.cnpj && <div className="supplierDetailItem"><span>CNPJ</span><b>{order.cnpj}</b></div>)
+            }
           </div>
           <h3 className="newOrderSectionTitle">Método de pagamento</h3>
           <div className="balcaoPaymentMethods">
