@@ -67,6 +67,23 @@ async function ensureTables() {
     IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('AutomationConfig') AND name = 'sr_notify_times')
       ALTER TABLE AutomationConfig ADD sr_notify_times NVARCHAR(MAX) NULL
   `;
+  // Client Reactivation columns
+  await sql.query`
+    IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('AutomationConfig') AND name = 'cr_inactive_days')
+      ALTER TABLE AutomationConfig ADD cr_inactive_days INT NOT NULL DEFAULT 30
+  `;
+  await sql.query`
+    IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('AutomationConfig') AND name = 'cr_message_type')
+      ALTER TABLE AutomationConfig ADD cr_message_type NVARCHAR(20) NULL
+  `;
+  await sql.query`
+    IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('AutomationConfig') AND name = 'cr_waba_template_promo_id')
+      ALTER TABLE AutomationConfig ADD cr_waba_template_promo_id NVARCHAR(200) NULL
+  `;
+  await sql.query`
+    IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('AutomationConfig') AND name = 'cr_waba_template_catalog_id')
+      ALTER TABLE AutomationConfig ADD cr_waba_template_catalog_id NVARCHAR(200) NULL
+  `;
   await sql.query`
     IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'StockReplenishmentCategoryBindings')
     CREATE TABLE StockReplenishmentCategoryBindings (
@@ -95,7 +112,9 @@ app.http('automation-config', {
           SELECT is_active, min_orders, max_orders, max_cities, include_route_cities,
                  time_interval_minutes, time_start, time_end,
                  nfe_notify_on_error, nfe_notify_seller_id, nfe_print_danfe_auto,
-                 sr_min_stock_qty, sr_max_purchase_qty, sr_notify_times
+                 sr_min_stock_qty, sr_max_purchase_qty, sr_notify_times,
+                 cr_inactive_days, cr_message_type,
+                 cr_waba_template_promo_id, cr_waba_template_catalog_id
           FROM AutomationConfig
           WHERE automation_key = ${key}
         `;
@@ -150,6 +169,10 @@ app.http('automation-config', {
               srMinStockQty: row.sr_min_stock_qty ?? 5,
               srMaxPurchaseQty: row.sr_max_purchase_qty ?? 50,
               srNotifyTimes,
+              crInactiveDays: row.cr_inactive_days ?? 30,
+              crMessageType: row.cr_message_type ?? 'promotion',
+              crWabaTemplatePromoId: row.cr_waba_template_promo_id ?? null,
+              crWabaTemplateCatalogId: row.cr_waba_template_catalog_id ?? null,
             },
             bindings: bindingsResult.recordset.map((b) => ({
               id: b.id,
@@ -183,11 +206,15 @@ app.http('automation-config', {
         const srMinStockQty = config.srMinStockQty ?? null;
         const srMaxPurchaseQty = config.srMaxPurchaseQty ?? null;
         const srNotifyTimes = config.srNotifyTimes !== undefined ? JSON.stringify(config.srNotifyTimes) : null;
+        const crInactiveDays = config.crInactiveDays ?? null;
+        const crMessageType = config.crMessageType ?? null;
+        const crWabaTemplatePromoId = config.crWabaTemplatePromoId !== undefined ? (config.crWabaTemplatePromoId ?? null) : null;
+        const crWabaTemplateCatalogId = config.crWabaTemplateCatalogId !== undefined ? (config.crWabaTemplateCatalogId ?? null) : null;
 
         if (!existing.recordset.length) {
           await sql.query`
             INSERT INTO AutomationConfig
-              (automation_key, is_active, min_orders, max_orders, max_cities, include_route_cities, time_interval_minutes, time_start, time_end, nfe_notify_on_error, nfe_notify_seller_id, nfe_print_danfe_auto, sr_min_stock_qty, sr_max_purchase_qty, sr_notify_times, updated_at)
+              (automation_key, is_active, min_orders, max_orders, max_cities, include_route_cities, time_interval_minutes, time_start, time_end, nfe_notify_on_error, nfe_notify_seller_id, nfe_print_danfe_auto, sr_min_stock_qty, sr_max_purchase_qty, sr_notify_times, cr_inactive_days, cr_message_type, cr_waba_template_promo_id, cr_waba_template_catalog_id, updated_at)
             VALUES
               (${key},
                ${isActive ?? 0},
@@ -204,6 +231,10 @@ app.http('automation-config', {
                ${srMinStockQty ?? 5},
                ${srMaxPurchaseQty ?? 50},
                ${srNotifyTimes ?? '[]'},
+               ${crInactiveDays ?? 30},
+               ${crMessageType ?? 'promotion'},
+               ${crWabaTemplatePromoId ?? null},
+               ${crWabaTemplateCatalogId ?? null},
                GETUTCDATE())
           `;
         } else {
@@ -211,21 +242,25 @@ app.http('automation-config', {
           const currentRow = (await sql.query`SELECT * FROM AutomationConfig WHERE automation_key = ${key}`).recordset[0];
           await sql.query`
             UPDATE AutomationConfig SET
-              is_active              = ${isActive !== null ? isActive : currentRow.is_active},
-              min_orders             = ${minOrders !== null ? minOrders : currentRow.min_orders},
-              max_orders             = ${maxOrders !== null ? maxOrders : currentRow.max_orders},
-              max_cities             = ${maxCities !== null ? maxCities : currentRow.max_cities},
-              include_route_cities   = ${includeRouteCities !== null ? includeRouteCities : currentRow.include_route_cities},
-              time_interval_minutes  = ${timeIntervalMinutes !== null ? timeIntervalMinutes : currentRow.time_interval_minutes},
-              time_start             = ${timeStart !== null ? timeStart : currentRow.time_start},
-              time_end               = ${timeEnd !== null ? timeEnd : currentRow.time_end},
-              nfe_notify_on_error    = ${nfeNotifyOnError !== null ? nfeNotifyOnError : currentRow.nfe_notify_on_error},
-              nfe_notify_seller_id   = ${nfeNotifySellerId !== undefined && config.nfeNotifySellerId !== undefined ? nfeNotifySellerId : currentRow.nfe_notify_seller_id},
-              nfe_print_danfe_auto   = ${nfePrintDanfeAuto !== null ? nfePrintDanfeAuto : currentRow.nfe_print_danfe_auto},
-              sr_min_stock_qty       = ${srMinStockQty !== null ? srMinStockQty : currentRow.sr_min_stock_qty},
-              sr_max_purchase_qty    = ${srMaxPurchaseQty !== null ? srMaxPurchaseQty : currentRow.sr_max_purchase_qty},
-              sr_notify_times        = ${srNotifyTimes !== null ? srNotifyTimes : currentRow.sr_notify_times},
-              updated_at             = GETUTCDATE()
+              is_active                    = ${isActive !== null ? isActive : currentRow.is_active},
+              min_orders                   = ${minOrders !== null ? minOrders : currentRow.min_orders},
+              max_orders                   = ${maxOrders !== null ? maxOrders : currentRow.max_orders},
+              max_cities                   = ${maxCities !== null ? maxCities : currentRow.max_cities},
+              include_route_cities         = ${includeRouteCities !== null ? includeRouteCities : currentRow.include_route_cities},
+              time_interval_minutes        = ${timeIntervalMinutes !== null ? timeIntervalMinutes : currentRow.time_interval_minutes},
+              time_start                   = ${timeStart !== null ? timeStart : currentRow.time_start},
+              time_end                     = ${timeEnd !== null ? timeEnd : currentRow.time_end},
+              nfe_notify_on_error          = ${nfeNotifyOnError !== null ? nfeNotifyOnError : currentRow.nfe_notify_on_error},
+              nfe_notify_seller_id         = ${nfeNotifySellerId !== undefined && config.nfeNotifySellerId !== undefined ? nfeNotifySellerId : currentRow.nfe_notify_seller_id},
+              nfe_print_danfe_auto         = ${nfePrintDanfeAuto !== null ? nfePrintDanfeAuto : currentRow.nfe_print_danfe_auto},
+              sr_min_stock_qty             = ${srMinStockQty !== null ? srMinStockQty : currentRow.sr_min_stock_qty},
+              sr_max_purchase_qty          = ${srMaxPurchaseQty !== null ? srMaxPurchaseQty : currentRow.sr_max_purchase_qty},
+              sr_notify_times              = ${srNotifyTimes !== null ? srNotifyTimes : currentRow.sr_notify_times},
+              cr_inactive_days             = ${crInactiveDays !== null ? crInactiveDays : currentRow.cr_inactive_days},
+              cr_message_type              = ${crMessageType !== null ? crMessageType : currentRow.cr_message_type},
+              cr_waba_template_promo_id    = ${crWabaTemplatePromoId !== null ? crWabaTemplatePromoId : currentRow.cr_waba_template_promo_id},
+              cr_waba_template_catalog_id  = ${crWabaTemplateCatalogId !== null ? crWabaTemplateCatalogId : currentRow.cr_waba_template_catalog_id},
+              updated_at                   = GETUTCDATE()
             WHERE automation_key = ${key}
           `;
         }

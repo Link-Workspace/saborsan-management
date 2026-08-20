@@ -438,6 +438,7 @@ function App() {
   const [receiveOrdersActive, setReceiveOrdersActive] = useState(false)
   const [generateNfeActive, setGenerateNfeActive] = useState(false)
   const [stockReplenishmentActive, setStockReplenishmentActive] = useState(false)
+  const [clientReactivationActive, setClientReactivationActive] = useState(false)
 
   const [systemNotifications, setSystemNotifications] = useState([])
   const [notifSettings, setNotifSettings] = useState(() => {
@@ -565,6 +566,12 @@ function App() {
     fetch(`${API_URL}/api/automation-config?key=stock_replenishment`)
       .then((r) => r.json())
       .then((data) => { setStockReplenishmentActive(!!(data?.config?.isActive)) })
+      .catch(() => {})
+  }, [])
+  useEffect(() => {
+    fetch(`${API_URL}/api/automation-config?key=client_reactivation`)
+      .then((r) => r.json())
+      .then((data) => { setClientReactivationActive(!!(data?.config?.isActive)) })
       .catch(() => {})
   }, [])
 
@@ -967,7 +974,7 @@ function App() {
         {active === 'pagamentos' && <Payments paymentsData={paymentsState} paymentsLoading={paymentsLoading} onSelectPayment={setSelectedPayment} onNewPayment={() => setNewPaymentOpen(true)} search={topbarSearch} />}
         {active === 'financeiro' && <Finance />}
         {active === 'relatorios' && <Reports />}
-        {active === 'automacao' && <Automation aiEnabled={aiEnabled} setAiEnabled={setAiEnabled} notify={notify} receiveOrdersActive={receiveOrdersActive} setReceiveOrdersActive={setReceiveOrdersActive} generateNfeActive={generateNfeActive} setGenerateNfeActive={setGenerateNfeActive} stockReplenishmentActive={stockReplenishmentActive} setStockReplenishmentActive={setStockReplenishmentActive} />}
+        {active === 'automacao' && <Automation aiEnabled={aiEnabled} setAiEnabled={setAiEnabled} notify={notify} receiveOrdersActive={receiveOrdersActive} setReceiveOrdersActive={setReceiveOrdersActive} generateNfeActive={generateNfeActive} setGenerateNfeActive={setGenerateNfeActive} stockReplenishmentActive={stockReplenishmentActive} setStockReplenishmentActive={setStockReplenishmentActive} clientReactivationActive={clientReactivationActive} setClientReactivationActive={setClientReactivationActive} />}
         {active === 'configuracoes' && <Settings notify={notify} onNotifSettingChange={(key, val) => setNotifSettings((p) => ({ ...p, [key]: val }))} />}
       </main>
 
@@ -4977,7 +4984,7 @@ function AutomationAdjustModal({ onClose, onActivate, isActive, notify }) {
   )
 }
 
-function Automation({ aiEnabled, setAiEnabled, notify, receiveOrdersActive, setReceiveOrdersActive, generateNfeActive, setGenerateNfeActive, stockReplenishmentActive, setStockReplenishmentActive }) {
+function Automation({ aiEnabled, setAiEnabled, notify, receiveOrdersActive, setReceiveOrdersActive, generateNfeActive, setGenerateNfeActive, stockReplenishmentActive, setStockReplenishmentActive, clientReactivationActive, setClientReactivationActive }) {
   const [dialogOpen, setDialogOpen] = useState(false)
   const [adjustOpen, setAdjustOpen] = useState(false)
   const [nfeDialogOpen, setNfeDialogOpen] = useState(false)
@@ -4985,6 +4992,8 @@ function Automation({ aiEnabled, setAiEnabled, notify, receiveOrdersActive, setR
   const [nfeFiscalWarning, setNfeFiscalWarning] = useState(false)
   const [srDialogOpen, setSrDialogOpen] = useState(false)
   const [srAdjustOpen, setSrAdjustOpen] = useState(false)
+  const [crDialogOpen, setCrDialogOpen] = useState(false)
+  const [crAdjustOpen, setCrAdjustOpen] = useState(false)
 
   const automations = [
     ['Criar entregas', 'Recebe pedidos do app, organiza itens e gera entregas automaticamente para os vendedores.', true],
@@ -4992,12 +5001,13 @@ function Automation({ aiEnabled, setAiEnabled, notify, receiveOrdersActive, setR
     ['Reposição de estoque', 'Analisa níveis de estoque, identifica itens críticos e comunica fornecedores automaticamente.', true],
     ['Otimizar rotas de entrega', 'Agrupa regiões, horários e veículos refrigerados.', true],
     ['Comunicar fornecedores', 'Monta mensagens de cotação e reposição.', false],
-    ['Acompanhar clientes parados', 'Identifica clientes que podem receber nova oferta.', true],
+    ['Acompanhar clientes parados', 'Identifica clientes inativos e envia mensagem de reativação via WhatsApp.', true],
   ]
 
   const handleCardClick = async (title) => {
     if (title === 'Criar entregas') { setDialogOpen(true); return }
     if (title === 'Reposição de estoque') { setSrDialogOpen(true); return }
+    if (title === 'Acompanhar clientes parados') { setCrDialogOpen(true); return }
     if (title === 'Gerar nota fiscal') {
       // Verifica se todos os produtos têm configuração fiscal completa (ibsCbsCst e ibsCbsClassTrib)
       try {
@@ -5070,10 +5080,28 @@ function Automation({ aiEnabled, setAiEnabled, notify, receiveOrdersActive, setR
     setSrAdjustOpen(false)
   }
 
+  const handleCrActivateToggle = async () => {
+    const newVal = !clientReactivationActive
+    try {
+      const res = await fetch(`${API_URL}/api/automation-config`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: 'client_reactivation', config: { isActive: newVal } }),
+      })
+      if (res.ok) {
+        setClientReactivationActive(newVal)
+        notify(newVal ? 'Automação "Acompanhar clientes parados" ativada.' : 'Automação "Acompanhar clientes parados" desativada.')
+      } else { notify('Erro ao alterar status da automação.') }
+    } catch { notify('Erro ao alterar status da automação.') }
+    setCrDialogOpen(false)
+    setCrAdjustOpen(false)
+  }
+
   const isCardActive = (title) => {
     if (title === 'Criar entregas') return receiveOrdersActive
     if (title === 'Gerar nota fiscal') return generateNfeActive
     if (title === 'Reposição de estoque') return stockReplenishmentActive
+    if (title === 'Acompanhar clientes parados') return clientReactivationActive
     return aiEnabled
   }
 
@@ -5090,7 +5118,7 @@ function Automation({ aiEnabled, setAiEnabled, notify, receiveOrdersActive, setR
             <article
               key={title}
               className={isCardActive(title) ? 'on' : ''}
-              style={{ cursor: (title === 'Criar entregas' || title === 'Gerar nota fiscal' || title === 'Reposição de estoque') ? 'pointer' : undefined }}
+              style={{ cursor: (title === 'Criar entregas' || title === 'Gerar nota fiscal' || title === 'Reposição de estoque' || title === 'Acompanhar clientes parados') ? 'pointer' : undefined }}
               onClick={() => handleCardClick(title)}
             >
               <Settings2 size={22} />
@@ -5172,6 +5200,25 @@ function Automation({ aiEnabled, setAiEnabled, notify, receiveOrdersActive, setR
           isActive={stockReplenishmentActive}
           onClose={() => setSrAdjustOpen(false)}
           onActivate={handleSrActivateToggle}
+          notify={notify}
+        />
+      )}
+
+      {crDialogOpen && (
+        <AutomationActionDialog
+          automation="Acompanhar clientes parados"
+          isActive={clientReactivationActive}
+          onClose={() => setCrDialogOpen(false)}
+          onActivate={handleCrActivateToggle}
+          onAdjust={() => { setCrDialogOpen(false); setCrAdjustOpen(true) }}
+        />
+      )}
+
+      {crAdjustOpen && (
+        <AutomationClientReactivationAdjustModal
+          isActive={clientReactivationActive}
+          onClose={() => setCrAdjustOpen(false)}
+          onActivate={handleCrActivateToggle}
           notify={notify}
         />
       )}
@@ -5629,6 +5676,214 @@ function AutomationStockAdjustModal({ onClose, onActivate, isActive, notify }) {
                     </div>
                   )
                 })}
+              </div>
+            </div>
+
+          </div>
+        )}
+
+        <div className="autoAdjustFooter">
+          <button className="autoAdjustSaveBtn" onClick={() => handleSave()} disabled={saving || loading || !isDirty}>
+            {saving ? <><Loader2 size={15} className="verNotaDetailsSpinner" /> Salvando...</> : 'Salvar'}
+          </button>
+          <button className="autoAdjustActivateBtn" onClick={handleActivate} disabled={activating || loading}>
+            {activating
+              ? <><Loader2 size={15} className="verNotaDetailsSpinner" /> {isActive ? 'Desativando...' : 'Ativando...'}</>
+              : isActive ? <><X size={15} /> Desativar automação</> : <><Sparkles size={15} /> Ativar automação</>
+            }
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Automation: Acompanhar clientes parados ───────────────────────────────────
+
+function AutomationClientReactivationAdjustModal({ onClose, onActivate, isActive, notify }) {
+  const [saving, setSaving] = useState(false)
+  const [activating, setActivating] = useState(false)
+  const [loading, setLoading] = useState(true)
+
+  // Placeholder template texts shown while WABA integration is not yet wired.
+  // These will be replaced by the real template bodies fetched from LinkChat.
+  const TEMPLATE_PLACEHOLDERS = {
+    promotion: 'Olá {{1}}! 🎉 Temos novidades e promoções especiais esperando por você. Que tal dar uma olhada no que preparamos? Estamos com saudades do seu pedido!',
+    catalog:   'Olá {{1}}! Nosso catálogo foi atualizado com produtos fresquinhos. Acesse agora e confira as novidades que separamos para você 🛒',
+  }
+
+  const [config, setConfig] = useState({
+    inactiveDays: 30,
+    messageType: 'promotion',
+    wabaTemplatePromoId: null,
+    wabaTemplateCatalogId: null,
+    timeIntervalMinutes: 60,
+    timeStart: '08:00',
+    timeEnd: '18:00',
+  })
+  const [savedConfig, setSavedConfig] = useState(null)
+
+  useEffect(() => {
+    const fetchAll = async () => {
+      setLoading(true)
+      try {
+        const cfgRes = await fetch(`${API_URL}/api/automation-config?key=client_reactivation`)
+          .then((r) => r.json()).catch(() => null)
+        if (cfgRes?.config) {
+          const loaded = {
+            inactiveDays: cfgRes.config.crInactiveDays ?? 30,
+            messageType: cfgRes.config.crMessageType ?? 'promotion',
+            wabaTemplatePromoId: cfgRes.config.crWabaTemplatePromoId ?? null,
+            wabaTemplateCatalogId: cfgRes.config.crWabaTemplateCatalogId ?? null,
+            timeIntervalMinutes: cfgRes.config.timeIntervalMinutes ?? 60,
+            timeStart: cfgRes.config.timeStart ?? '08:00',
+            timeEnd: cfgRes.config.timeEnd ?? '18:00',
+          }
+          setConfig(loaded)
+          setSavedConfig(loaded)
+        } else {
+          const def = { inactiveDays: 30, messageType: 'promotion', wabaTemplatePromoId: null, wabaTemplateCatalogId: null, timeIntervalMinutes: 60, timeStart: '08:00', timeEnd: '18:00' }
+          setSavedConfig(def)
+        }
+      } catch { /* ignore */ }
+      finally { setLoading(false) }
+    }
+    fetchAll()
+  }, [])
+
+  const setC = (k, v) => setConfig((p) => ({ ...p, [k]: v }))
+
+  const isDirty = savedConfig !== null && JSON.stringify(config) !== JSON.stringify(savedConfig)
+
+  const handleSave = async (silent = false) => {
+    setSaving(true)
+    try {
+      const res = await fetch(`${API_URL}/api/automation-config`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          key: 'client_reactivation',
+          config: {
+            crInactiveDays: config.inactiveDays,
+            crMessageType: config.messageType,
+            crWabaTemplatePromoId: config.wabaTemplatePromoId,
+            crWabaTemplateCatalogId: config.wabaTemplateCatalogId,
+            timeIntervalMinutes: config.timeIntervalMinutes,
+            timeStart: config.timeStart,
+            timeEnd: config.timeEnd,
+          },
+        }),
+      })
+      if (res.ok) {
+        if (!silent) notify('Configurações salvas com sucesso.')
+        setSavedConfig(config)
+      } else if (!silent) notify('Erro ao salvar configurações.')
+      return res.ok
+    } catch {
+      if (!silent) notify('Erro ao salvar configurações.')
+      return false
+    } finally { setSaving(false) }
+  }
+
+  const handleActivate = async () => {
+    setActivating(true)
+    try {
+      const saved = await handleSave(true)
+      if (saved) await onActivate()
+      else notify('Erro ao salvar configurações.')
+    } finally { setActivating(false) }
+  }
+
+  return (
+    <div className="nfOverlay" onClick={(e) => e.target.classList.contains('nfOverlay') && onClose()}>
+      <div className="autoAdjustModal">
+        <div className="autoAdjustHeader">
+          <div className="autoAdjustHeaderInfo">
+            <div>
+              <span>Automação</span>
+              <h2>Acompanhar clientes parados</h2>
+              <p>Configure como esta automação deve funcionar</p>
+            </div>
+          </div>
+          <button className="nfClose" style={{ position: 'static' }} onClick={onClose}><X size={16} /></button>
+        </div>
+
+        {loading ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '32px 28px', color: 'var(--muted)', fontWeight: 700 }}>
+            <Loader2 size={18} className="verNotaDetailsSpinner" /> Carregando configurações...
+          </div>
+        ) : (
+          <div className="autoAdjustBody">
+
+            {/* Dias de inatividade */}
+            <div className="autoAdjustSection">
+              <div className="autoAdjustSectionTitle"><Users size={15} /> Critério de inatividade</div>
+              <p style={{ fontSize: '.83rem', color: 'var(--muted)', fontWeight: 600, margin: '0 0 12px' }}>
+                Considerar um cliente inativo quando ele ficar sem realizar nenhum pedido por:
+              </p>
+              <div className="autoAdjustRow">
+                <label style={{ flex: 1 }}>
+                  <span>Dias sem pedido</span>
+                  <input type="number" min={1} max={365} value={config.inactiveDays}
+                    onChange={(e) => setC('inactiveDays', Math.max(1, Number(e.target.value)))} />
+                </label>
+              </div>
+            </div>
+
+            {/* Tipo de mensagem */}
+            <div className="autoAdjustSection">
+              <div className="autoAdjustSectionTitle"><MessageCircle size={15} /> Tipo de mensagem</div>
+              <p style={{ fontSize: '.83rem', color: 'var(--muted)', fontWeight: 600, margin: '0 0 14px' }}>
+                Selecione qual template WABA será enviado aos clientes inativos
+              </p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                {[
+                  { key: 'promotion', label: 'Promoção', icon: Tag, desc: 'Mensagem de oferta especial para reativar o cliente' },
+                  { key: 'catalog', label: 'Ver catálogo', icon: ExternalLink, desc: 'Convite para o cliente conferir novidades no catálogo' },
+                ].map(({ key, label, icon: Icon, desc }) => (
+                  <div key={key}>
+                    <label
+                      className="autoAdjustCheckRow"
+                      style={{ cursor: 'pointer', alignItems: 'flex-start' }}
+                      onClick={() => setC('messageType', key)}
+                    >
+                      <input type="radio" readOnly checked={config.messageType === key}
+                        style={{ accentColor: 'var(--primary)', width: 16, height: 16, marginTop: 3 }} />
+                      <div>
+                        <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}><Icon size={13} />{label}</span>
+                        <small>{desc}</small>
+                      </div>
+                    </label>
+                    {config.messageType === key && (
+                      <div style={{ marginTop: 8, padding: '10px 14px', background: 'var(--surface)', borderRadius: 8, border: '1px solid var(--border)', fontSize: '.83rem', color: 'var(--muted)', fontWeight: 600, lineHeight: 1.55 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6, color: 'var(--primary)', fontWeight: 700, fontSize: '.78rem' }}>
+                          <Info size={12} /> Prévia do template (placeholder — será substituído pelo template real do WABA)
+                        </div>
+                        {TEMPLATE_PLACEHOLDERS[key]}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Período de execução */}
+            <div className="autoAdjustSection">
+              <div className="autoAdjustSectionTitle"><Clock3 size={15} /> Período de execução</div>
+              <div className="autoAdjustRow">
+                <label>
+                  <span>Intervalo (minutos)</span>
+                  <input type="number" min={5} max={1440} value={config.timeIntervalMinutes}
+                    onChange={(e) => setC('timeIntervalMinutes', Math.max(5, Number(e.target.value)))} />
+                </label>
+                <label>
+                  <span>Início</span>
+                  <TimePickerInput value={config.timeStart} onChange={(v) => setC('timeStart', v)} />
+                </label>
+                <label>
+                  <span>Fim</span>
+                  <TimePickerInput value={config.timeEnd} onChange={(v) => setC('timeEnd', v)} />
+                </label>
               </div>
             </div>
 
