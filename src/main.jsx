@@ -60,6 +60,8 @@ import {
   ImageOff,
   Printer,
   AlertCircle,
+  Banknote,
+  QrCode,
 } from 'lucide-react'
 import './styles.css'
 
@@ -344,7 +346,7 @@ const navItems = [
 const statusClass = (status) => {
   const s = status.toLowerCase()
   if (s.includes('recebido') || s.includes('aguardando') || s.includes('preparo') || s.includes('pendente')) return 'warning'
-  if (s.includes('separação') || s.includes('rota') || s.includes('carregando') || s.includes('parcial')) return 'info'
+  if (s.includes('separação') || s.includes('rota') || s.includes('carregando') || s.includes('parcial') || s.includes('balcão')) return 'info'
   if (s.includes('entregue') || s.includes('emitida') || s.includes('ativo') || s.includes('vip') || s.includes('pronto') || s.includes('pago')) return 'success'
   if (s.includes('inativo') || s.includes('atenção') || s.includes('reativar') || s.includes('baixo') || s.includes('erro') || s.includes('rejeitad') || s.includes('atrasado') || s.includes('cancelado') || s.includes('removido')) return 'danger'
   return 'neutral'
@@ -405,6 +407,7 @@ function App() {
   const [removeConfirmOrder, setRemoveConfirmOrder] = useState(null)
   const [reactivateConfirmOrder, setReactivateConfirmOrder] = useState(null)
   const [editOrder, setEditOrder] = useState(null)
+  const [balcaoPaymentOrder, setBalcaoPaymentOrder] = useState(null)
   const [removeConfirmProduct, setRemoveConfirmProduct] = useState(null)
   const [editProduct, setEditProduct] = useState(null)
   const [stockRefreshKey, setStockRefreshKey] = useState(0)
@@ -841,6 +844,22 @@ function App() {
     }).catch(() => {})
   }
 
+  const confirmBalcaoPayment = (orderId, paymentMethod) => {
+    const confirmedAt = new Date().toISOString()
+    setOrders((items) => items.map((item) =>
+      item.id === orderId
+        ? { ...item, balcaoData: { ...(item.balcaoData || {}), balcaoStatus: 'pago', paymentMethod, paymentConfirmedAt: confirmedAt } }
+        : item
+    ))
+    setBalcaoPaymentOrder(null)
+    notify(`Pagamento confirmado para pedido ${orderId}.`)
+    fetch(`${API_URL}/api/orders`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ orderId, balcaoStatus: 'pago', paymentMethod }),
+    }).catch(() => {})
+  }
+
   const updateOrder = (updatedOrder) => {
     setOrders((items) => items.map((item) => item.id === updatedOrder.id ? updatedOrder : item))
     setStockRefreshKey((k) => k + 1)
@@ -937,7 +956,7 @@ function App() {
         </section>
 
         {active === 'dashboard' && <Dashboard totals={totals} orders={orders} aiEnabled={aiEnabled} setActive={setActive} />}
-        {active === 'pedidos' && <Orders orders={orders} ordersLoading={ordersLoading} onSelect={setSelectedOrder} updateOrderStatus={updateOrderStatus} createInvoice={createInvoice} onGerarNota={openGerarNota} onNewOrder={() => setNewOrderOpen(true)} onVerNota={setVerNotaOrder} search={topbarSearch} receiveOrdersActive={receiveOrdersActive} generateNfeActive={generateNfeActive} />}
+        {active === 'pedidos' && <Orders orders={orders} ordersLoading={ordersLoading} onSelect={setSelectedOrder} updateOrderStatus={updateOrderStatus} createInvoice={createInvoice} onGerarNota={openGerarNota} onNewOrder={() => setNewOrderOpen(true)} onVerNota={setVerNotaOrder} onPayment={setBalcaoPaymentOrder} search={topbarSearch} receiveOrdersActive={receiveOrdersActive} generateNfeActive={generateNfeActive} />}
         {active === 'vendedores' && <Sellers search={topbarSearch} addNotif={addNotif} />}
         {active === 'notas' && <Invoices orders={orders} onGerarNota={openGerarNota} onVerNota={setVerNotaOrder} search={topbarSearch} generateNfeActive={generateNfeActive} />}
         {active === 'estoque' && <Stock onProduct={setSelectedProduct} refreshKey={stockRefreshKey} search={topbarSearch} addNotif={addNotif} bgImport={bgImport} onStartBgAnalysis={startBackgroundAnalysis} onClearBgImport={() => setBgImport(null)} />}
@@ -957,6 +976,7 @@ function App() {
       {selectedProduct && <ProductModal product={selectedProduct} onClose={() => setSelectedProduct(null)} onRemove={() => setRemoveConfirmProduct(selectedProduct)} onEdit={() => { setEditProduct(selectedProduct); setSelectedProduct(null) }} />}
       {supplierModal && <SupplierModal supplier={supplierModal} onClose={() => setSupplierModal(null)} notify={notify} />}
       {notaFiscalOrder && <NotaFiscalModal order={notaFiscalOrder} onClose={() => setNotaFiscalOrder(null)} updateOrderStatus={updateOrderStatus} notify={notify} addNotif={addNotif} />}
+      {balcaoPaymentOrder && <BalcaoPaymentModal order={balcaoPaymentOrder} onClose={() => setBalcaoPaymentOrder(null)} onConfirm={(method) => confirmBalcaoPayment(balcaoPaymentOrder.id, method)} />}
       {verNotaOrder && <VerNotaModal order={verNotaOrder} onClose={() => setVerNotaOrder(null)} onSendToClient={sendNfeToClient} onGerarNota={(o) => { setVerNotaOrder(null); setNotaFiscalOrder(o) }} updateOrderStatus={updateOrderStatus} />}
       {notifOpen && (
         <NotifPanel
@@ -1033,7 +1053,7 @@ function App() {
         const _linkedDelivery = editOrder ? deliveriesState.find((d) => d.orderIds?.includes(editOrder.id)) : null
         const _lockedEdit = !!(editOrder && editOrder.status === 'Rota' && _linkedDelivery?.status === 'Em rota')
         const _notesOnlyEdit = !!(editOrder && editOrder.status === 'Entregue')
-        return <NewOrderModal onClose={() => { setNewOrderOpen(false); setEditOrder(null) }} onCreateOrder={createOrder} onUpdateOrder={updateOrder} editOrder={editOrder} clients={clientsState} lockedEdit={_lockedEdit} notesOnlyEdit={_notesOnlyEdit} products={apiProductsState} automationLockClient={!!(receiveOrdersActive && editOrder && editOrder.status === 'Recebido')} />
+        return <NewOrderModal onClose={() => { setNewOrderOpen(false); setEditOrder(null) }} onCreateOrder={createOrder} onUpdateOrder={updateOrder} editOrder={editOrder} clients={clientsState} lockedEdit={_lockedEdit} notesOnlyEdit={_notesOnlyEdit} products={apiProductsState} automationLockClient={!!(receiveOrdersActive && editOrder && editOrder.status === 'Recebido')} onAddClient={(c) => { setClientsState((prev) => [c, ...prev]); addNotif('notifClients', { icon: Users, title: 'Novo cliente cadastrado', text: `${c.establishmentName} foi adicionado à carteira de clientes.` }) }} />
       })()}
       {editProduct && <NewProductModal editProduct={editProduct} onClose={() => setEditProduct(null)} onCreated={() => {}} onUpdated={() => { setStockRefreshKey((k) => k + 1); notify('Produto atualizado com sucesso!') }} />}
       {removeConfirmOrder && (
@@ -1238,7 +1258,7 @@ function Dashboard({ totals, orders, aiEnabled, setActive }) {
   )
 }
 
-function Orders({ orders, ordersLoading, onSelect, updateOrderStatus, createInvoice, onGerarNota, onNewOrder, onVerNota, search = '', receiveOrdersActive = false, generateNfeActive = false }) {
+function Orders({ orders, ordersLoading, onSelect, updateOrderStatus, createInvoice, onGerarNota, onNewOrder, onVerNota, onPayment, search = '', receiveOrdersActive = false, generateNfeActive = false }) {
   const [filter, setFilter] = useState('Todos')
   const activeOrders = orders.filter((o) => !o.isDeleted)
   const removedOrders = orders.filter((o) => o.isDeleted)
@@ -1251,18 +1271,23 @@ function Orders({ orders, ordersLoading, onSelect, updateOrderStatus, createInvo
         <button className="btnSolid" onClick={onNewOrder}><Plus size={18} /> Novo pedido</button>
       </div>
       <div className="filtersRow">
-        {['Todos', 'Recebido', 'Separação', 'Pronto', 'Rota', 'Entregue', 'Removido'].map((item) => <button key={item} className={filter === item ? 'active' : ''} onClick={() => setFilter(item)}><Filter size={15} />{item}</button>)}
+        {['Todos', 'Recebido', 'Separação', 'Pronto', 'Rota', 'Entregue', 'Balcão', 'Removido'].map((item) => <button key={item} className={filter === item ? 'active' : ''} onClick={() => setFilter(item)}><Filter size={15} />{item}</button>)}
       </div>
       {ordersLoading && <p className="loadingText">Carregando pedidos...</p>}
       <div className="ordersBoard">
         {!ordersLoading && filtered.length === 0 && <p className="emptyText">Nenhum pedido encontrado.</p>}
         {filtered.map((order) => (
           <article className="orderCard" key={order.id}>
-            <div className="orderTop"><div><b>{order.id}</b><span>{order.source}</span></div><div style={{display:'flex',gap:'6px',alignItems:'center',flexWrap:'wrap',justifyContent:'flex-end'}}><Status status={filter === 'Removido' ? 'Removido' : order.status} />{order.status === 'Pronto' && order.nfeData && (order.nfeData.nfeStatus === 'AUTHORIZED' ? <span className="nfeSubStatus success">Nota emitida com sucesso</span> : (order.nfeData.nfeStatus === 'PROCESSING' || order.nfeData.nfeStatus === 'SUBMITTING') ? <span className="nfeSubStatus info">Nota em processamento</span> : <span className="nfeSubStatus error">Erro na emição da nota</span>)}</div></div>
+            <div className="orderTop"><div><b>{order.id}</b><span>{order.source}</span></div><div style={{display:'flex',gap:'6px',alignItems:'center',flexWrap:'wrap',justifyContent:'flex-end'}}>
+              <Status status={filter === 'Removido' ? 'Removido' : order.status} />
+              {order.status === 'Balcão' && order.balcaoData?.balcaoStatus === 'pago' && <Status status="Pronto" />}
+              {order.status === 'Balcão' && order.balcaoData?.balcaoStatus === 'entregue' && <Status status="Entregue" />}
+              {order.status === 'Pronto' && order.nfeData && (order.nfeData.nfeStatus === 'AUTHORIZED' ? <span className="nfeSubStatus success">Nota emitida com sucesso</span> : (order.nfeData.nfeStatus === 'PROCESSING' || order.nfeData.nfeStatus === 'SUBMITTING') ? <span className="nfeSubStatus info">Nota em processamento</span> : <span className="nfeSubStatus error">Erro na emição da nota</span>)}
+            </div></div>
             <h3>{order.customer}</h3>
             <p>{order.city} • {order.whatsapp}</p>
             <div className="orderProducts">{order.products.map((p) => <span key={p.name}>{p.qty} {p.unit} • {p.name}</span>)}</div>
-            <div className="orderFooter"><strong>{money(order.value)}</strong><small>Entrega: {order.delivery}</small></div>
+            <div className="orderFooter"><strong>{money(order.value)}</strong><small>{order.status === 'Balcão' ? 'Venda no balcão' : `Entrega: ${order.delivery}`}</small></div>
             <div className="orderActions">
               <button onClick={() => onSelect(order)}>Detalhes</button>
               {order.status === 'Recebido' && (
@@ -1271,6 +1296,14 @@ function Orders({ orders, ordersLoading, onSelect, updateOrderStatus, createInvo
                   : <button style={{background:'var(--orange)',color:'#fff'}} onClick={() => updateOrderStatus(order.id, 'Separação')}>Separar</button>
               )}
               {order.status === 'Pronto' && (!order.nfeData || (order.nfeData.nfeStatus !== 'AUTHORIZED' && order.nfeData.nfeStatus !== 'PROCESSING' && order.nfeData.nfeStatus !== 'SUBMITTING' && order.nfeData.nfeStatus !== 'MANUAL_REVIEW')) && (
+                generateNfeActive
+                  ? <button style={{opacity:0.5,cursor:'not-allowed'}} disabled title="Desabilitado porque a automação 'Gerar nota fiscal' está ativada">Gerar nota</button>
+                  : <button onClick={() => onGerarNota(order)}>Gerar nota</button>
+              )}
+              {order.status === 'Balcão' && (!order.balcaoData || order.balcaoData.balcaoStatus === 'aguardando_pagamento') && (
+                <button style={{background:'var(--orange)',color:'#fff'}} onClick={() => onPayment(order)}>Pagamento</button>
+              )}
+              {order.status === 'Balcão' && order.balcaoData?.balcaoStatus === 'pago' && (
                 generateNfeActive
                   ? <button style={{opacity:0.5,cursor:'not-allowed'}} disabled title="Desabilitado porque a automação 'Gerar nota fiscal' está ativada">Gerar nota</button>
                   : <button onClick={() => onGerarNota(order)}>Gerar nota</button>
@@ -5858,7 +5891,12 @@ function ProductSelect({ value, onChange, disabled, products: productList = [] }
   )
 }
 
-function NewOrderModal({ onClose, onCreateOrder, onUpdateOrder, editOrder, clients = [], lockedEdit = false, notesOnlyEdit = false, products = [], automationLockClient = false }) {
+function NewOrderModal({ onClose, onCreateOrder, onUpdateOrder, editOrder, clients = [], lockedEdit = false, notesOnlyEdit = false, products = [], automationLockClient = false, onAddClient }) {
+  const [tab, setTab] = useState('pedido')
+  const [localClients, setLocalClients] = useState(clients)
+  const [balcaoNewClientOpen, setBalcaoNewClientOpen] = useState(false)
+
+  useEffect(() => { setLocalClients(clients) }, [clients])
   const [selectedClientId, setSelectedClientId] = useState(() => {
     if (editOrder) {
       const match = clients.find((c) => c.establishmentName === editOrder.customer)
@@ -5894,6 +5932,75 @@ function NewOrderModal({ onClose, onCreateOrder, onUpdateOrder, editOrder, clien
   })
   const [submitError, setSubmitError] = useState('')
   const [submitting, setSubmitting] = useState(false)
+
+  // ── Balcão form state ────────────────────────────────────────────────────
+  const [balcaoClientId, setBalcaoClientId] = useState('')
+  const [balcaoItems, setBalcaoItems] = useState([{ productId: null, qty: 0 }])
+  const [balcaoNotes, setBalcaoNotes] = useState('')
+  const [balcaoPurpose, setBalcaoPurpose] = useState('consumo')
+  const [balcaoCnpj, setBalcaoCnpj] = useState('')
+  const [balcaoSubmitError, setBalcaoSubmitError] = useState('')
+  const [balcaoSubmitting, setBalcaoSubmitting] = useState(false)
+
+  const handleBalcaoClientSelect = (id) => {
+    if (id === '__new__') { setBalcaoNewClientOpen(true); return }
+    setBalcaoClientId(id)
+    const c = localClients.find((cl) => String(cl.id) === String(id))
+    setBalcaoCnpj(c?.cnpj || '')
+  }
+
+  const balcaoOrderProducts = balcaoItems
+    .filter((item) => item.productId && item.qty > 0)
+    .map((item) => { const p = products.find((pr) => pr.id === item.productId); return { ...p, qty: item.qty } })
+  const balcaoTotal = balcaoOrderProducts.reduce((sum, p) => sum + p.price * p.qty, 0)
+  const balcaoClient = localClients.find((c) => String(c.id) === String(balcaoClientId))
+  const balcaoClientHasCnpj = !!(balcaoClient?.cnpj)
+  const balcaoNeedsCnpj = !!balcaoClientId && !balcaoClientHasCnpj
+  const balcaoCanSubmit = !!balcaoClientId && balcaoItems.some((i) => i.productId && i.qty > 0) && (!balcaoNeedsCnpj || balcaoCnpj.trim() !== '')
+
+  const submitBalcao = async (e) => {
+    e.preventDefault()
+    if (!balcaoCanSubmit || balcaoSubmitting) return
+    setBalcaoSubmitError('')
+    setBalcaoSubmitting(true)
+    try {
+      const effectiveCnpj = balcaoClientHasCnpj ? (balcaoClient?.cnpj || null) : (balcaoCnpj.trim() || null)
+      const payload = {
+        clientId: Number(balcaoClientId),
+        clientName: balcaoClient?.establishmentName || '',
+        clientCnpj: effectiveCnpj,
+        clientCity: balcaoClient?.city || null,
+        clientPhone: balcaoClient?.contactNumber || null,
+        totalValue: balcaoTotal,
+        observations: balcaoNotes || null,
+        source: 'Balcão',
+        purchasePurpose: balcaoPurpose,
+        balcaoStatus: 'aguardando_pagamento',
+        items: balcaoOrderProducts.map((p) => ({ productName: p.name, quantity: p.qty, unit: p.unit, unitPrice: p.price })),
+      }
+      const res = await fetch(`${API_URL}/api/orders`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Erro ao criar pedido')
+      const order = {
+        ...data.order,
+        status: 'Balcão',
+        source: 'Balcão',
+        cnpj: effectiveCnpj || data.order.cnpj || '',
+        purchasePurpose: balcaoPurpose,
+        balcaoData: { balcaoStatus: 'aguardando_pagamento', paymentMethod: null, paymentConfirmedAt: null },
+      }
+      onCreateOrder(order)
+      onClose()
+    } catch (err) {
+      setBalcaoSubmitError(err.message || 'Erro ao criar pedido. Tente novamente.')
+    } finally {
+      setBalcaoSubmitting(false)
+    }
+  }
 
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }))
   const addItem = () => setItems((i) => [...i, { productId: null, qty: 0 }])
@@ -6013,9 +6120,22 @@ function NewOrderModal({ onClose, onCreateOrder, onUpdateOrder, editOrder, clien
           <div>
             <span>Pedido {editOrder ? 'existente' : 'manual'}</span>
             <h2>{editOrder ? 'Editar pedido' : 'Novo pedido'}</h2>
-            <p>{notesOnlyEdit ? 'Pedido entregue — apenas Observações pode ser editado' : editOrder ? 'Altere os dados do pedido e salve as modificações' : 'Preencha os dados do cliente e os produtos solicitados'}</p>
+            <p>{notesOnlyEdit ? 'Pedido entregue — apenas Observações pode ser editado' : editOrder ? 'Altere os dados do pedido e salve as modificações' : tab === 'balcao' ? 'Registre uma venda direta no balcão da Saborsan' : 'Preencha os dados do cliente e os produtos solicitados'}</p>
           </div>
         </div>
+
+        {!editOrder && (
+          <div className="newProductTabs">
+            <button className={`newProductTab${tab === 'pedido' ? ' active' : ''}`} onClick={() => setTab('pedido')}>
+              <ClipboardEdit size={16} /> Pedido
+            </button>
+            <button className={`newProductTab${tab === 'balcao' ? ' active' : ''}`} onClick={() => setTab('balcao')}>
+              <Store size={16} /> Venda no balcão
+            </button>
+          </div>
+        )}
+
+        {(editOrder || tab === 'pedido') && (
         <form onSubmit={submit}>
           <div className="newOrderScrollArea">
             <h3>Dados do cliente</h3>
@@ -6105,6 +6225,190 @@ function NewOrderModal({ onClose, onCreateOrder, onUpdateOrder, editOrder, clien
             </div>
           </div>
         </form>
+        )}
+
+        {!editOrder && tab === 'balcao' && (
+        <form onSubmit={submitBalcao}>
+          <div className="newOrderScrollArea">
+            <h3>Dados do cliente</h3>
+            <div className="settingsForm">
+              <label>Cliente *
+                <CustomSelect
+                  value={balcaoClientId}
+                  onChange={handleBalcaoClientSelect}
+                  placeholder={localClients.length === 0 ? 'Carregando clientes...' : 'Selecione o cliente'}
+                  options={[
+                    { value: '__new__', label: '+ Cadastrar novo cliente' },
+                    ...localClients.map((c) => ({ value: String(c.id), label: `${c.establishmentName}${c.city ? ` — ${c.city}` : ''}` })),
+                  ]}
+                />
+              </label>
+            </div>
+            {balcaoClientId && balcaoClientId !== '__new__' && balcaoClient && (
+              <div className="supplierDetailGrid" style={{ marginTop: 10, marginBottom: 4 }}>
+                {balcaoClient.cnpj && <div className="supplierDetailItem"><span>CNPJ</span><b>{balcaoClient.cnpj}</b></div>}
+                {balcaoClient.cpf && <div className="supplierDetailItem"><span>CPF</span><b>{balcaoClient.cpf}</b></div>}
+                {balcaoClient.city && <div className="supplierDetailItem"><span>Cidade</span><b>{balcaoClient.city}</b></div>}
+                {balcaoClient.contactNumber && <div className="supplierDetailItem"><span>WhatsApp</span><b>{balcaoClient.contactNumber}</b></div>}
+              </div>
+            )}
+            {balcaoNeedsCnpj && (
+              <div className="settingsForm" style={{ marginTop: 8 }}>
+                <label>CNPJ do cliente *
+                  <input
+                    placeholder="00.000.000/0001-00"
+                    value={balcaoCnpj}
+                    onChange={(e) => setBalcaoCnpj(e.target.value)}
+                  />
+                  <small style={{ color: 'var(--muted)', fontWeight: 600, marginTop: 4, display: 'block' }}>Este cliente não tem CNPJ cadastrado. Informe para continuar.</small>
+                </label>
+              </div>
+            )}
+
+            <h3 className="newOrderSectionTitle">Produtos solicitados</h3>
+            <div className="newOrderItems">
+              {balcaoItems.map((item, idx) => {
+                const product = item.productId ? products.find((p) => p.id === item.productId) : null
+                return (
+                  <div className="newOrderItem" key={idx}>
+                    <ProductSelect
+                      value={item.productId}
+                      products={products}
+                      onChange={(val) => setBalcaoItems((prev) => prev.map((it, j) => j === idx ? { ...it, productId: val, qty: Math.max(1, it.qty) } : it))}
+                    />
+                    <input type="number" min={item.productId ? 1 : 0} value={item.qty} disabled={!item.productId} onChange={(e) => setBalcaoItems((prev) => prev.map((it, j) => j === idx ? { ...it, qty: Math.max(1, Number(e.target.value)) } : it))} />
+                    <span className="newOrderUnit">{product ? product.unit : ''}</span>
+                    <span className="newOrderItemPrice">{product && item.qty > 0 ? money(product.price * item.qty) : ''}</span>
+                    {balcaoItems.length > 1 && (
+                      <button type="button" className="newOrderRemoveBtn" onClick={() => setBalcaoItems((prev) => prev.filter((_, j) => j !== idx))}><X size={14} /></button>
+                    )}
+                  </div>
+                )
+              })}
+              <button type="button" className="newOrderAddBtn" onClick={() => setBalcaoItems((prev) => [...prev, { productId: null, qty: 0 }])}>
+                <Plus size={15} /> Adicionar produto
+              </button>
+            </div>
+
+            <h3 className="newOrderSectionTitle">Finalidade da compra</h3>
+            <div className="nfFinalidadeOpts">
+              <label className={`nfFinalidadeOpt${balcaoPurpose === 'consumo' ? ' selected' : ''}`}>
+                <input type="radio" name="balcaoPurpose" value="consumo" checked={balcaoPurpose === 'consumo'} onChange={() => setBalcaoPurpose('consumo')} />
+                <span>Consumo próprio</span>
+                <small>Uso interno, sem revenda</small>
+              </label>
+              <label className={`nfFinalidadeOpt${balcaoPurpose === 'revenda' ? ' selected' : ''}`}>
+                <input type="radio" name="balcaoPurpose" value="revenda" checked={balcaoPurpose === 'revenda'} onChange={() => setBalcaoPurpose('revenda')} />
+                <span>Revenda / Industrialização</span>
+                <small>Requer CNPJ cadastrado</small>
+              </label>
+            </div>
+
+            <div className="noteBox" style={{ marginTop: '16px' }}>
+              <b>Observações</b>
+              <textarea rows={3} placeholder="Instruções especiais, forma de retirada..." value={balcaoNotes} onChange={(e) => setBalcaoNotes(e.target.value)} />
+            </div>
+          </div>
+
+          <div className="newOrderFooter">
+            <div className="newOrderTotalInline">
+              <span>Total estimado</span>
+              <strong>{money(balcaoTotal)}</strong>
+            </div>
+            {balcaoSubmitError && <small className="errorText">{balcaoSubmitError}</small>}
+            <div className="newOrderFooterActions">
+              <button type="submit" className="btnPrimary" disabled={!balcaoCanSubmit || balcaoSubmitting}><CheckCircle2 size={17} /> {balcaoSubmitting ? 'Criando...' : 'Registrar venda'}</button>
+            </div>
+          </div>
+        </form>
+        )}
+      </div>
+
+      {balcaoNewClientOpen && (
+        <NewClientModal
+          onClose={() => setBalcaoNewClientOpen(false)}
+          onCreated={(c) => {
+            setLocalClients((prev) => [c, ...prev])
+            onAddClient && onAddClient(c)
+            setBalcaoClientId(String(c.id))
+            setBalcaoCnpj(c.cnpj || '')
+            setBalcaoNewClientOpen(false)
+          }}
+        />
+      )}
+    </div>
+  )
+}
+
+function BalcaoPaymentModal({ order, onClose, onConfirm }) {
+  const [method, setMethod] = useState(null)
+  const [confirming, setConfirming] = useState(false)
+
+  const methods = [
+    { id: 'pix', label: 'Pix', icon: QrCode, desc: 'Transferência instantânea' },
+    { id: 'cartao', label: 'Cartão de crédito ou débito', icon: CreditCard, desc: 'Máquina de cartão' },
+    { id: 'boleto', label: 'Boleto', icon: FileText, desc: 'Pagamento via boleto bancário' },
+    { id: 'dinheiro', label: 'Dinheiro físico', icon: Banknote, desc: 'Pagamento em espécie' },
+  ]
+
+  return (
+    <div className="modalBackdrop">
+      <div className="detailModal newOrderModal" style={{ maxWidth: 520 }}>
+        <button className="closeBtn" onClick={onClose}><X /></button>
+        <div className="modalHeader">
+          <div>
+            <span>{order.id}</span>
+            <h2>Forma de pagamento</h2>
+            <p>Selecione como o cliente realizará o pagamento</p>
+          </div>
+        </div>
+        <div className="newOrderScrollArea">
+          <h3 className="newOrderSectionTitle" style={{ marginTop: 0 }}>Cliente</h3>
+          <div className="supplierDetailGrid" style={{ marginBottom: 16 }}>
+            <div className="supplierDetailItem"><span>Nome</span><b>{order.customer}</b></div>
+            {order.cnpj && <div className="supplierDetailItem"><span>CNPJ</span><b>{order.cnpj}</b></div>}
+          </div>
+          <h3 className="newOrderSectionTitle">Método de pagamento</h3>
+          <div className="balcaoPaymentMethods">
+            {methods.map((m) => (
+              <button
+                key={m.id}
+                type="button"
+                className={`balcaoPaymentMethod${method === m.id ? ' selected' : ''}`}
+                onClick={() => setMethod(m.id)}
+              >
+                <div className="balcaoPaymentMethodIcon"><m.icon size={20} /></div>
+                <div className="balcaoPaymentMethodInfo">
+                  <b>{m.label}</b>
+                  <small>{m.desc}</small>
+                </div>
+              </button>
+            ))}
+          </div>
+          {method && (
+            <div className="balcaoPaymentTotal">
+              <span>Total a pagar</span>
+              <strong>{money(order.value)}</strong>
+            </div>
+          )}
+        </div>
+        <div className="newOrderFooter">
+          <div className="newOrderFooterActions" style={{ marginLeft: 'auto' }}>
+            <button
+              type="button"
+              className="btnPrimary"
+              style={{ border: 0, borderRadius: 999, padding: '12px 20px', fontWeight: 900, background: 'linear-gradient(135deg,var(--orange),#ff9c2c)', color: '#fff' }}
+              disabled={!method || confirming}
+              onClick={async () => {
+                setConfirming(true)
+                await onConfirm(method)
+                setConfirming(false)
+              }}
+            >
+              <CheckCircle2 size={17} /> {confirming ? 'Confirmando...' : 'Confirmar pagamento'}
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   )
@@ -7515,6 +7819,12 @@ function NotaFiscalModal({ order, onClose, updateOrderStatus, notify, addNotif }
   const pollingRef = useRef(null)
   const mountedRef = useRef(true)
 
+  const isBalcao = order.status === 'Balcão'
+  const isNfce = isBalcao ? purchasePurpose === 'consumo' : false
+  const docTypeLabel = isNfce ? 'NFC-e' : 'NF-e'
+  const PAYMENT_LABELS = { pix: 'Pix', cartao: 'Cartão de crédito / débito', boleto: 'Boleto', dinheiro: 'Dinheiro físico' }
+  const balcaoPaymentLabel = isBalcao ? (PAYMENT_LABELS[order.balcaoData?.paymentMethod] || null) : null
+
   useEffect(() => {
     mountedRef.current = true
     return () => {
@@ -7565,13 +7875,17 @@ function NotaFiscalModal({ order, onClose, updateOrderStatus, notify, addNotif }
         if (data.status === 'AUTHORIZED') {
           setNfeResult(data)
           setStep('autorizada')
-          updateOrderStatus(order.id, 'Pronto', { nfeData: { ...data, reference: ref, nfeStatus: 'AUTHORIZED' } })
+          const isBalcao = order.status === 'Balcão'
+          updateOrderStatus(order.id, isBalcao ? 'Balcão' : 'Pronto', {
+            nfeData: { ...data, reference: ref, nfeStatus: 'AUTHORIZED' },
+            ...(isBalcao ? { balcaoData: { ...(order.balcaoData || {}), balcaoStatus: 'entregue' }, purchasePurpose } : {}),
+          })
           notify(`NF-e ${data.number ? `nº ${data.number} ` : ''}autorizada para ${order.customer}.`)
           addNotif && addNotif('notifFiscalDocuments', { icon: ReceiptText, title: 'Nota fiscal autorizada', text: `NF-e de ${order.customer} foi autorizada pelo SEFAZ.` })
         } else if (data.status === 'REJECTED' || data.status === 'SUBMISSION_FAILED') {
           setNfeError(data)
           setStep('rejeitada')
-          updateOrderStatus(order.id, 'Pronto', { nfeData: { nfeStatus: data.status, errorCode: data.errorCode || null, errorMessage: data.errorMessage || null, reference: ref } })
+          updateOrderStatus(order.id, order.status === 'Balcão' ? 'Balcão' : 'Pronto', { nfeData: { nfeStatus: data.status, errorCode: data.errorCode || null, errorMessage: data.errorMessage || null, reference: ref } })
           addNotif && addNotif('notifFiscalDocuments', { icon: AlertTriangle, type: 'warning', title: 'Nota fiscal negada', text: `NF-e de ${order.customer} foi negada ou gerou erro pelo SEFAZ / Focus NF-e.` })
         } else {
           startPolling(ref, attempt + 1)
@@ -7592,7 +7906,11 @@ function NotaFiscalModal({ order, onClose, updateOrderStatus, notify, addNotif }
       const res = await fetch(`${API_URL}/api/emit-nfe`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ orderId: order.id, purchasePurpose }),
+        body: JSON.stringify({
+          orderId: order.id,
+          purchasePurpose,
+          ...(isBalcao ? { isBalcao: true, paymentMethod: order.balcaoData?.paymentMethod || null } : {}),
+        }),
       })
       const data = await res.json()
       if (!mountedRef.current) return
@@ -7605,7 +7923,11 @@ function NotaFiscalModal({ order, onClose, updateOrderStatus, notify, addNotif }
       if (data.status === 'AUTHORIZED') {
         setNfeResult(data)
         setStep('autorizada')
-        updateOrderStatus(order.id, 'Pronto', { nfeData: { ...data, nfeStatus: 'AUTHORIZED' } })
+        const isBalcaoEmit = order.status === 'Balcão'
+        updateOrderStatus(order.id, isBalcaoEmit ? 'Balcão' : 'Pronto', {
+          nfeData: { ...data, nfeStatus: 'AUTHORIZED' },
+          ...(isBalcaoEmit ? { balcaoData: { ...(order.balcaoData || {}), balcaoStatus: 'entregue' }, purchasePurpose } : {}),
+        })
         notify(`NF-e ${data.number ? `nº ${data.number} ` : ''}autorizada para ${order.customer}.`)
         addNotif && addNotif('notifFiscalDocuments', { icon: ReceiptText, title: 'Nota fiscal autorizada', text: `NF-e de ${order.customer} foi autorizada pelo SEFAZ.` })
         return
@@ -7684,7 +8006,7 @@ function NotaFiscalModal({ order, onClose, updateOrderStatus, notify, addNotif }
           <div className="nfBody">
             <button className="nfClose" onClick={onClose}><X size={18} /></button>
             <div className="nfSection">
-              <span className="topKicker">Prévia da NF-e</span>
+              <span className="topKicker">Prévia da {docTypeLabel}</span>
               <h2>{order.customer}</h2>
               <p>{order.city} • CNPJ: {order.cnpj}</p>
             </div>
@@ -7708,29 +8030,37 @@ function NotaFiscalModal({ order, onClose, updateOrderStatus, notify, addNotif }
               </div>
               <div className="nfCard">
                 <p className="nfLabel">Operação</p>
-                <b>Venda de mercadoria</b>
+                <b>{isNfce ? 'Venda ao consumidor' : 'Venda de mercadoria'}</b>
                 <small>Saída — CFOP 5102</small>
               </div>
               <div className="nfCard">
                 <p className="nfLabel">Pedido de origem</p>
                 <b>{order.id}</b>
-                <small>{order.delivery}</small>
+                <small>{isBalcao ? 'Venda no balcão' : order.delivery}</small>
               </div>
+              {isBalcao && balcaoPaymentLabel && (
+                <div className="nfCard">
+                  <p className="nfLabel">Forma de pagamento</p>
+                  <b>{balcaoPaymentLabel}</b>
+                  <small>Registrado na venda</small>
+                </div>
+              )}
             </div>
             <div className="nfFinalidade">
               <p className="nfLabel">Finalidade da compra</p>
-              <div className="nfFinalidadeOpts">
+              <div className="nfFinalidadeOpts" style={isBalcao ? { pointerEvents: 'none', opacity: 0.75 } : {}}>
                 <label className={`nfFinalidadeOpt${purchasePurpose === 'consumo' ? ' selected' : ''}`}>
-                  <input type="radio" name="finalidade" value="consumo" checked={purchasePurpose === 'consumo'} onChange={() => setPurchasePurpose('consumo')} />
+                  <input type="radio" name="finalidade" value="consumo" checked={purchasePurpose === 'consumo'} onChange={() => !isBalcao && setPurchasePurpose('consumo')} />
                   <span>Consumo próprio</span>
-                  <small>Uso interno, sem revenda</small>
+                  <small>{isNfce ? 'Emite NFC-e (modelo 65)' : 'Uso interno, sem revenda'}</small>
                 </label>
                 <label className={`nfFinalidadeOpt${purchasePurpose === 'revenda' ? ' selected' : ''}`}>
-                  <input type="radio" name="finalidade" value="revenda" checked={purchasePurpose === 'revenda'} onChange={() => setPurchasePurpose('revenda')} />
+                  <input type="radio" name="finalidade" value="revenda" checked={purchasePurpose === 'revenda'} onChange={() => !isBalcao && setPurchasePurpose('revenda')} />
                   <span>Revenda / Industrialização</span>
-                  <small>Requer Inscrição Estadual</small>
+                  <small>{!isNfce && purchasePurpose === 'revenda' ? 'Emite NF-e (modelo 55)' : 'Requer Inscrição Estadual'}</small>
                 </label>
               </div>
+              {isBalcao && <small style={{ color: 'var(--muted)', fontWeight: 600, marginTop: 6, display: 'block' }}>Finalidade definida na venda no balcão — {docTypeLabel} será emitida</small>}
             </div>
             <div className="nfTable">
               <div className="nfTableHead"><span>Produto</span><span>NCM</span><span>CFOP</span><span>Qtd</span><span>Valor</span></div>
@@ -7752,7 +8082,7 @@ function NotaFiscalModal({ order, onClose, updateOrderStatus, notify, addNotif }
             </div>
             <div className="nfAI">
               <div className="nfAIHeader"><Sparkles size={16} /><b>Emissão via Focus NFe</b></div>
-              <div className="nfAIItem success"><CheckCircle2 size={14} /> NF-e modelo 55 — transmissão direta à SEFAZ</div>
+              <div className="nfAIItem success"><CheckCircle2 size={14} /> {docTypeLabel} modelo {isNfce ? '65' : '55'} — transmissão direta à SEFAZ</div>
               <div className="nfAIItem success"><CheckCircle2 size={14} /> Certificado digital gerenciado pela Focus NFe</div>
               <div className="nfAIItem warning"><AlertTriangle size={14} /> Dados fiscais (NCM, CFOP, CST, alíquotas) devem ser validados pelo contador</div>
               <div className="nfAIItem warning"><AlertTriangle size={14} /> Verifique substituição tributária nos produtos congelados (ICMS-ST)</div>
@@ -7795,7 +8125,7 @@ function NotaFiscalModal({ order, onClose, updateOrderStatus, notify, addNotif }
           <div className="nfBody nfCentered">
             <div className="nfSending">
               <div className="nfSpinner" />
-              <h2>Processando NF-e via Focus NFe...</h2>
+              <h2>Processando {docTypeLabel} via Focus NFe...</h2>
               <div className="nfSendingSteps">
                 {[
                   'Preparando dados fiscais...',

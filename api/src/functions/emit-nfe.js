@@ -593,6 +593,7 @@ async function loadFiscalBenefits() {
 function mapPaymentMethodToFocus(method) {
   const m = String(method || '').toLowerCase();
   if (m.includes('pix')) return '17';
+  if (m.includes('cart') || m.includes('card')) return '03'; // cartão (crédito genérico)
   if (m.includes('crédito') || m.includes('credito') || m.includes('credit')) return '03';
   if (m.includes('débito') || m.includes('debito') || m.includes('debit')) return '04';
   if (m.includes('dinheiro') || m.includes('espécie') || m.includes('especie') || m.includes('cash')) return '01';
@@ -627,8 +628,10 @@ function buildNfcePayload(order, items, payment, { purchasePurpose = 'consumo', 
   delete base.data_entrada_saida;
   base.natureza_operacao = 'VENDA AO CONSUMIDOR';
   base.presenca_comprador = 4;
+  const focusMethod = payment?.paymentMethod ? mapPaymentMethodToFocus(payment.paymentMethod) : '90';
+  const focusValue = Number(payment?.paymentValue) || base.valor_total;
   base.formas_pagamento = [
-    { indicador_pagamento: 1, forma_pagamento: '91', valor_pagamento: base.valor_total },
+    { indicador_pagamento: 1, forma_pagamento: focusMethod, valor_pagamento: focusValue },
   ];
   return base;
 }
@@ -1039,6 +1042,8 @@ app.http('emit-nfe', {
         // ── Consulta e validação fiscal do destinatário ──────────────────────
         // Prioridade: corpo da requisição > salvo no pedido > padrão 'consumo'
         const purchasePurpose = body.purchasePurpose || order.purchasePurpose || 'consumo';
+        const isBalcao = !!(body.isBalcao);
+        const bodyPaymentMethod = body.paymentMethod || null;
 
         let stateRegistrationIndicator = 9;
         let stateRegistration = null;
@@ -1156,7 +1161,8 @@ app.http('emit-nfe', {
         }
 
         // Bloqueia emissão quando a combinação indicador 9 + revenda geraria rejeição 696
-        if (stateRegistrationIndicator === 9 && purchasePurpose === 'revenda') {
+        // (não se aplica a pedidos de balcão: o tipo de documento é determinado pela finalidade)
+        if (!isBalcao && stateRegistrationIndicator === 9 && purchasePurpose === 'revenda') {
           return {
             status: 422,
             jsonBody: {
@@ -1195,8 +1201,10 @@ app.http('emit-nfe', {
           return { jsonBody: { status: ex.status, reference: ex.focusReference } };
         }
 
-        // Determina tipo de documento: NFC-e para não contribuintes do ICMS
-        const isNfce = stateRegistrationIndicator === 9;
+        // Determina tipo de documento
+        // Balcão: consumo próprio → NFC-e, revenda → NF-e
+        // Normal: não contribuinte do ICMS → NFC-e, contribuinte → NF-e
+        const isNfce = isBalcao ? purchasePurpose === 'consumo' : stateRegistrationIndicator === 9;
         const docType = isNfce ? 'NFC-e' : 'NF-e';
         const focusDocEndpoint = isNfce ? 'nfce' : 'nfe';
 
@@ -1211,7 +1219,9 @@ app.http('emit-nfe', {
 
         let reference, payload;
         if (isNfce) {
-          const payment = await loadOrderPayment(orderId);
+          const payment = (isBalcao && bodyPaymentMethod)
+            ? { paymentMethod: bodyPaymentMethod, paymentValue: order.totalValue }
+            : await loadOrderPayment(orderId);
           reference = createNfceReference(docId);
           payload = buildNfcePayload(order, items, payment, { purchasePurpose, fiscalConfigs, codigosBenef });
         } else {

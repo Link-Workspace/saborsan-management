@@ -558,3 +558,16 @@ p{margin:0}.appShell{min-height:100vh;display:grid;grid-template-columns:300px 1
 .autoAdjustActivateBtn:hover:not(:disabled){filter:brightness(1.07)}
 .autoAdjustActivateBtn:disabled{opacity:.45;cursor:not-allowed}
 .bgImportHint{display:flex;align-items:center;gap:8px;background:var(--orange-soft);border:1px solid #ffd6a5;border-radius:12px;padding:10px 14px;margin-top:12px;font-size:.82rem;color:var(--orange-strong);font-weight:700}
+/* Balcão payment modal */
+.balcaoPaymentMethods{display:flex;flex-direction:column;gap:10px;margin-top:4px}
+.balcaoPaymentMethod{display:flex;align-items:center;gap:14px;background:#fff;border:2px solid var(--line);border-radius:16px;padding:14px 16px;cursor:pointer;transition:.15s;text-align:left;width:100%}
+.balcaoPaymentMethod:hover{border-color:var(--orange);background:#fff8f3}
+.balcaoPaymentMethod.selected{border-color:var(--orange);background:#fff8f3}
+.balcaoPaymentMethodIcon{width:40px;height:40px;border-radius:12px;background:#f2f6fb;display:grid;place-items:center;color:var(--navy);flex-shrink:0;transition:.15s}
+.balcaoPaymentMethod.selected .balcaoPaymentMethodIcon{background:var(--orange-soft);color:var(--orange-strong)}
+.balcaoPaymentMethodInfo{display:flex;flex-direction:column;gap:2px}
+.balcaoPaymentMethodInfo b{font-size:.92rem;font-weight:800;color:var(--navy-dark)}
+.balcaoPaymentMethodInfo small{font-size:.78rem;font-weight:700;color:var(--muted)}
+.balcaoPaymentTotal{display:flex;align-items:center;justify-content:space-between;background:linear-gradient(135deg,var(--navy-dark),var(--navy));color:#fff;border-radius:16px;padding:14px 18px;margin-top:16px}
+.balcaoPaymentTotal span{font-weight:800;font-size:.9rem;opacity:.85}
+.balcaoPaymentTotal strong{font-size:1.3rem;font-family:'Montserrat',sans-serif;font-weight:900}
