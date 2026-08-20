@@ -942,7 +942,7 @@ function App() {
         {active === 'notas' && <Invoices orders={orders} onGerarNota={openGerarNota} onVerNota={setVerNotaOrder} search={topbarSearch} generateNfeActive={generateNfeActive} />}
         {active === 'estoque' && <Stock onProduct={setSelectedProduct} refreshKey={stockRefreshKey} search={topbarSearch} addNotif={addNotif} bgImport={bgImport} onStartBgAnalysis={startBackgroundAnalysis} onClearBgImport={() => setBgImport(null)} />}
         {active === 'fornecedores' && <Suppliers onMessage={setSupplierModal} search={topbarSearch} addNotif={addNotif} />}
-        {active === 'compras' && <Purchases notify={notify} addNotif={addNotif} />}
+        {active === 'compras' && <Purchases notify={notify} addNotif={addNotif} stockReplenishmentActive={stockReplenishmentActive} />}
         {active === 'entregas' && <Deliveries deliveries={deliveriesState} onNewDelivery={() => setNewDeliveryOpen(true)} onSelect={(d) => { setSelectedDelivery(d); fetchDeliveries() }} onOpenVehicles={() => setVehiclesOpen(true)} />}
         {active === 'clientes' && <Clients clientsData={clientsState} clientsLoading={clientsLoading} onNewClient={() => setNewClientOpen(true)} onSelectClient={setSelectedClient} search={topbarSearch} />}
         {active === 'pagamentos' && <Payments paymentsData={paymentsState} paymentsLoading={paymentsLoading} onSelectPayment={setSelectedPayment} onNewPayment={() => setNewPaymentOpen(true)} search={topbarSearch} />}
@@ -3236,7 +3236,7 @@ function PurchaseDetailModal({ item, getDayLabel, onClose, onRemove, onEdit, sup
   )
 }
 
-function Purchases({ notify, addNotif }) {
+function Purchases({ notify, addNotif, stockReplenishmentActive }) {
   const [planningItems, setPlanningItems] = useState([])
   const [planningLoading, setPlanningLoading] = useState(true)
   const [suppliersData, setSuppliersData] = useState([])
@@ -3248,6 +3248,8 @@ function Purchases({ notify, addNotif }) {
   const [detailModal, setDetailModal] = useState(null)
   const [editModal, setEditModal] = useState(null)
   const notifiedPurchaseDueRef = useRef(new Set())
+  const [srMinStockQty, setSrMinStockQty] = useState(5)
+  const [stockAlertThreshold, setStockAlertThreshold] = useState(10)
 
   useEffect(() => {
     setPlanningLoading(true)
@@ -3293,21 +3295,30 @@ function Purchases({ notify, addNotif }) {
       .then((r) => r.json())
       .then((data) => { if (data.purchases) setSupplierPurchases(data.purchases) })
       .catch(() => {})
+
+    fetch(`${API_URL}/api/automation-config?key=stock_replenishment`)
+      .then((r) => r.json())
+      .then((data) => { if (data.config?.srMinStockQty != null) setSrMinStockQty(data.config.srMinStockQty) })
+      .catch(() => {})
+
+    fetch(`${API_URL}/api/stock-purchase-config`)
+      .then((r) => r.json())
+      .then((data) => { if (data.stockAlertPct != null) setStockAlertThreshold(parseFloat(data.stockAlertPct) || 10) })
+      .catch(() => {})
   }, [])
 
   const purchaseSuggestions = useMemo(() => {
+    const threshold = stockReplenishmentActive ? srMinStockQty : stockAlertThreshold
     return stockProducts
-      .filter((p) => {
-        if (p.stock === 0) return true
-        if (p.min > 0) {
-          const pct = p.stock / (p.min * 2)
-          return pct <= 0.1
-        }
-        return false
-      })
+      .filter((p) => p.stock <= threshold)
       .map((p) => {
         const isZero = p.stock === 0
-        const suggestedQty = p.min > 0 ? Math.max(p.min * 2 - p.stock, 1) : 10
+        const suggestedQty = Math.max(threshold * 2 - p.stock, 1)
+        const reasonText = isZero
+          ? 'Estoque zerado — reposição urgente'
+          : stockReplenishmentActive
+            ? `Estoque abaixo do mínimo da automação: ${p.stock} ${p.unit || 'unidades'} (mínimo: ${srMinStockQty})`
+            : `Estoque abaixo do limite configurado: ${p.stock} ${p.unit || 'unidades'} (limite: ${stockAlertThreshold})`
         return {
           id: p.id,
           item: p.name,
@@ -3315,13 +3326,11 @@ function Purchases({ notify, addNotif }) {
           supplier: suppliersData.find((s) => s.category === p.category)?.name || '—',
           qty: suggestedQty,
           unit: p.unit || 'unidades',
-          reason: isZero
-            ? 'Estoque zerado — reposição urgente'
-            : `Estoque crítico: ${p.stock} ${p.unit || 'unidades'} restantes (abaixo de 10%)`,
+          reason: reasonText,
           value: p.price > 0 ? p.price * suggestedQty : 0,
         }
       })
-  }, [stockProducts, suppliersData])
+  }, [stockProducts, suppliersData, stockReplenishmentActive, srMinStockQty, stockAlertThreshold])
 
   const getDayLabel = (dateStr) => {
     const date = new Date(dateStr + 'T00:00:00')
