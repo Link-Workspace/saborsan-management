@@ -20,6 +20,13 @@ async function getPool() {
   return _pool;
 }
 
+function formatDaysSince(days) {
+  if (days == null) return null;
+  if (days === 0) return 'Hoje';
+  if (days === 1) return 'Ontem';
+  return `${days} dias atrás`;
+}
+
 let _columnsEnsured = false;
 
 async function ensureClientColumns() {
@@ -124,7 +131,13 @@ app.http('clients', {
             c.priority,
             c.priorityReason,
             c.tag,
-            c.lastPurchase,
+            (
+              SELECT TOP 1 DATEDIFF(day, o.createdAt, GETUTCDATE())
+              FROM GestaoOrders o
+              WHERE o.deletedAt IS NULL
+                AND (o.clientId = c.id OR o.clientName = c.establishmentName)
+              ORDER BY o.createdAt DESC
+            ) AS daysSinceLastPurchase,
             c.lastValue,
             c.avgTicket,
             c.suggestion,
@@ -152,7 +165,13 @@ app.http('clients', {
             u.city             AS userCity,
             u.name             AS userName,
             u.address          AS userAddress,
-            u.invoicePreference AS userInvoicePreference
+            u.invoicePreference AS userInvoicePreference,
+            CASE WHEN EXISTS (
+              SELECT 1 FROM GestaoOrders o
+              WHERE o.deletedAt IS NULL
+                AND o.status <> N'Entregue'
+                AND (o.clientId = c.id OR o.clientName = c.establishmentName)
+            ) THEN 1 ELSE 0 END AS hasActiveOrders
           FROM Clients c
           LEFT JOIN Users u
             ON u.establishmentName = c.establishmentName
@@ -169,7 +188,8 @@ app.http('clients', {
           priority: c.priority || 'Media',
           priorityReason: c.priorityReason || '',
           tag: c.tag || '',
-          lastPurchase: c.lastPurchase || null,
+          lastPurchase: formatDaysSince(c.daysSinceLastPurchase != null ? c.daysSinceLastPurchase : null),
+          daysSinceLastPurchase: c.daysSinceLastPurchase != null ? c.daysSinceLastPurchase : null,
           lastValue: c.lastValue != null ? parseFloat(c.lastValue) : null,
           avgTicket: c.avgTicket != null ? parseFloat(c.avgTicket) : null,
           suggestion: c.suggestion || '',
@@ -190,6 +210,7 @@ app.http('clients', {
           lastFiscalLookupAt: c.lastFiscalLookupAt ? c.lastFiscalLookupAt.toISOString() : null,
           nextFiscalLookupAt: c.nextFiscalLookupAt ? c.nextFiscalLookupAt.toISOString() : null,
           requiresFiscalReview: !!c.requiresFiscalReview,
+          hasActiveOrders: !!c.hasActiveOrders,
         }));
 
         return { jsonBody: { clients } };
@@ -381,6 +402,10 @@ app.http('clients', {
           return { status: 400, jsonBody: { error: 'ID do cliente é obrigatório.' } };
         }
 
+        // Remove dependent rows before the parent to satisfy FK constraints
+        await pool.request().query`DELETE FROM ClientProducts WHERE clientId = ${id}`;
+        await pool.request().query`DELETE FROM ClientOrders WHERE clientId = ${id}`;
+        await pool.request().query`DELETE FROM ClientReactivationLog WHERE client_id = ${id}`;
         await pool.request().query`DELETE FROM Clients WHERE id = ${id}`;
 
         // Remove linked User only when no other Clients share the same establishment

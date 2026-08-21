@@ -171,8 +171,8 @@ app.http('automation-config', {
               srNotifyTimes,
               crInactiveDays: row.cr_inactive_days ?? 30,
               crMessageType: row.cr_message_type ?? 'promotion',
-              crWabaTemplatePromoId: row.cr_waba_template_promo_id ?? null,
-              crWabaTemplateCatalogId: row.cr_waba_template_catalog_id ?? null,
+              crWabaTemplatePromoId: row.cr_waba_template_promo_id ?? process.env.CR_WABA_TEMPLATE_PROMO_ID ?? null,
+              crWabaTemplateCatalogId: row.cr_waba_template_catalog_id ?? process.env.CR_WABA_TEMPLATE_CATALOG_ID ?? null,
             },
             bindings: bindingsResult.recordset.map((b) => ({
               id: b.id,

@@ -523,7 +523,25 @@ function App() {
     setClientsLoading(true)
     fetch(`${API_URL}/api/clients`)
       .then((r) => r.json())
-      .then((data) => { if (data.clients) setClientsState(data.clients) })
+      .then((data) => {
+        if (data.clients) {
+          setClientsState(data.clients)
+          data.clients
+            .filter((c) => c.daysSinceLastPurchase != null && c.daysSinceLastPurchase >= 20)
+            .forEach((c) => {
+              const key = `notif_reativar_${c.id}`
+              if (!sessionStorage.getItem(key)) {
+                sessionStorage.setItem(key, '1')
+                addNotif('notifClients', {
+                  icon: Users,
+                  type: 'warning',
+                  title: 'Cliente sem compra há mais de 20 dias',
+                  text: `${c.establishmentName} não compra há ${c.daysSinceLastPurchase} dias.`,
+                })
+              }
+            })
+        }
+      })
       .catch(() => {})
       .finally(() => setClientsLoading(false))
   }
@@ -794,6 +812,11 @@ function App() {
     setStockRefreshKey((k) => k + 1)
     notify(`Pedido ${order.id} criado com sucesso!`)
     addNotif('notifOrders', { icon: ShoppingCart, title: 'Novo pedido recebido', text: `Pedido ${order.id} de ${order.customer} no valor de ${money(order.value)} aguarda separação.` })
+    setClientsState((prev) => prev.map((c) =>
+      c.establishmentName === order.customer
+        ? { ...c, daysSinceLastPurchase: 0, lastPurchase: 'Hoje' }
+        : c
+    ))
   }
 
   const openGerarNota = (order) => {
@@ -1123,12 +1146,17 @@ function App() {
             <div className="cancelSepActions">
               <button className="cancelSepConfirm" style={{ background: 'var(--red)' }} onClick={async () => {
                 try {
-                  await fetch(`${API_URL}/api/clients`, {
+                  const res = await fetch(`${API_URL}/api/clients`, {
                     method: 'DELETE',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ id: removeConfirmClient.id, userId: removeConfirmClient.userId }),
                   })
-                } catch {}
+                  if (!res.ok) throw new Error('Falha ao remover cliente')
+                } catch {
+                  notify('Erro ao remover cliente do servidor.')
+                  setRemoveConfirmClient(null)
+                  return
+                }
                 setClientsState((prev) => prev.filter((c) => c.id !== removeConfirmClient.id))
                 if (selectedClient?.id === removeConfirmClient.id) setSelectedClient(null)
                 setRemoveConfirmClient(null)
@@ -4253,9 +4281,8 @@ function Clients({ clientsData = [], clientsLoading = false, onNewClient, onSele
     return () => document.removeEventListener('mousedown', handleClick)
   }, [viewMenuOpen])
 
-  const getPriorityStatus = (priority) => {
-    const p = (priority || '').toLowerCase()
-    if (p === 'baixa') return 'Reativar'
+  const getPriorityStatus = (client) => {
+    if (client.daysSinceLastPurchase != null && client.daysSinceLastPurchase >= 20) return 'Reativar'
     return 'Ativo'
   }
 
@@ -4292,7 +4319,7 @@ function Clients({ clientsData = [], clientsLoading = false, onNewClient, onSele
             <article className="clientCard" key={client.id}>
               <div className="avatar">{(client.establishmentName || client.clientName || 'C')[0].toUpperCase()}</div>
               <div><h3>{client.establishmentName}</h3><p>{client.segment || '—'}</p></div>
-              <Status status={getPriorityStatus(client.priority)} />
+              <Status status={getPriorityStatus(client)} />
               <div className="clientStats">
                 <span>Responsável <b>{client.clientName || '—'}</b></span>
                 <span>Cidade <b>{client.city || '—'}</b></span>
@@ -4329,7 +4356,7 @@ function Clients({ clientsData = [], clientsLoading = false, onNewClient, onSele
               <div className="clientListMeta">
                 {client.avgTicket != null && client.avgTicket > 0 && <span>Ticket médio <b>{money(client.avgTicket)}</b></span>}
               </div>
-              <Status status={getPriorityStatus(client.priority)} />
+              <Status status={getPriorityStatus(client)} />
               <div className="clientListActions">
                 <button onClick={() => onSelectClient && onSelectClient(client)}>Ver detalhes</button>
                 {client.contactNumber ? (
@@ -4421,7 +4448,7 @@ function ClientDetailModal({ client, onClose, onEdit, onRemove }) {
         </div>
         <div className="newOrderFooter">
           <div className="newOrderFooterActions" style={{ marginLeft: 'auto' }}>
-            <button type="button" className="orderModalBtn orderModalBtnDanger" onClick={() => onRemove(client)}>Remover</button>
+            <button type="button" className="orderModalBtn orderModalBtnDanger" onClick={() => onRemove(client)} disabled={client.hasActiveOrders} title={client.hasActiveOrders ? 'Não é possível remover: cliente possui pedido(s) em andamento' : undefined}>Remover</button>
             <button type="button" className="btnPrimary" onClick={() => onEdit(client)}>
               <ClipboardEdit size={16} /> Editar
             </button>
@@ -4676,6 +4703,98 @@ function Reports() {
         <p className="analysisText">A operação mostra maior concentração de vendas em pão de queijo, croissants e açaí. O estoque de açaí está abaixo do ideal para o fim de semana e deve ser priorizado nas próximas compras. A carteira de cafeterias demonstra maior potencial para campanhas de combos com croissant, polpas e mini pizzas.</p>
       </div>
     </section>
+  )
+}
+
+function ActivateAllModal({ onClose, onConfirm }) {
+  const [loading, setLoading] = useState(true)
+  const [checks, setChecks] = useState({ receiveOrders: false, generateNfe: false, stockReplenishment: false, clientReactivation: false })
+  const [activating, setActivating] = useState(false)
+
+  useEffect(() => {
+    const run = async () => {
+      setLoading(true)
+      try {
+        const [cfgReceive, cfgNfe, cfgStock, cfgClient, prodsRes, fiscalRes] = await Promise.all([
+          fetch(`${API_URL}/api/automation-config?key=receive_orders`).then((r) => r.json()).catch(() => null),
+          fetch(`${API_URL}/api/automation-config?key=generate_nfe`).then((r) => r.json()).catch(() => null),
+          fetch(`${API_URL}/api/automation-config?key=stock_replenishment`).then((r) => r.json()).catch(() => null),
+          fetch(`${API_URL}/api/automation-config?key=client_reactivation`).then((r) => r.json()).catch(() => null),
+          fetch(`${API_URL}/api/products`).then((r) => r.json()).catch(() => ({ products: [] })),
+          fetch(`${API_URL}/api/fiscal-config`).then((r) => r.json()).catch(() => ({ configs: [] })),
+        ])
+        const activeProducts = (prodsRes.products || []).filter((p) => p.active !== false)
+        const configMap = {}
+        ;(fiscalRes.configs || []).forEach((c) => { configMap[String(c.productId)] = c })
+        const fiscalOk = activeProducts.length > 0 && activeProducts.every((p) => {
+          const cfg = configMap[String(p.id)]
+          return cfg && cfg.ibsCbsCst && cfg.ibsCbsClassTrib
+        })
+        setChecks({
+          receiveOrders: !!(cfgReceive?.config),
+          generateNfe: fiscalOk,
+          stockReplenishment: !!(cfgStock?.config),
+          clientReactivation: !!(cfgClient?.config),
+        })
+      } catch {
+        setChecks({ receiveOrders: false, generateNfe: false, stockReplenishment: false, clientReactivation: false })
+      }
+      setLoading(false)
+    }
+    run()
+  }, [])
+
+  const allReady = !loading && Object.values(checks).every(Boolean)
+
+  const items = [
+    { key: 'receiveOrders', label: 'Criar entregas', hint: 'Acesse a automação e salve os ajustes' },
+    { key: 'generateNfe', label: 'Gerar nota fiscal', hint: 'Configure a classificação fiscal dos produtos' },
+    { key: 'stockReplenishment', label: 'Reposição de estoque', hint: 'Acesse a automação e salve os ajustes' },
+    { key: 'clientReactivation', label: 'Acompanhar clientes parados', hint: 'Acesse a automação e salve os ajustes' },
+  ]
+
+  const handleConfirm = async () => {
+    setActivating(true)
+    await onConfirm()
+    setActivating(false)
+  }
+
+  return (
+    <div className="nfOverlay" onClick={(e) => e.target.classList.contains('nfOverlay') && onClose()}>
+      <div className="autoActionDialog" style={{ maxWidth: 460, width: '90vw' }}>
+        <div className="autoActionIcon"><Sparkles size={28} /></div>
+        <h3>Ativar automação completa</h3>
+        <p>Para ativar todas as automações, cada uma deve estar devidamente configurada.</p>
+        {loading ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '16px 0', color: 'var(--muted)', fontWeight: 700 }}>
+            <Loader2 size={18} className="verNotaDetailsSpinner" /> Verificando configurações...
+          </div>
+        ) : (
+          <div style={{ width: '100%', margin: '12px 0', display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {items.map(({ key, label, hint }) => (
+              <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', borderRadius: 10, background: checks[key] ? '#e8f5e9' : '#fdecea' }}>
+                {checks[key]
+                  ? <CheckCircle2 size={16} style={{ color: 'var(--green)', flexShrink: 0 }} />
+                  : <AlertCircle size={16} style={{ color: 'var(--red)', flexShrink: 0 }} />}
+                <div style={{ flex: 1 }}>
+                  <span style={{ fontWeight: 700, fontSize: '.9rem', color: 'var(--text)', display: 'block' }}>{label}</span>
+                  {!checks[key] && <small style={{ color: 'var(--muted)', fontSize: '.78rem' }}>{hint}</small>}
+                </div>
+                <span style={{ fontSize: '.8rem', fontWeight: 700, color: checks[key] ? 'var(--green)' : 'var(--red)', flexShrink: 0 }}>
+                  {checks[key] ? 'Pronto' : 'Pendente'}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+        <div className="autoActionButtons">
+          <button className="autoActionBtnAdjust" onClick={onClose}>Cancelar</button>
+          <button className="autoActionBtnActivate" onClick={handleConfirm} disabled={!allReady || activating || loading}>
+            {activating ? <><Loader2 size={15} className="verNotaDetailsSpinner" /> Ativando...</> : 'Ativar todas'}
+          </button>
+        </div>
+      </div>
+    </div>
   )
 }
 
@@ -4994,13 +5113,12 @@ function Automation({ aiEnabled, setAiEnabled, notify, receiveOrdersActive, setR
   const [srAdjustOpen, setSrAdjustOpen] = useState(false)
   const [crDialogOpen, setCrDialogOpen] = useState(false)
   const [crAdjustOpen, setCrAdjustOpen] = useState(false)
+  const [activateAllOpen, setActivateAllOpen] = useState(false)
 
   const automations = [
     ['Criar entregas', 'Recebe pedidos do app, organiza itens e gera entregas automaticamente para os vendedores.', true],
     ['Gerar nota fiscal', 'Emite automaticamente a NF-e dos pedidos prontos e corrige erros com IA.', true],
     ['Reposição de estoque', 'Analisa níveis de estoque, identifica itens críticos e comunica fornecedores automaticamente.', true],
-    ['Otimizar rotas de entrega', 'Agrupa regiões, horários e veículos refrigerados.', true],
-    ['Comunicar fornecedores', 'Monta mensagens de cotação e reposição.', false],
     ['Acompanhar clientes parados', 'Identifica clientes inativos e envia mensagem de reativação via WhatsApp.', true],
   ]
 
@@ -5080,6 +5198,23 @@ function Automation({ aiEnabled, setAiEnabled, notify, receiveOrdersActive, setR
     setSrAdjustOpen(false)
   }
 
+  const handleActivateAll = async () => {
+    try {
+      await Promise.all([
+        fetch(`${API_URL}/api/automation-config`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key: 'receive_orders', config: { isActive: true } }) }),
+        fetch(`${API_URL}/api/automation-config`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key: 'generate_nfe', config: { isActive: true } }) }),
+        fetch(`${API_URL}/api/automation-config`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key: 'stock_replenishment', config: { isActive: true } }) }),
+        fetch(`${API_URL}/api/automation-config`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key: 'client_reactivation', config: { isActive: true } }) }),
+      ])
+      setReceiveOrdersActive(true)
+      setGenerateNfeActive(true)
+      setStockReplenishmentActive(true)
+      setClientReactivationActive(true)
+      notify('Todas as automações foram ativadas com sucesso.')
+    } catch { notify('Erro ao ativar automações.') }
+    setActivateAllOpen(false)
+  }
+
   const handleCrActivateToggle = async () => {
     const newVal = !clientReactivationActive
     try {
@@ -5108,10 +5243,10 @@ function Automation({ aiEnabled, setAiEnabled, notify, receiveOrdersActive, setR
   return (
     <>
       <section className="pageStack">
-        <div className="sectionHeader"><div><p>Configurações inteligentes do sistema</p></div><label className="switch big"><input type="checkbox" checked={aiEnabled} onChange={() => setAiEnabled(!aiEnabled)} /><span></span></label></div>
+        <div className="sectionHeader"><div><p>Configurações inteligentes do sistema</p></div></div>
         <div className="automationHero">
-          <div><Bot size={34} /><h2>{aiEnabled ? 'Automação ativa na operação' : 'Operação manual ativada'}</h2><p>Controle como o painel apoia pedidos, estoque, compras, notas, fornecedores, clientes e entregas.</p></div>
-          <button onClick={() => notify('Rotina demonstrativa executada com sucesso.')}>Executar rotina agora</button>
+          <div><Bot size={34} /><h2>Automação ativa na operação</h2><p>Controle como o painel apoia pedidos, estoque, compras, notas, fornecedores, clientes e entregas.</p></div>
+          <button onClick={() => setActivateAllOpen(true)}>Ativar automação completa</button>
         </div>
         <div className="automationGrid">
           {automations.map(([title, text, available]) => (
@@ -5220,6 +5355,17 @@ function Automation({ aiEnabled, setAiEnabled, notify, receiveOrdersActive, setR
           onClose={() => setCrAdjustOpen(false)}
           onActivate={handleCrActivateToggle}
           notify={notify}
+        />
+      )}
+
+      {activateAllOpen && (
+        <ActivateAllModal
+          onClose={() => setActivateAllOpen(false)}
+          onConfirm={handleActivateAll}
+          receiveOrdersActive={receiveOrdersActive}
+          generateNfeActive={generateNfeActive}
+          stockReplenishmentActive={stockReplenishmentActive}
+          clientReactivationActive={clientReactivationActive}
         />
       )}
     </>
@@ -5704,9 +5850,8 @@ function AutomationClientReactivationAdjustModal({ onClose, onActivate, isActive
   const [saving, setSaving] = useState(false)
   const [activating, setActivating] = useState(false)
   const [loading, setLoading] = useState(true)
+  const [wabaTemplates, setWabaTemplates] = useState([])
 
-  // Placeholder template texts shown while WABA integration is not yet wired.
-  // These will be replaced by the real template bodies fetched from LinkChat.
   const TEMPLATE_PLACEHOLDERS = {
     promotion: 'Olá {{1}}! 🎉 Temos novidades e promoções especiais esperando por você. Que tal dar uma olhada no que preparamos? Estamos com saudades do seu pedido!',
     catalog:   'Olá {{1}}! Nosso catálogo foi atualizado com produtos fresquinhos. Acesse agora e confira as novidades que separamos para você 🛒',
@@ -5727,8 +5872,11 @@ function AutomationClientReactivationAdjustModal({ onClose, onActivate, isActive
     const fetchAll = async () => {
       setLoading(true)
       try {
-        const cfgRes = await fetch(`${API_URL}/api/automation-config?key=client_reactivation`)
-          .then((r) => r.json()).catch(() => null)
+        const [cfgRes, tmplRes] = await Promise.all([
+          fetch(`${API_URL}/api/automation-config?key=client_reactivation`).then((r) => r.json()).catch(() => null),
+          fetch(`${API_URL}/api/waba-templates`).then((r) => r.json()).catch(() => null),
+        ])
+        if (Array.isArray(tmplRes)) setWabaTemplates(tmplRes)
         if (cfgRes?.config) {
           const loaded = {
             inactiveDays: cfgRes.config.crInactiveDays ?? 30,
@@ -5838,9 +5986,13 @@ function AutomationClientReactivationAdjustModal({ onClose, onActivate, isActive
               </p>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                 {[
-                  { key: 'promotion', label: 'Promoção', icon: Tag, desc: 'Mensagem de oferta especial para reativar o cliente' },
-                  { key: 'catalog', label: 'Ver catálogo', icon: ExternalLink, desc: 'Convite para o cliente conferir novidades no catálogo' },
-                ].map(({ key, label, icon: Icon, desc }) => (
+                  { key: 'promotion', label: 'Promoção', icon: Tag, desc: 'Mensagem de oferta especial para reativar o cliente', templateId: config.wabaTemplatePromoId },
+                  { key: 'catalog', label: 'Ver catálogo', icon: ExternalLink, desc: 'Convite para o cliente conferir novidades no catálogo', templateId: config.wabaTemplateCatalogId },
+                ].map(({ key, label, icon: Icon, desc, templateId }) => {
+                  const realBody = templateId && wabaTemplates.length
+                    ? (wabaTemplates.find((t) => String(t.id) === String(templateId))?.body ?? null)
+                    : null
+                  return (
                   <div key={key}>
                     <label
                       className="autoAdjustCheckRow"
@@ -5856,14 +6008,15 @@ function AutomationClientReactivationAdjustModal({ onClose, onActivate, isActive
                     </label>
                     {config.messageType === key && (
                       <div style={{ marginTop: 8, padding: '10px 14px', background: 'var(--surface)', borderRadius: 8, border: '1px solid var(--border)', fontSize: '.83rem', color: 'var(--muted)', fontWeight: 600, lineHeight: 1.55 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6, color: 'var(--primary)', fontWeight: 700, fontSize: '.78rem' }}>
-                          <Info size={12} /> Prévia do template (placeholder — será substituído pelo template real do WABA)
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6, color: realBody ? 'var(--success, #16a34a)' : 'var(--primary)', fontWeight: 700, fontSize: '.78rem' }}>
+                          <Info size={12} /> {realBody ? 'Prévia do template WABA' : 'Prévia do template (placeholder — será substituído pelo template real do WABA)'}
                         </div>
-                        {TEMPLATE_PLACEHOLDERS[key]}
+                        {realBody ?? TEMPLATE_PLACEHOLDERS[key]}
                       </div>
                     )}
                   </div>
-                ))}
+                  )
+                })}
               </div>
             </div>
 

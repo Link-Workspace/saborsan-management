@@ -299,6 +299,17 @@ app.http('orders', {
           `;
         }
 
+        // Keep static lastPurchase column in sync
+        if (clientId) {
+          await sql.query`
+            UPDATE Clients SET lastPurchase = 'Hoje' WHERE id = ${clientId}
+          `.catch(() => {});
+        } else if (clientName) {
+          await sql.query`
+            UPDATE Clients SET lastPurchase = 'Hoje' WHERE establishmentName = ${clientName}
+          `.catch(() => {});
+        }
+
         return {
           status: 201,
           jsonBody: {
