@@ -132,11 +132,12 @@ app.http('clients', {
             c.priorityReason,
             c.tag,
             (
-              SELECT TOP 1 DATEDIFF(day, o.createdAt, GETUTCDATE())
+              SELECT TOP 1 DATEDIFF(day, COALESCE(fd.authorizedAt, o.createdAt), GETUTCDATE())
               FROM GestaoOrders o
+              LEFT JOIN GestaoFiscalDocuments fd ON fd.orderId = o.id AND fd.status = 'AUTHORIZED'
               WHERE o.deletedAt IS NULL
                 AND (o.clientId = c.id OR o.clientName = c.establishmentName)
-              ORDER BY o.createdAt DESC
+              ORDER BY COALESCE(fd.authorizedAt, o.createdAt) DESC
             ) AS daysSinceLastPurchase,
             c.lastValue,
             c.avgTicket,
