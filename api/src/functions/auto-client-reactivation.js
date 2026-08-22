@@ -30,6 +30,11 @@ async function ensureTables() {
       ALTER TABLE AutomationConfig ADD cr_waba_template_catalog_id NVARCHAR(200) NULL
   `.catch(() => {});
 
+  await sql.query`
+    IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('AutomationConfig') AND name = 'cr_resend_days')
+      ALTER TABLE AutomationConfig ADD cr_resend_days INT NOT NULL DEFAULT 30
+  `.catch(() => {});
+
   // Tracks every template message sent so we don't spam the same client
   await sql.query`
     IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'ClientReactivationLog')
@@ -79,7 +84,7 @@ async function runAutoClientReactivation(context) {
   // ── Load automation config ────────────────────────────────────────────────
   const cfgResult = await sql.query`
     SELECT is_active, cr_inactive_days, cr_message_type,
-           cr_waba_template_promo_id, cr_waba_template_catalog_id,
+           cr_waba_template_promo_id, cr_waba_template_catalog_id, cr_resend_days,
            time_interval_minutes, time_start, time_end
     FROM AutomationConfig WHERE automation_key = 'client_reactivation'
   `.catch(() => ({ recordset: [] }));
@@ -90,6 +95,7 @@ async function runAutoClientReactivation(context) {
 
   const cfg = cfgResult.recordset[0];
   const inactiveDays   = cfg.cr_inactive_days ?? 30;
+  const resendDays     = cfg.cr_resend_days ?? 30;
   const messageType    = cfg.cr_message_type ?? 'promotion';
   // DB value takes priority; env var is the project-level default
   const templateId     = messageType === 'catalog'
@@ -136,7 +142,13 @@ async function runAutoClientReactivation(context) {
         SELECT 1 FROM ClientReactivationLog l
         WHERE l.client_id = c.id
           AND l.status = 'SENT'
-          AND l.sent_at >= DATEADD(day, -${inactiveDays}, GETUTCDATE())
+          AND l.sent_at >= DATEADD(day, -${resendDays}, GETUTCDATE())
+          AND NOT EXISTS (
+            SELECT 1 FROM GestaoOrders o2
+            WHERE o2.clientId = c.id
+              AND o2.deletedAt IS NULL
+              AND o2.createdAt > l.sent_at
+          )
       )
   `.catch(() => ({ recordset: [] }));
 

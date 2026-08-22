@@ -345,7 +345,7 @@ const navItems = [
 
 const statusClass = (status) => {
   const s = status.toLowerCase()
-  if (s.includes('recebido') || s.includes('aguardando') || s.includes('preparo') || s.includes('pendente')) return 'warning'
+  if (s.includes('recebido') || s.includes('aguardando') || s.includes('preparo') || s.includes('pendente') || s.includes('reativação')) return 'warning'
   if (s.includes('separação') || s.includes('rota') || s.includes('carregando') || s.includes('parcial') || s.includes('balcão')) return 'info'
   if (s.includes('entregue') || s.includes('emitida') || s.includes('ativo') || s.includes('vip') || s.includes('pronto') || s.includes('pago')) return 'success'
   if (s.includes('inativo') || s.includes('atenção') || s.includes('reativar') || s.includes('baixo') || s.includes('erro') || s.includes('rejeitad') || s.includes('atrasado') || s.includes('cancelado') || s.includes('removido')) return 'danger'
@@ -4282,6 +4282,7 @@ function Clients({ clientsData = [], clientsLoading = false, onNewClient, onSele
   }, [viewMenuOpen])
 
   const getPriorityStatus = (client) => {
+    if (client.reactivationSent) return 'Mensagem de reativação enviada'
     if (client.daysSinceLastPurchase != null && client.daysSinceLastPurchase >= 20) return 'Reativar'
     return 'Ativo'
   }
@@ -5859,6 +5860,7 @@ function AutomationClientReactivationAdjustModal({ onClose, onActivate, isActive
 
   const [config, setConfig] = useState({
     inactiveDays: 30,
+    resendDays: 30,
     messageType: 'promotion',
     wabaTemplatePromoId: null,
     wabaTemplateCatalogId: null,
@@ -5880,6 +5882,7 @@ function AutomationClientReactivationAdjustModal({ onClose, onActivate, isActive
         if (cfgRes?.config) {
           const loaded = {
             inactiveDays: cfgRes.config.crInactiveDays ?? 30,
+            resendDays: cfgRes.config.crResendDays ?? 30,
             messageType: cfgRes.config.crMessageType ?? 'promotion',
             wabaTemplatePromoId: cfgRes.config.crWabaTemplatePromoId ?? null,
             wabaTemplateCatalogId: cfgRes.config.crWabaTemplateCatalogId ?? null,
@@ -5890,7 +5893,7 @@ function AutomationClientReactivationAdjustModal({ onClose, onActivate, isActive
           setConfig(loaded)
           setSavedConfig(loaded)
         } else {
-          const def = { inactiveDays: 30, messageType: 'promotion', wabaTemplatePromoId: null, wabaTemplateCatalogId: null, timeIntervalMinutes: 60, timeStart: '08:00', timeEnd: '18:00' }
+          const def = { inactiveDays: 30, resendDays: 30, messageType: 'promotion', wabaTemplatePromoId: null, wabaTemplateCatalogId: null, timeIntervalMinutes: 60, timeStart: '08:00', timeEnd: '18:00' }
           setSavedConfig(def)
         }
       } catch { /* ignore */ }
@@ -5913,6 +5916,7 @@ function AutomationClientReactivationAdjustModal({ onClose, onActivate, isActive
           key: 'client_reactivation',
           config: {
             crInactiveDays: config.inactiveDays,
+            crResendDays: config.resendDays,
             crMessageType: config.messageType,
             crWabaTemplatePromoId: config.wabaTemplatePromoId,
             crWabaTemplateCatalogId: config.wabaTemplateCatalogId,
@@ -5974,6 +5978,21 @@ function AutomationClientReactivationAdjustModal({ onClose, onActivate, isActive
                   <span>Dias sem pedido</span>
                   <input type="number" min={1} max={365} value={config.inactiveDays}
                     onChange={(e) => setC('inactiveDays', Math.max(1, Number(e.target.value)))} />
+                </label>
+              </div>
+            </div>
+
+            {/* Reenvio de template */}
+            <div className="autoAdjustSection">
+              <div className="autoAdjustSectionTitle"><RefreshCw size={15} /> Reenvio de template</div>
+              <p style={{ fontSize: '.83rem', color: 'var(--muted)', fontWeight: 600, margin: '0 0 12px' }}>
+                Aguardar X dias antes de reenviar o template para o mesmo cliente. Caso o cliente realize uma compra antes desse prazo, o envio não será feito.
+              </p>
+              <div className="autoAdjustRow">
+                <label style={{ flex: 1 }}>
+                  <span>Dias para reenvio</span>
+                  <input type="number" min={1} max={365} value={config.resendDays}
+                    onChange={(e) => setC('resendDays', Math.max(1, Number(e.target.value)))} />
                 </label>
               </div>
             </div>

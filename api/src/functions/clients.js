@@ -110,6 +110,20 @@ async function ensureClientColumns() {
       AND documentType NOT IN ('cnpj', 'cpf')
       AND LEN(REPLACE(REPLACE(REPLACE(REPLACE(documentType, '.',''),'/',''),'-',''),' ','')) = 11
   `;
+  await pool.request().query`
+    IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'ClientReactivationLog')
+    CREATE TABLE ClientReactivationLog (
+      id             INT           IDENTITY(1,1) NOT NULL,
+      client_id      INT           NOT NULL,
+      client_phone   NVARCHAR(30)  NOT NULL,
+      message_type   NVARCHAR(20)  NOT NULL,
+      template_id    NVARCHAR(200) NULL,
+      status         NVARCHAR(50)  NOT NULL DEFAULT 'SENT',
+      error_message  NVARCHAR(500) NULL,
+      sent_at        DATETIME      NOT NULL DEFAULT GETUTCDATE(),
+      CONSTRAINT PK_ClientReactivationLog PRIMARY KEY CLUSTERED (id ASC)
+    )
+  `;
   _columnsEnsured = true;
 }
 
@@ -172,7 +186,18 @@ app.http('clients', {
               WHERE o.deletedAt IS NULL
                 AND o.status <> N'Entregue'
                 AND (o.clientId = c.id OR o.clientName = c.establishmentName)
-            ) THEN 1 ELSE 0 END AS hasActiveOrders
+            ) THEN 1 ELSE 0 END AS hasActiveOrders,
+            CASE WHEN EXISTS (
+              SELECT 1 FROM ClientReactivationLog l
+              WHERE l.client_id = c.id
+                AND l.status = 'SENT'
+                AND NOT EXISTS (
+                  SELECT 1 FROM GestaoOrders o2
+                  WHERE o2.deletedAt IS NULL
+                    AND (o2.clientId = c.id OR o2.clientName = c.establishmentName)
+                    AND o2.createdAt > l.sent_at
+                )
+            ) THEN 1 ELSE 0 END AS reactivationSent
           FROM Clients c
           LEFT JOIN Users u
             ON u.establishmentName = c.establishmentName
@@ -212,6 +237,7 @@ app.http('clients', {
           nextFiscalLookupAt: c.nextFiscalLookupAt ? c.nextFiscalLookupAt.toISOString() : null,
           requiresFiscalReview: !!c.requiresFiscalReview,
           hasActiveOrders: !!c.hasActiveOrders,
+          reactivationSent: !!c.reactivationSent,
         }));
 
         return { jsonBody: { clients } };

@@ -85,6 +85,10 @@ async function ensureTables() {
       ALTER TABLE AutomationConfig ADD cr_waba_template_catalog_id NVARCHAR(200) NULL
   `;
   await sql.query`
+    IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('AutomationConfig') AND name = 'cr_resend_days')
+      ALTER TABLE AutomationConfig ADD cr_resend_days INT NOT NULL DEFAULT 30
+  `;
+  await sql.query`
     IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'StockReplenishmentCategoryBindings')
     CREATE TABLE StockReplenishmentCategoryBindings (
       id          INT           IDENTITY(1,1) NOT NULL,
@@ -114,7 +118,7 @@ app.http('automation-config', {
                  nfe_notify_on_error, nfe_notify_seller_id, nfe_print_danfe_auto,
                  sr_min_stock_qty, sr_max_purchase_qty, sr_notify_times,
                  cr_inactive_days, cr_message_type,
-                 cr_waba_template_promo_id, cr_waba_template_catalog_id
+                 cr_waba_template_promo_id, cr_waba_template_catalog_id, cr_resend_days
           FROM AutomationConfig
           WHERE automation_key = ${key}
         `;
@@ -173,6 +177,7 @@ app.http('automation-config', {
               crMessageType: row.cr_message_type ?? 'promotion',
               crWabaTemplatePromoId: row.cr_waba_template_promo_id ?? process.env.CR_WABA_TEMPLATE_PROMO_ID ?? null,
               crWabaTemplateCatalogId: row.cr_waba_template_catalog_id ?? process.env.CR_WABA_TEMPLATE_CATALOG_ID ?? null,
+              crResendDays: row.cr_resend_days ?? 30,
             },
             bindings: bindingsResult.recordset.map((b) => ({
               id: b.id,
@@ -210,11 +215,12 @@ app.http('automation-config', {
         const crMessageType = config.crMessageType ?? null;
         const crWabaTemplatePromoId = config.crWabaTemplatePromoId !== undefined ? (config.crWabaTemplatePromoId ?? null) : null;
         const crWabaTemplateCatalogId = config.crWabaTemplateCatalogId !== undefined ? (config.crWabaTemplateCatalogId ?? null) : null;
+        const crResendDays = config.crResendDays ?? null;
 
         if (!existing.recordset.length) {
           await sql.query`
             INSERT INTO AutomationConfig
-              (automation_key, is_active, min_orders, max_orders, max_cities, include_route_cities, time_interval_minutes, time_start, time_end, nfe_notify_on_error, nfe_notify_seller_id, nfe_print_danfe_auto, sr_min_stock_qty, sr_max_purchase_qty, sr_notify_times, cr_inactive_days, cr_message_type, cr_waba_template_promo_id, cr_waba_template_catalog_id, updated_at)
+              (automation_key, is_active, min_orders, max_orders, max_cities, include_route_cities, time_interval_minutes, time_start, time_end, nfe_notify_on_error, nfe_notify_seller_id, nfe_print_danfe_auto, sr_min_stock_qty, sr_max_purchase_qty, sr_notify_times, cr_inactive_days, cr_message_type, cr_waba_template_promo_id, cr_waba_template_catalog_id, cr_resend_days, updated_at)
             VALUES
               (${key},
                ${isActive ?? 0},
@@ -235,6 +241,7 @@ app.http('automation-config', {
                ${crMessageType ?? 'promotion'},
                ${crWabaTemplatePromoId ?? null},
                ${crWabaTemplateCatalogId ?? null},
+               ${crResendDays ?? 30},
                GETUTCDATE())
           `;
         } else {
@@ -260,6 +267,7 @@ app.http('automation-config', {
               cr_message_type              = ${crMessageType !== null ? crMessageType : currentRow.cr_message_type},
               cr_waba_template_promo_id    = ${crWabaTemplatePromoId !== null ? crWabaTemplatePromoId : currentRow.cr_waba_template_promo_id},
               cr_waba_template_catalog_id  = ${crWabaTemplateCatalogId !== null ? crWabaTemplateCatalogId : currentRow.cr_waba_template_catalog_id},
+              cr_resend_days               = ${crResendDays !== null ? crResendDays : (currentRow.cr_resend_days ?? 30)},
               updated_at                   = GETUTCDATE()
             WHERE automation_key = ${key}
           `;
