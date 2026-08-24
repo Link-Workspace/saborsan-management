@@ -997,7 +997,7 @@ function App() {
         {active === 'pagamentos' && <Payments paymentsData={paymentsState} paymentsLoading={paymentsLoading} onSelectPayment={setSelectedPayment} onNewPayment={() => setNewPaymentOpen(true)} search={topbarSearch} />}
         {active === 'financeiro' && <Finance />}
         {active === 'relatorios' && <Reports />}
-        {active === 'automacao' && <Automation aiEnabled={aiEnabled} setAiEnabled={setAiEnabled} notify={notify} receiveOrdersActive={receiveOrdersActive} setReceiveOrdersActive={setReceiveOrdersActive} generateNfeActive={generateNfeActive} setGenerateNfeActive={setGenerateNfeActive} stockReplenishmentActive={stockReplenishmentActive} setStockReplenishmentActive={setStockReplenishmentActive} clientReactivationActive={clientReactivationActive} setClientReactivationActive={setClientReactivationActive} />}
+        {active === 'automacao' && <Automation aiEnabled={aiEnabled} setAiEnabled={setAiEnabled} notify={notify} addNotif={addNotif} receiveOrdersActive={receiveOrdersActive} setReceiveOrdersActive={setReceiveOrdersActive} generateNfeActive={generateNfeActive} setGenerateNfeActive={setGenerateNfeActive} stockReplenishmentActive={stockReplenishmentActive} setStockReplenishmentActive={setStockReplenishmentActive} clientReactivationActive={clientReactivationActive} setClientReactivationActive={setClientReactivationActive} />}
         {active === 'configuracoes' && <Settings notify={notify} onNotifSettingChange={(key, val) => setNotifSettings((p) => ({ ...p, [key]: val }))} />}
       </main>
 
@@ -3531,17 +3531,27 @@ function Purchases({ notify, addNotif, stockReplenishmentActive }) {
             {!planningLoading && activeItems.length === 0 && (
               <p className="emptyText" style={{ fontSize: '.85rem', margin: 0 }}>Nenhuma compra agendada.</p>
             )}
-            {activeItems.map((item) => (
-              <div key={item.id} className="calendarItemRow">
-                <div>
-                  <b>{getDayLabel(item.scheduledDate)}</b>
-                  <span>{item.title}</span>
+            {activeItems.map((item) => {
+              const isAutomationItem = item.notes?.includes('automação de Reposição de Estoque')
+              return (
+                <div key={item.id} className="calendarItemRow">
+                  <div>
+                    <b style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                      {getDayLabel(item.scheduledDate)}
+                      {isAutomationItem && !stockReplenishmentActive && (
+                        <span style={{ fontSize: '.72rem', fontWeight: 700, background: '#fee2e2', color: '#dc2626', borderRadius: 999, padding: '2px 10px', textTransform: 'none', letterSpacing: 0 }}>
+                          Compra não realizada
+                        </span>
+                      )}
+                    </b>
+                    <span>{item.title}</span>
+                  </div>
+                  <div className="calendarItemActions">
+                    <button className="calendarDetailBtn" onClick={() => setDetailModal(item)}>Detalhes</button>
+                  </div>
                 </div>
-                <div className="calendarItemActions">
-                  <button className="calendarDetailBtn" onClick={() => setDetailModal(item)}>Detalhes</button>
-                </div>
-              </div>
-            ))}
+              )
+            })}
           </div>
         </div>
       </div>
@@ -5139,7 +5149,7 @@ function AutomationAdjustModal({ onClose, onActivate, isActive, notify }) {
   )
 }
 
-function Automation({ aiEnabled, setAiEnabled, notify, receiveOrdersActive, setReceiveOrdersActive, generateNfeActive, setGenerateNfeActive, stockReplenishmentActive, setStockReplenishmentActive, clientReactivationActive, setClientReactivationActive }) {
+function Automation({ aiEnabled, setAiEnabled, notify, addNotif, receiveOrdersActive, setReceiveOrdersActive, generateNfeActive, setGenerateNfeActive, stockReplenishmentActive, setStockReplenishmentActive, clientReactivationActive, setClientReactivationActive }) {
   const [dialogOpen, setDialogOpen] = useState(false)
   const [adjustOpen, setAdjustOpen] = useState(false)
   const [nfeDialogOpen, setNfeDialogOpen] = useState(false)
@@ -5228,6 +5238,55 @@ function Automation({ aiEnabled, setAiEnabled, notify, receiveOrdersActive, setR
       if (res.ok) {
         setStockReplenishmentActive(newVal)
         notify(newVal ? 'Automação "Reposição de estoque" ativada.' : 'Automação "Reposição de estoque" desativada.')
+
+        // Fetch automation-created planning items to notify or reschedule
+        const planData = await fetch(`${API_URL}/api/purchase-planning`).then((r) => r.json()).catch(() => ({ items: [] }))
+        const automationItems = (planData.items || []).filter(
+          (item) => !item.completed && item.notes?.includes('automação de Reposição de Estoque')
+        )
+
+        if (!newVal && automationItems.length > 0 && addNotif) {
+          // Automation deactivated: notify about missed purchases
+          const names = automationItems.map((i) => i.title).join(', ')
+          addNotif('notifPurchases', {
+            icon: ShoppingCart,
+            type: 'warning',
+            title: 'Compra não realizada',
+            text: `${automationItems.length} compra(s) não foram realizadas pois a automação de reposição de estoque foi desabilitada: ${names}.`,
+          })
+        }
+
+        if (newVal && automationItems.length > 0) {
+          // Automation reactivated: check current stock before rescheduling
+          const [productsData, cfgData] = await Promise.all([
+            fetch(`${API_URL}/api/products`).then((r) => r.json()).catch(() => ({ products: [] })),
+            fetch(`${API_URL}/api/automation-config?key=stock_replenishment`).then((r) => r.json()).catch(() => ({ config: {} })),
+          ])
+          const allProducts = productsData.products || []
+          const minStockQty = cfgData.config?.srMinStockQty ?? 5
+          const today = new Date().toISOString().split('T')[0]
+
+          await Promise.all(
+            automationItems.map(async (item) => {
+              const product = allProducts.find((p) => p.name?.toLowerCase() === item.title?.toLowerCase())
+              if (product && product.availableQuantity > minStockQty) {
+                // Product was restocked while automation was off — remove the planned purchase and its supplier link
+                await fetch(`${API_URL}/api/purchase-planning`, {
+                  method: 'DELETE',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ id: item.id }),
+                }).catch(() => {})
+              } else {
+                // Still low stock — reschedule to today per the automation's default schedule
+                await fetch(`${API_URL}/api/purchase-planning`, {
+                  method: 'PATCH',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ id: item.id, title: item.title, scheduledDate: today, notes: item.notes }),
+                }).catch(() => {})
+              }
+            })
+          ).catch(() => {})
+        }
       } else { notify('Erro ao alterar status da automação.') }
     } catch { notify('Erro ao alterar status da automação.') }
     setSrDialogOpen(false)
@@ -5826,12 +5885,12 @@ function AutomationStockAdjustModal({ onClose, onActivate, isActive, notify }) {
                 value={config.wabaTemplateId ? String(config.wabaTemplateId) : ''}
                 onChange={(v) => setC('wabaTemplateId', v || null)}
                 placeholder={wabaTemplates.length ? 'Selecionar template' : 'Nenhum template disponível'}
-                options={wabaTemplates.map((t) => ({ value: String(t.id), label: t.name }))}
+                options={wabaTemplates.map((t) => ({ value: t.name, label: t.name }))}
                 disabled={!wabaTemplates.length}
               />
               {(() => {
                 const tpl = config.wabaTemplateId && wabaTemplates.length
-                  ? wabaTemplates.find((t) => String(t.id) === String(config.wabaTemplateId))
+                  ? wabaTemplates.find((t) => t.name === config.wabaTemplateId)
                   : null
                 if (!tpl) return null
                 return (

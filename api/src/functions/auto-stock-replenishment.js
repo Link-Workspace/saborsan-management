@@ -128,7 +128,7 @@ async function runAutoStockReplenishment(context) {
   // Check time window
   const now = new Date();
   const nowBRT = new Date(now.getTime() - 3 * 60 * 60 * 1000);
-  const currentTime = `${String(nowBRT.getHours()).padStart(2, '0')}:${String(nowBRT.getMinutes()).padStart(2, '0')}`;
+  const currentTime = `${String(nowBRT.getUTCHours()).padStart(2, '0')}:${String(nowBRT.getUTCMinutes()).padStart(2, '0')}`;  
 
   if (cfg.time_start && cfg.time_end) {
     const overnight = cfg.time_end < cfg.time_start;
@@ -168,21 +168,28 @@ async function runAutoStockReplenishment(context) {
 
   const lowStockProducts = lowStockResult.recordset;
   if (!lowStockProducts.length) {
+    await sql.query`
+      INSERT INTO AutomationRunLog (automation_key, result_message)
+      VALUES ('stock_replenishment', N'Nenhum produto com estoque baixo.')
+    `.catch(() => {});
     return { skipped: true, reason: 'Nenhum produto com estoque baixo.' };
   }
 
   const createdPurchases = [];
   const skippedProducts = [];
+  const pendingSupplierIds = new Set(); // suppliers with already-existing purchases
 
   for (const product of lowStockProducts) {
     // Skip if any pending/in_progress purchase already exists for this product
     const existingPurchase = await sql.query`
-      SELECT TOP 1 id FROM SupplierPurchases
+      SELECT TOP 1 id, supplierId FROM SupplierPurchases
       WHERE purchaseName = ${product.name}
         AND status IN ('pending', 'in_progress')
     `.catch(() => ({ recordset: [] }));
 
     if (existingPurchase.recordset.length) {
+      const existingSuppId = existingPurchase.recordset[0].supplierId;
+      if (existingSuppId) pendingSupplierIds.add(existingSuppId);
       skippedProducts.push({ product: product.name, reason: 'Compra já existe nas últimas 24h' });
       continue;
     }
@@ -216,6 +223,20 @@ async function runAutoStockReplenishment(context) {
       continue;
     }
 
+    // If this supplier already has any pending/in-progress purchase (created manually
+    // or with a different purchaseName), just queue notification — don't duplicate.
+    const supplierAlreadyPending = await sql.query`
+      SELECT TOP 1 id FROM SupplierPurchases
+      WHERE supplierId = ${supplierId} AND status IN ('pending', 'in_progress')
+    `.catch(() => ({ recordset: [] }));
+
+    if (supplierAlreadyPending.recordset.length) {
+      context?.log(`[auto-stock-replenishment] Produto "${product.name}": fornecedor id=${supplierId} já tem compra pendente, agendando notificação.`);
+      pendingSupplierIds.add(supplierId);
+      skippedProducts.push({ product: product.name, reason: 'Fornecedor já tem compra pendente em aberto' });
+      continue;
+    }
+
     const purchaseNotes = `${maxPurchaseQty} unidade(s) — Criado automaticamente pela automação de Reposição de Estoque. Estoque atual: ${product.availableQuantity} unidade(s).`;
 
     const spInsert = await sql.query`
@@ -226,7 +247,7 @@ async function runAutoStockReplenishment(context) {
     const newPurchaseId = spInsert.recordset[0]?.id ?? null;
 
     // Mirror to PurchasePlanningItems so it appears in "Próximas compras"
-    const todayBRT = new Date(nowBRT.getFullYear(), nowBRT.getMonth(), nowBRT.getDate());
+    const todayBRT = new Date(Date.UTC(nowBRT.getUTCFullYear(), nowBRT.getUTCMonth(), nowBRT.getUTCDate()));
     await sql.query`
       INSERT INTO PurchasePlanningItems (title, scheduledDate, notes, supplier_purchase_id)
       VALUES (${product.name}, ${todayBRT}, ${purchaseNotes}, ${newPurchaseId})
@@ -236,18 +257,23 @@ async function runAutoStockReplenishment(context) {
     context?.log(`[auto-stock-replenishment] Compra criada: "${product.name}", fornecedor id=${supplierId}, quantidade=${maxPurchaseQty}`);
   }
 
-  // Send template message to each unique supplier that got new purchases
-  if (srWabaTemplateId && createdPurchases.length > 0) {
-    const uniqueSupplierIds = [...new Set(createdPurchases.map((p) => p.supplierId))];
+  // Send template to all suppliers with pending purchases (new or pre-existing)
+  const allSupplierIds = new Set([...createdPurchases.map((p) => p.supplierId), ...pendingSupplierIds]);
+  if (!srWabaTemplateId) {
+    context?.log('[auto-stock-replenishment] Nenhum template WABA configurado — envio de mensagem pulado.');
+  } else if (allSupplierIds.size === 0) {
+    context?.log('[auto-stock-replenishment] Nenhum fornecedor identificado para notificar.');
+  } else {
+    const uniqueSupplierIds = [...allSupplierIds];
     for (const suppId of uniqueSupplierIds) {
-      // Avoid double-send: skip if already notified in the last 24h
+      // Avoid double-send within the same interval window
       const recentNotif = await sql.query`
         SELECT TOP 1 id FROM SupplierNotificationLog
         WHERE supplier_id = ${suppId} AND status = 'SENT'
-          AND sent_at > DATEADD(HOUR, -24, GETUTCDATE())
+          AND sent_at > DATEADD(MINUTE, -${intervalMinutes}, GETUTCDATE())
       `.catch(() => ({ recordset: [] }));
       if (recentNotif.recordset.length) {
-        context?.log(`[auto-stock-replenishment] Fornecedor id=${suppId} já notificado nas últimas 24h, pulando.`);
+        context?.log(`[auto-stock-replenishment] Fornecedor id=${suppId} já notificado nos últimos ${intervalMinutes} min, pulando.`);
         continue;
       }
 
@@ -342,13 +368,27 @@ app.timer('autoStockReplenishmentTimer', {
       await sql.connect(sqlConfig);
 
       const cfgResult = await sql.query`
-        SELECT is_active, time_interval_minutes
+        SELECT is_active, time_interval_minutes, sr_notify_times
         FROM AutomationConfig WHERE automation_key = 'stock_replenishment'
       `.catch(() => ({ recordset: [] }));
 
       if (!cfgResult.recordset.length || !cfgResult.recordset[0].is_active) return;
 
-      const intervalMinutes = cfgResult.recordset[0].time_interval_minutes || 30;
+      const cfg = cfgResult.recordset[0];
+      const intervalMinutes = cfg.time_interval_minutes || 30;
+
+      // When notify times are configured, silently skip if we are outside every window.
+      // This prevents the "Nenhum horário" message from flooding the log every minute.
+      let notifyTimes = [];
+      try { notifyTimes = JSON.parse(cfg.sr_notify_times || '[]'); } catch { notifyTimes = []; }
+
+      if (notifyTimes.length > 0) {
+        const now = new Date();
+        const nowBRT = new Date(now.getTime() - 3 * 60 * 60 * 1000);
+        const currentTime = `${String(nowBRT.getUTCHours()).padStart(2, '0')}:${String(nowBRT.getUTCMinutes()).padStart(2, '0')}`;
+        const tolerance = Math.max(Math.floor(intervalMinutes / 2), 2);
+        if (!isNotifyWindow(currentTime, notifyTimes, tolerance)) return;
+      }
 
       const lastRunResult = await sql.query`
         SELECT TOP 1 created_at FROM AutomationRunLog
