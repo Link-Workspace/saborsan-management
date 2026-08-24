@@ -435,6 +435,15 @@ function App() {
   const [bgNfePanelOpen, setBgNfePanelOpen] = useState(false)
   const bgNfeIntervalRef = useRef(null)
   const prevBgNfeStatusRef = useRef(null)
+  const [bgDelivery, setBgDelivery] = useState(null)
+  const [bgDeliveryPanelOpen, setBgDeliveryPanelOpen] = useState(false)
+  const bgDeliveryIntervalRef = useRef(null)
+  const [bgStockReplenishment, setBgStockReplenishment] = useState(null)
+  const [bgStockReplenishmentPanelOpen, setBgStockReplenishmentPanelOpen] = useState(false)
+  const bgStockReplenishmentIntervalRef = useRef(null)
+  const [bgClientReactivation, setBgClientReactivation] = useState(null)
+  const [bgClientReactivationPanelOpen, setBgClientReactivationPanelOpen] = useState(false)
+  const bgClientReactivationIntervalRef = useRef(null)
   const [receiveOrdersActive, setReceiveOrdersActive] = useState(false)
   const [generateNfeActive, setGenerateNfeActive] = useState(false)
   const [stockReplenishmentActive, setStockReplenishmentActive] = useState(false)
@@ -626,6 +635,63 @@ function App() {
     poll();
     return () => { if (bgNfeIntervalRef.current) { clearInterval(bgNfeIntervalRef.current); bgNfeIntervalRef.current = null; } };
   }, [generateNfeActive])
+
+  useEffect(() => {
+    if (!receiveOrdersActive) {
+      if (bgDeliveryIntervalRef.current) { clearInterval(bgDeliveryIntervalRef.current); bgDeliveryIntervalRef.current = null; }
+      setBgDelivery(null);
+      return;
+    }
+    const poll = () => {
+      fetch(`${API_URL}/api/auto-delivery-progress`)
+        .then((r) => r.json())
+        .then((data) => {
+          setBgDelivery({ isRunning: !!data.isRunning, step: data.currentStep || data.lastRun?.message || null, lastMessage: data.lastRun?.message || null });
+        })
+        .catch(() => {});
+    };
+    bgDeliveryIntervalRef.current = setInterval(poll, 3000);
+    poll();
+    return () => { if (bgDeliveryIntervalRef.current) { clearInterval(bgDeliveryIntervalRef.current); bgDeliveryIntervalRef.current = null; } };
+  }, [receiveOrdersActive])
+
+  useEffect(() => {
+    if (!stockReplenishmentActive) {
+      if (bgStockReplenishmentIntervalRef.current) { clearInterval(bgStockReplenishmentIntervalRef.current); bgStockReplenishmentIntervalRef.current = null; }
+      setBgStockReplenishment(null);
+      return;
+    }
+    const poll = () => {
+      fetch(`${API_URL}/api/auto-stock-replenishment-progress`)
+        .then((r) => r.json())
+        .then((data) => {
+          setBgStockReplenishment({ isRunning: !!data.isRunning, step: data.currentStep || data.lastRun?.message || null, lastMessage: data.lastRun?.message || null });
+        })
+        .catch(() => {});
+    };
+    bgStockReplenishmentIntervalRef.current = setInterval(poll, 3000);
+    poll();
+    return () => { if (bgStockReplenishmentIntervalRef.current) { clearInterval(bgStockReplenishmentIntervalRef.current); bgStockReplenishmentIntervalRef.current = null; } };
+  }, [stockReplenishmentActive])
+
+  useEffect(() => {
+    if (!clientReactivationActive) {
+      if (bgClientReactivationIntervalRef.current) { clearInterval(bgClientReactivationIntervalRef.current); bgClientReactivationIntervalRef.current = null; }
+      setBgClientReactivation(null);
+      return;
+    }
+    const poll = () => {
+      fetch(`${API_URL}/api/auto-client-reactivation-progress`)
+        .then((r) => r.json())
+        .then((data) => {
+          setBgClientReactivation({ isRunning: !!data.isRunning, step: data.currentStep || data.lastRun?.message || null, lastMessage: data.lastRun?.message || null });
+        })
+        .catch(() => {});
+    };
+    bgClientReactivationIntervalRef.current = setInterval(poll, 3000);
+    poll();
+    return () => { if (bgClientReactivationIntervalRef.current) { clearInterval(bgClientReactivationIntervalRef.current); bgClientReactivationIntervalRef.current = null; } };
+  }, [clientReactivationActive])
 
   useEffect(() => {
     const prev = prevBgNfeStatusRef.current;
@@ -956,25 +1022,32 @@ function App() {
                 <PackageCheck size={19} />
               </button>
             )}
-            {bgNfe?.status === 'running' && (
-              <button
-                className="iconButton bgImportPulse"
-                onClick={() => setBgNfePanelOpen(true)}
-                title="Gerando notas fiscais automaticamente..."
-              >
-                <Settings2 size={19} />
-              </button>
-            )}
-            {bgNfe?.status === 'done' && (bgNfe.interventions?.length ?? 0) > 0 && (
-              <button
-                className="iconButton bgNfeInterventionBtn"
-                onClick={() => setBgNfePanelOpen(true)}
-                title={`${bgNfe.interventions.length} intervenção(ões) necessária(s) — clique para ver`}
-              >
-                <AlertTriangle size={19} />
-                <span>{bgNfe.interventions.length}</span>
-              </button>
-            )}
+            {(() => {
+              const activeBtns = [
+                receiveOrdersActive && { key: 'delivery', label: 'Criar Entregas', isRunning: !!bgDelivery?.isRunning, onClick: () => setBgDeliveryPanelOpen(true) },
+                generateNfeActive && { key: 'nfe', label: 'Gerar Nota Fiscal', isRunning: bgNfe?.status === 'running', badge: (bgNfe?.interventions?.length ?? 0) > 0 ? bgNfe.interventions.length : null, onClick: () => setBgNfePanelOpen(true) },
+                stockReplenishmentActive && { key: 'sr', label: 'Reposição de Estoque', isRunning: !!bgStockReplenishment?.isRunning, onClick: () => setBgStockReplenishmentPanelOpen(true) },
+                clientReactivationActive && { key: 'cr', label: 'Acompanhar Clientes Parados', isRunning: !!bgClientReactivation?.isRunning, onClick: () => setBgClientReactivationPanelOpen(true) },
+              ].filter(Boolean)
+              if (!activeBtns.length) return null
+              return (
+                <div className="automationStatusGroup">
+                  {activeBtns.map((btn, idx) => (
+                    <React.Fragment key={btn.key}>
+                      {idx > 0 && <span className="automationBtnConnector" />}
+                      <button
+                        className={`automationStatusBtn${btn.isRunning ? ' automationStatusRunning' : ''}`}
+                        onClick={btn.onClick}
+                        title={btn.label}
+                      >
+                        <Bot size={19} />
+                        {btn.badge != null && <span className="automationStatusBadge">{btn.badge}</span>}
+                      </button>
+                    </React.Fragment>
+                  ))}
+                </div>
+              )
+            })()}
             <button className="iconButton" onClick={() => setNotifOpen(!notifOpen)}><Bell size={19} />{systemNotifications.length > 0 && <span>{systemNotifications.length}</span>}</button>
           </div>
         </header>
@@ -1029,16 +1102,53 @@ function App() {
           onClearBgImport={() => { setBgImport(null); setBgImportPanelOpen(false) }}
         />
       )}
-      {bgNfePanelOpen && bgNfe && (
-        <BgNfePanel
-          bgNfe={bgNfe}
-          onClose={() => setBgNfePanelOpen(false)}
-          onDismiss={() => {
-            if ((bgNfe.interventions?.length ?? 0) === 0) {
-              setBgNfe(null);
-            }
-            setBgNfePanelOpen(false);
-          }}
+      {bgNfePanelOpen && (bgNfe
+        ? (
+          <BgNfePanel
+            bgNfe={bgNfe}
+            onClose={() => setBgNfePanelOpen(false)}
+            onDismiss={() => {
+              if ((bgNfe.interventions?.length ?? 0) === 0) {
+                setBgNfe(null);
+              }
+              setBgNfePanelOpen(false);
+            }}
+          />
+        ) : (
+          <AutoStatusPanel
+            title="Gerar Nota Fiscal"
+            isRunning={false}
+            step={null}
+            lastMessage={null}
+            onClose={() => setBgNfePanelOpen(false)}
+          />
+        )
+      )}
+      {bgDeliveryPanelOpen && (
+        <AutoStatusPanel
+          title="Criar Entregas"
+          isRunning={!!bgDelivery?.isRunning}
+          step={bgDelivery?.step}
+          lastMessage={bgDelivery?.lastMessage}
+          onClose={() => setBgDeliveryPanelOpen(false)}
+        />
+      )}
+      {bgStockReplenishmentPanelOpen && (
+        <AutoStatusPanel
+          title="Reposição de Estoque"
+          isRunning={!!bgStockReplenishment?.isRunning}
+          step={bgStockReplenishment?.step}
+          lastMessage={bgStockReplenishment?.lastMessage}
+          onClose={() => setBgStockReplenishmentPanelOpen(false)}
+        />
+      )}
+      {bgClientReactivationPanelOpen && (
+        <AutoStatusPanel
+          title="Acompanhar Clientes Parados"
+          isRunning={!!bgClientReactivation?.isRunning}
+          step={bgClientReactivation?.step}
+          lastMessage={bgClientReactivation?.lastMessage}
+          onClose={() => setBgClientReactivationPanelOpen(false)}
         />
       )}
       {newDeliveryOpen && <NewDeliveryModal onClose={() => setNewDeliveryOpen(false)} orders={orders} vehicles={vehiclesState} onCreate={(d) => { setDeliveriesState((prev) => [d, ...prev]); notify(`Entrega ${d.id} criada com sucesso! O entregador será notificado sobre os pedidos em separação.`); addNotif('notifDeliveries', { icon: Truck, title: 'Nova entrega criada', text: `Entrega ${d.id} com ${d.driver} foi criada e está planejada.` }) }} />}
@@ -2149,6 +2259,41 @@ function BgImportPanel({ bgImport, onClose, onImportDone, onClearBgImport }) {  
               ) : null
             })()}
           </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function AutoStatusPanel({ title, isRunning, step, lastMessage, onClose }) {
+  return (
+    <div className="nfOverlay" onClick={(e) => e.target.classList.contains('nfOverlay') && onClose()}>
+      <div className="bgNfePanel">
+        <div className="bgNfePanelHeader">
+          <div className={`bgNfePanelAnim${isRunning ? '' : ' bgAutoStatusDone'}`}>
+            {isRunning
+              ? <Loader2 size={38} style={{ animation: 'verNotaSpin .7s linear infinite', color: 'var(--orange)' }} />
+              : <Bot size={38} style={{ color: 'var(--orange)' }} />}
+          </div>
+          <h3 className="bgNfePanelTitle">{isRunning ? `${title}...` : title}</h3>
+          <p className="bgNfePanelSubtitle">
+            {isRunning ? 'A automação está sendo executada.' : (lastMessage || 'Aguardando próxima execução.')}
+          </p>
+        </div>
+        {isRunning && step && (
+          <div className="bgNfePanelStepRow">
+            <span className="bgNfePanelStepText">{step}</span>
+          </div>
+        )}
+        {!isRunning && lastMessage && (
+          <div className="bgNfePanelResult">
+            <CheckCircle2 size={14} style={{ flexShrink: 0 }} />
+            <span>{lastMessage}</span>
+          </div>
+        )}
+        <div className="bgNfePanelFooter">
+          <p className="bgImportHint" style={{ marginBottom: 12 }}><Info size={14} /> Ativada — executará conforme o intervalo configurado.</p>
+          <button className="autoActionBtnActivate" style={{ width: '100%', justifyContent: 'center' }} onClick={onClose}>Fechar</button>
         </div>
       </div>
     </div>
@@ -3538,7 +3683,7 @@ function Purchases({ notify, addNotif, stockReplenishmentActive }) {
                   <div>
                     <b style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                       {getDayLabel(item.scheduledDate)}
-                      {isAutomationItem && !stockReplenishmentActive && (
+                      {isAutomationItem && !stockReplenishmentActive && !item.supplierNotified && (
                         <span style={{ fontSize: '.72rem', fontWeight: 700, background: '#fee2e2', color: '#dc2626', borderRadius: 999, padding: '2px 10px', textTransform: 'none', letterSpacing: 0 }}>
                           Compra não realizada
                         </span>

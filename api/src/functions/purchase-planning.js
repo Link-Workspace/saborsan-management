@@ -51,6 +51,7 @@ function mapItem(row) {
     completed: !!row.completed,
     completedAt: row.completedAt ? row.completedAt.toISOString() : null,
     notes: row.notes || '',
+    supplierNotified: !!row.supplier_notified,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
@@ -67,7 +68,8 @@ app.http('purchase-planning', {
       // ── GET ───────────────────────────────────────────────────────────────
       if (request.method === 'GET') {
         const result = await sql.query`
-          SELECT id, title, scheduledDate, completed, completedAt, notes, createdAt, updatedAt
+          SELECT id, title, scheduledDate, completed, completedAt, notes,
+                 ISNULL(supplier_notified, 0) AS supplier_notified, createdAt, updatedAt
           FROM PurchasePlanningItems
           ORDER BY scheduledDate ASC, createdAt ASC
         `;

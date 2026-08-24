@@ -92,6 +92,31 @@ async function ensureTables() {
     IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('AutomationConfig') AND name = 'cr_resend_days')
       ALTER TABLE AutomationConfig ADD cr_resend_days INT NOT NULL DEFAULT 30
   `;
+  // Automation progress tracking columns
+  await sql.query`
+    IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('AutomationConfig') AND name = 'delivery_is_running')
+      ALTER TABLE AutomationConfig ADD delivery_is_running BIT NOT NULL DEFAULT 0
+  `.catch(() => {});
+  await sql.query`
+    IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('AutomationConfig') AND name = 'delivery_current_step')
+      ALTER TABLE AutomationConfig ADD delivery_current_step NVARCHAR(MAX) NULL
+  `.catch(() => {});
+  await sql.query`
+    IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('AutomationConfig') AND name = 'sr_is_running')
+      ALTER TABLE AutomationConfig ADD sr_is_running BIT NOT NULL DEFAULT 0
+  `.catch(() => {});
+  await sql.query`
+    IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('AutomationConfig') AND name = 'sr_current_step')
+      ALTER TABLE AutomationConfig ADD sr_current_step NVARCHAR(MAX) NULL
+  `.catch(() => {});
+  await sql.query`
+    IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('AutomationConfig') AND name = 'cr_is_running')
+      ALTER TABLE AutomationConfig ADD cr_is_running BIT NOT NULL DEFAULT 0
+  `.catch(() => {});
+  await sql.query`
+    IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('AutomationConfig') AND name = 'cr_current_step')
+      ALTER TABLE AutomationConfig ADD cr_current_step NVARCHAR(MAX) NULL
+  `.catch(() => {});
   await sql.query`
     IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'StockReplenishmentCategoryBindings')
     CREATE TABLE StockReplenishmentCategoryBindings (
@@ -310,6 +335,66 @@ app.http('automation-config', {
     } catch (error) {
       context.error('Erro na função automation-config:', error);
       return { status: 500, jsonBody: { error: 'Erro interno do servidor' } };
+    }
+  },
+});
+
+app.http('auto-delivery-progress', {
+  methods: ['GET'],
+  authLevel: 'anonymous',
+  handler: async (request, context) => {
+    try {
+      await sql.connect(sqlConfig);
+      await ensureTables();
+      const [cfgRes, logRes] = await Promise.all([
+        sql.query`SELECT delivery_is_running, delivery_current_step FROM AutomationConfig WHERE automation_key='receive_orders'`.catch(() => ({ recordset: [] })),
+        sql.query`SELECT TOP 1 result_message, created_at FROM AutomationRunLog WHERE automation_key='receive_orders' ORDER BY id DESC`.catch(() => ({ recordset: [] })),
+      ]);
+      const row = cfgRes.recordset[0] || {};
+      const lastRun = logRes.recordset[0] || null;
+      return { jsonBody: { isRunning: !!row.delivery_is_running, currentStep: row.delivery_current_step || null, lastRun: lastRun ? { message: lastRun.result_message, createdAt: lastRun.created_at } : null } };
+    } catch (err) {
+      return { status: 500, jsonBody: { error: err.message } };
+    }
+  },
+});
+
+app.http('auto-stock-replenishment-progress', {
+  methods: ['GET'],
+  authLevel: 'anonymous',
+  handler: async (request, context) => {
+    try {
+      await sql.connect(sqlConfig);
+      await ensureTables();
+      const [cfgRes, logRes] = await Promise.all([
+        sql.query`SELECT sr_is_running, sr_current_step FROM AutomationConfig WHERE automation_key='stock_replenishment'`.catch(() => ({ recordset: [] })),
+        sql.query`SELECT TOP 1 result_message, created_at FROM AutomationRunLog WHERE automation_key='stock_replenishment' ORDER BY id DESC`.catch(() => ({ recordset: [] })),
+      ]);
+      const row = cfgRes.recordset[0] || {};
+      const lastRun = logRes.recordset[0] || null;
+      return { jsonBody: { isRunning: !!row.sr_is_running, currentStep: row.sr_current_step || null, lastRun: lastRun ? { message: lastRun.result_message, createdAt: lastRun.created_at } : null } };
+    } catch (err) {
+      return { status: 500, jsonBody: { error: err.message } };
+    }
+  },
+});
+
+app.http('auto-client-reactivation-progress', {
+  methods: ['GET'],
+  authLevel: 'anonymous',
+  handler: async (request, context) => {
+    try {
+      await sql.connect(sqlConfig);
+      await ensureTables();
+      const [cfgRes, logRes] = await Promise.all([
+        sql.query`SELECT cr_is_running, cr_current_step FROM AutomationConfig WHERE automation_key='client_reactivation'`.catch(() => ({ recordset: [] })),
+        sql.query`SELECT TOP 1 result_message, created_at FROM AutomationRunLog WHERE automation_key='client_reactivation' ORDER BY id DESC`.catch(() => ({ recordset: [] })),
+      ]);
+      const row = cfgRes.recordset[0] || {};
+      const lastRun = logRes.recordset[0] || null;
+      return { jsonBody: { isRunning: !!row.cr_is_running, currentStep: row.cr_current_step || null, lastRun: lastRun ? { message: lastRun.result_message, createdAt: lastRun.created_at } : null } };
+    } catch (err) {
+      return { status: 500, jsonBody: { error: err.message } };
     }
   },
 });

@@ -206,6 +206,12 @@ async function notifySellerAboutDelivery(sellerId, orderIds, deliveryCode, conte
   }
 }
 
+async function setDeliveryProgress(step, isRunning = true) {
+  try {
+    await sql.query`UPDATE AutomationConfig SET delivery_is_running=${isRunning?1:0}, delivery_current_step=${step}, updated_at=GETUTCDATE() WHERE automation_key='receive_orders'`;
+  } catch (_) {}
+}
+
 // Core automation logic — shared between HTTP trigger and timer trigger
 async function runAutoDelivery(context) {
   await sql.connect(sqlConfig);
@@ -240,6 +246,8 @@ async function runAutoDelivery(context) {
     }
   }
 
+  await setDeliveryProgress('Buscando pedidos pendentes...');
+
   // Load seller bindings
   const bindingsResult = await sql.query`
     SELECT seller_id, binding_type, binding_value
@@ -266,6 +274,8 @@ async function runAutoDelivery(context) {
   if (pendingOrders.length < minOrders) {
     return { skipped: true, reason: `Pedidos pendentes (${pendingOrders.length}) abaixo do mínimo configurado (${minOrders}).` };
   }
+
+  await setDeliveryProgress(`Encontrado(s) ${pendingOrders.length} pedido(s). Buscando vendedores e veículos...`);
 
   // Find available sellers (active, no active delivery)
   const availableSellersResult = await sql.query`
@@ -390,6 +400,8 @@ async function runAutoDelivery(context) {
 
   const stopsCount = routeCities.length || selectedOrders.length;
 
+  await setDeliveryProgress(`Criando entrega para ${chosenSeller.name} — Rota: ${route}...`);
+
   const insertResult = await sql.query`
     INSERT INTO Deliveries
       (code, route, seller_id, status, cold_chamber_number, stops_count, temperature, departure_date, arrival_date, notes, confirmation_sent, updated_at)
@@ -405,6 +417,7 @@ async function runAutoDelivery(context) {
     await sql.query`UPDATE GestaoOrders SET status = N'Separação', updatedAt = GETUTCDATE() WHERE id = ${order.id} AND status = N'Recebido'`;
   }
 
+  await setDeliveryProgress(`Notificando vendedor ${chosenSeller.name}...`);
   await notifySellerAboutDelivery(chosenSeller.id, selectedOrders.map((o) => o.id), code, context);
 
   // Log execution
@@ -421,6 +434,7 @@ async function runAutoDelivery(context) {
   await sql.query`
     INSERT INTO AutomationRunLog (automation_key, result_message) VALUES ('receive_orders', ${resultMessage})
   `.catch(() => {});
+  await setDeliveryProgress(resultMessage, false);
 
   return {
     success: true,

@@ -77,6 +77,12 @@ function normalisePhone(raw) {
   return null;
 }
 
+async function setCrProgress(step, isRunning = true) {
+  try {
+    await sql.query`UPDATE AutomationConfig SET cr_is_running=${isRunning?1:0}, cr_current_step=${step}, updated_at=GETUTCDATE() WHERE automation_key='client_reactivation'`;
+  } catch (_) {}
+}
+
 async function runAutoClientReactivation(context) {
   await sql.connect(sqlConfig);
   await ensureTables();
@@ -115,7 +121,7 @@ async function runAutoClientReactivation(context) {
       : (currentTime >= cfg.time_start && currentTime <= cfg.time_end);
     if (!inWindow) return { skipped: true, reason: 'Fora do horário configurado.' };
   }
-
+  await setCrProgress('Buscando clientes inativos...');
   // ── Fetch operating-hours context from LinkChat (future integration) ──────
   // When the LinkChat ↔ Saborsan link is fully wired, this call will return
   // the actual operating hours from the Saborsan AI prompt, allowing the
@@ -158,15 +164,19 @@ async function runAutoClientReactivation(context) {
   if (!candidates.length) {
     const msg = 'Nenhum cliente inativo encontrado para envio.';
     await sql.query`INSERT INTO AutomationRunLog (automation_key, result_message) VALUES ('client_reactivation', ${msg})`.catch(() => {});
+    await setCrProgress(msg, false);
     return { success: true, sent: 0, failed: 0, message: msg };
   }
+
+  await setCrProgress(`Encontrado(s) ${candidates.length} cliente(s) inativo(s). Enviando mensagens...`);
 
   // ── Send WABA template to each inactive client ────────────────────────────
   let sent = 0;
   let failed = 0;
   const errors = [];
 
-  for (const client of candidates) {
+  for (const [idx, client] of candidates.entries()) {
+    await setCrProgress(`Enviando mensagem para cliente ${client.establishmentName || client.id} (${idx + 1}/${candidates.length})...`);
     const phone = normalisePhone(client.contactNumber);
     if (!phone) {
       context?.log(`[auto-client-reactivation] Telefone inválido para cliente ${client.id}: "${client.contactNumber}"`);
@@ -198,6 +208,7 @@ async function runAutoClientReactivation(context) {
     INSERT INTO AutomationRunLog (automation_key, result_message)
     VALUES ('client_reactivation', ${resultMessage})
   `.catch(() => {});
+  await setCrProgress(resultMessage, false);
 
   return { success: true, sent, failed, errors, message: resultMessage };
 }

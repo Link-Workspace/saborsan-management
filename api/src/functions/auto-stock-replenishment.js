@@ -69,6 +69,10 @@ async function ensureTables() {
       ALTER TABLE AutomationConfig ADD sr_waba_template_id NVARCHAR(200) NULL
   `.catch(() => {});
   await sql.query`
+    IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('PurchasePlanningItems') AND name = 'supplier_notified')
+      ALTER TABLE PurchasePlanningItems ADD supplier_notified BIT NOT NULL DEFAULT 0
+  `.catch(() => {});
+  await sql.query`
     IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'SupplierNotificationLog')
     CREATE TABLE SupplierNotificationLog (
       id             INT           IDENTITY(1,1) NOT NULL,
@@ -102,6 +106,12 @@ function isNotifyWindow(currentTime, notifyTimes, toleranceMinutes = 5) {
     const notifyMins = th * 60 + tm;
     return Math.abs(currentMins - notifyMins) <= toleranceMinutes;
   });
+}
+
+async function setSrProgress(step, isRunning = true) {
+  try {
+    await sql.query`UPDATE AutomationConfig SET sr_is_running=${isRunning?1:0}, sr_current_step=${step}, updated_at=GETUTCDATE() WHERE automation_key='stock_replenishment'`;
+  } catch (_) {}
 }
 
 async function runAutoStockReplenishment(context) {
@@ -145,6 +155,8 @@ async function runAutoStockReplenishment(context) {
     return { skipped: true, reason: 'Nenhum horário de comunicação programado para agora.' };
   }
 
+  await setSrProgress('Verificando produtos com estoque baixo...');
+
   // Load supplier-category bindings
   const bindingsResult = await sql.query`
     SELECT b.supplier_id, s.name AS supplier_name, b.category
@@ -180,6 +192,7 @@ async function runAutoStockReplenishment(context) {
   const pendingSupplierIds = new Set(); // suppliers with already-existing purchases
 
   for (const product of lowStockProducts) {
+    await setSrProgress(`Processando produto "${product.name}" (estoque: ${product.availableQuantity})...`);
     // Skip if any pending/in_progress purchase already exists for this product
     const existingPurchase = await sql.query`
       SELECT TOP 1 id, supplierId FROM SupplierPurchases
@@ -257,7 +270,11 @@ async function runAutoStockReplenishment(context) {
     context?.log(`[auto-stock-replenishment] Compra criada: "${product.name}", fornecedor id=${supplierId}, quantidade=${maxPurchaseQty}`);
   }
 
-  // Send template to all suppliers with pending purchases (new or pre-existing)
+  // Send template to all suppliers - show progress
+  if (allSupplierIds.size > 0) {
+    await setSrProgress(`Notificando ${allSupplierIds.size} fornecedor(es)...`);
+  }
+
   const allSupplierIds = new Set([...createdPurchases.map((p) => p.supplierId), ...pendingSupplierIds]);
   if (!srWabaTemplateId) {
     context?.log('[auto-stock-replenishment] Nenhum template WABA configurado — envio de mensagem pulado.');
@@ -293,6 +310,13 @@ async function runAutoStockReplenishment(context) {
           INSERT INTO SupplierNotificationLog (supplier_id, supplier_phone, template_id, status)
           VALUES (${suppId}, ${phone}, ${srWabaTemplateId}, 'SENT')
         `.catch(() => {});
+        // Mark all planning items linked to this supplier's pending purchase as notified
+        await sql.query`
+          UPDATE ppi SET ppi.supplier_notified = 1
+          FROM PurchasePlanningItems ppi
+          INNER JOIN SupplierPurchases sp ON ppi.supplier_purchase_id = sp.id
+          WHERE sp.supplierId = ${suppId} AND ppi.completed = 0
+        `.catch(() => {});
         context?.log(`[auto-stock-replenishment] Template enviado para fornecedor id=${suppId} (${phone})`);
       } else {
         await sql.query`
@@ -311,6 +335,7 @@ async function runAutoStockReplenishment(context) {
     INSERT INTO AutomationRunLog (automation_key, result_message)
     VALUES ('stock_replenishment', ${resultMessage})
   `.catch(() => {});
+  await setSrProgress(resultMessage, false);
 
   return {
     success: true,
