@@ -2418,6 +2418,29 @@ function Suppliers({ onMessage, search = '', addNotif }) {
   const [removeConfirmSupplier, setRemoveConfirmSupplier] = useState(null)
   const notifiedTranscriptRef = useRef(new Set())
 
+  const handleComunicar = async (supplier) => {
+    const phone = (supplier.contactPhone || '').replace(/\D/g, '')
+    if (phone.length < 10) {
+      alert('Número de contato inválido para este fornecedor.')
+      return
+    }
+    try {
+      const res = await fetch(`${API_URL}/api/linkchat-contact-intent`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          clientPhone: phone,
+          clientName: supplier.contactName || supplier.name,
+        }),
+      })
+      if (!res.ok) throw new Error('Não foi possível gerar o link de contato.')
+      const { url } = await res.json()
+      window.open(url, '_blank', 'noopener,noreferrer')
+    } catch (err) {
+      alert(err.message || 'Erro ao abrir o LinkChat.')
+    }
+  }
+
   useEffect(() => {
     setLoading(true)
     fetch(`${API_URL}/api/suppliers`)
@@ -2507,7 +2530,7 @@ function Suppliers({ onMessage, search = '', addNotif }) {
             <div className="orderActions">
               <button onClick={() => setTranscript(supplier)}>Ver conversa IA</button>
               <button onClick={() => setDetailSupplier(supplier)}>Detalhes</button>
-              <button onClick={() => onMessage(supplier)}>Comunicar</button>
+              <button onClick={() => handleComunicar(supplier)}>Comunicar</button>
             </div>
           </article>
         ))}
