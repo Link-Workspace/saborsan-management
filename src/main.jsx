@@ -4287,6 +4287,29 @@ function Clients({ clientsData = [], clientsLoading = false, onNewClient, onSele
     return 'Ativo'
   }
 
+  const handleFazerContato = async (client) => {
+    const phone = (client.contactNumber || '').replace(/\D/g, '')
+    if (phone.length < 10) {
+      alert('Número de contato inválido para este cliente.')
+      return
+    }
+    try {
+      const res = await fetch(`${API_URL}/api/linkchat-contact-intent`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          clientPhone: phone,
+          clientName: client.establishmentName || client.clientName,
+        }),
+      })
+      if (!res.ok) throw new Error('Não foi possível gerar o link de contato.')
+      const { url } = await res.json()
+      window.open(url, '_blank', 'noopener,noreferrer')
+    } catch (err) {
+      alert(err.message || 'Erro ao abrir o LinkChat.')
+    }
+  }
+
   const viewOptions = [
     { key: 'grid', icon: LayoutGrid, label: 'Cards' },
     { key: 'list', icon: List, label: 'Lista' },
@@ -4329,18 +4352,13 @@ function Clients({ clientsData = [], clientsLoading = false, onNewClient, onSele
               </div>
               <div className="orderActions">
                 <button onClick={() => onSelectClient && onSelectClient(client)}>Ver detalhes</button>
-                {client.contactNumber && (
-                  <a
-                    href={`https://wa.me/${client.contactNumber.replace(/\D/g, '')}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="btn"
-                    style={{ all: 'unset', cursor: 'pointer' }}
-                  >
-                    <button>Fazer contato</button>
-                  </a>
-                )}
-                {!client.contactNumber && <button disabled>Fazer contato</button>}
+                <button
+                  className="btn"
+                  disabled={!client.contactNumber}
+                  onClick={() => handleFazerContato(client)}
+                >
+                  Fazer contato
+                </button>
               </div>
             </article>
           ))}
@@ -4360,18 +4378,12 @@ function Clients({ clientsData = [], clientsLoading = false, onNewClient, onSele
               <Status status={getPriorityStatus(client)} />
               <div className="clientListActions">
                 <button onClick={() => onSelectClient && onSelectClient(client)}>Ver detalhes</button>
-                {client.contactNumber ? (
-                  <a
-                    href={`https://wa.me/${client.contactNumber.replace(/\D/g, '')}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    style={{ all: 'unset', cursor: 'pointer' }}
-                  >
-                    <button>Contato</button>
-                  </a>
-                ) : (
-                  <button disabled>Contato</button>
-                )}
+                <button
+                  disabled={!client.contactNumber}
+                  onClick={() => handleFazerContato(client)}
+                >
+                  Contato
+                </button>
               </div>
             </article>
           ))}
