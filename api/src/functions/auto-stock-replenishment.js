@@ -1,6 +1,7 @@
 'use strict';
 const { app } = require('@azure/functions');
 const sql = require('mssql');
+const { sendWabaTemplateMessage } = require('../linkchat-integration');
 
 const sqlConfig = {
   server: process.env.SQL_SERVER,
@@ -63,6 +64,32 @@ async function ensureTables() {
     IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('PurchasePlanningItems') AND name = 'supplier_purchase_id')
       ALTER TABLE PurchasePlanningItems ADD supplier_purchase_id INT NULL
   `.catch(() => {});
+  await sql.query`
+    IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('AutomationConfig') AND name = 'sr_waba_template_id')
+      ALTER TABLE AutomationConfig ADD sr_waba_template_id NVARCHAR(200) NULL
+  `.catch(() => {});
+  await sql.query`
+    IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'SupplierNotificationLog')
+    CREATE TABLE SupplierNotificationLog (
+      id             INT           IDENTITY(1,1) NOT NULL,
+      supplier_id    INT           NOT NULL,
+      supplier_phone NVARCHAR(30)  NOT NULL,
+      template_id    NVARCHAR(200) NULL,
+      status         NVARCHAR(50)  NOT NULL DEFAULT 'SENT',
+      error_message  NVARCHAR(500) NULL,
+      sent_at        DATETIME      NOT NULL DEFAULT GETUTCDATE(),
+      CONSTRAINT PK_SupplierNotificationLog PRIMARY KEY CLUSTERED (id ASC)
+    )
+  `.catch(() => {});
+}
+
+function normalisePhone(raw) {
+  if (!raw) return null;
+  const digits = raw.replace(/\D/g, '');
+  if (digits.length < 10) return null;
+  if (digits.startsWith('55') && digits.length >= 12) return digits;
+  if (digits.length >= 10) return `55${digits}`;
+  return null;
 }
 
 // Returns true if currentTime (HH:MM) is within toleranceMinutes of any time in notifyTimes
@@ -83,7 +110,7 @@ async function runAutoStockReplenishment(context) {
 
   const cfgResult = await sql.query`
     SELECT is_active, sr_min_stock_qty, sr_max_purchase_qty, sr_notify_times,
-           time_interval_minutes, time_start, time_end
+           sr_waba_template_id, time_interval_minutes, time_start, time_end
     FROM AutomationConfig WHERE automation_key = 'stock_replenishment'
   `.catch(() => ({ recordset: [] }));
 
@@ -94,6 +121,7 @@ async function runAutoStockReplenishment(context) {
   const cfg = cfgResult.recordset[0];
   const minStockQty = cfg.sr_min_stock_qty ?? 5;
   const maxPurchaseQty = cfg.sr_max_purchase_qty ?? 50;
+  const srWabaTemplateId = cfg.sr_waba_template_id ?? process.env.SR_WABA_TEMPLATE_ID ?? null;
   let notifyTimes = [];
   try { notifyTimes = JSON.parse(cfg.sr_notify_times || '[]'); } catch { notifyTimes = []; }
 
@@ -147,12 +175,11 @@ async function runAutoStockReplenishment(context) {
   const skippedProducts = [];
 
   for (const product of lowStockProducts) {
-    // Skip if a recent pending purchase already exists for this product
+    // Skip if any pending/in_progress purchase already exists for this product
     const existingPurchase = await sql.query`
       SELECT TOP 1 id FROM SupplierPurchases
       WHERE purchaseName = ${product.name}
         AND status IN ('pending', 'in_progress')
-        AND createdAt > DATEADD(HOUR, -24, GETUTCDATE())
     `.catch(() => ({ recordset: [] }));
 
     if (existingPurchase.recordset.length) {
@@ -189,7 +216,7 @@ async function runAutoStockReplenishment(context) {
       continue;
     }
 
-    const purchaseNotes = `Criado automaticamente pela automação de Reposição de Estoque. Estoque atual: ${product.availableQuantity} unidade(s).`;
+    const purchaseNotes = `${maxPurchaseQty} unidade(s) — Criado automaticamente pela automação de Reposição de Estoque. Estoque atual: ${product.availableQuantity} unidade(s).`;
 
     const spInsert = await sql.query`
       INSERT INTO SupplierPurchases (supplierId, purchaseName, description, quantity, status, notes)
@@ -205,8 +232,50 @@ async function runAutoStockReplenishment(context) {
       VALUES (${product.name}, ${todayBRT}, ${purchaseNotes}, ${newPurchaseId})
     `.catch(() => {});
 
-    createdPurchases.push(product.name);
+    createdPurchases.push({ name: product.name, supplierId });
     context?.log(`[auto-stock-replenishment] Compra criada: "${product.name}", fornecedor id=${supplierId}, quantidade=${maxPurchaseQty}`);
+  }
+
+  // Send template message to each unique supplier that got new purchases
+  if (srWabaTemplateId && createdPurchases.length > 0) {
+    const uniqueSupplierIds = [...new Set(createdPurchases.map((p) => p.supplierId))];
+    for (const suppId of uniqueSupplierIds) {
+      // Avoid double-send: skip if already notified in the last 24h
+      const recentNotif = await sql.query`
+        SELECT TOP 1 id FROM SupplierNotificationLog
+        WHERE supplier_id = ${suppId} AND status = 'SENT'
+          AND sent_at > DATEADD(HOUR, -24, GETUTCDATE())
+      `.catch(() => ({ recordset: [] }));
+      if (recentNotif.recordset.length) {
+        context?.log(`[auto-stock-replenishment] Fornecedor id=${suppId} já notificado nas últimas 24h, pulando.`);
+        continue;
+      }
+
+      const supplierRow = await sql.query`
+        SELECT contactPhone FROM Suppliers WHERE id = ${suppId}
+      `.catch(() => ({ recordset: [] }));
+      const rawPhone = supplierRow.recordset[0]?.contactPhone;
+      const phone = normalisePhone(rawPhone);
+      if (!phone) {
+        context?.log(`[auto-stock-replenishment] Fornecedor id=${suppId} sem telefone válido, pulando.`);
+        continue;
+      }
+
+      const result = await sendWabaTemplateMessage(phone, srWabaTemplateId, 'pt_BR');
+      if (result.success) {
+        await sql.query`
+          INSERT INTO SupplierNotificationLog (supplier_id, supplier_phone, template_id, status)
+          VALUES (${suppId}, ${phone}, ${srWabaTemplateId}, 'SENT')
+        `.catch(() => {});
+        context?.log(`[auto-stock-replenishment] Template enviado para fornecedor id=${suppId} (${phone})`);
+      } else {
+        await sql.query`
+          INSERT INTO SupplierNotificationLog (supplier_id, supplier_phone, template_id, status, error_message)
+          VALUES (${suppId}, ${phone}, ${srWabaTemplateId}, 'FAILED', ${result.error ?? ''})
+        `.catch(() => {});
+        context?.log(`[auto-stock-replenishment] Falha ao enviar para fornecedor id=${suppId}: ${result.error}`);
+      }
+    }
   }
 
   const resultMessage = `${createdPurchases.length} compra(s) criada(s) automaticamente. ${skippedProducts.length} produto(s) ignorado(s).`;
@@ -220,7 +289,7 @@ async function runAutoStockReplenishment(context) {
   return {
     success: true,
     created: createdPurchases.length,
-    createdProducts: createdPurchases,
+    createdProducts: createdPurchases.map((p) => p.name),
     skipped: skippedProducts.length,
     skippedProducts,
     message: resultMessage,

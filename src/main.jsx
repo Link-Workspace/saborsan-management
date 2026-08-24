@@ -5601,6 +5601,7 @@ function AutomationStockAdjustModal({ onClose, onActivate, isActive, notify }) {
   const [saving, setSaving] = useState(false)
   const [activating, setActivating] = useState(false)
   const [loading, setLoading] = useState(true)
+  const [wabaTemplates, setWabaTemplates] = useState([])
   const [config, setConfig] = useState({
     minStockQty: 5,
     maxPurchaseQty: 50,
@@ -5608,6 +5609,7 @@ function AutomationStockAdjustModal({ onClose, onActivate, isActive, notify }) {
     timeStart: '07:00',
     timeEnd: '18:00',
     notifyTimes: [],
+    wabaTemplateId: null,
   })
   const [categoryBindings, setCategoryBindings] = useState([])
   const [savedConfig, setSavedConfig] = useState(null)
@@ -5619,11 +5621,13 @@ function AutomationStockAdjustModal({ onClose, onActivate, isActive, notify }) {
     const fetchAll = async () => {
       setLoading(true)
       try {
-        const [suppliersRes, cfgRes] = await Promise.all([
+        const [suppliersRes, cfgRes, tmplRes] = await Promise.all([
           fetch(`${API_URL}/api/suppliers`).then((r) => r.json()).catch(() => ({ suppliers: [] })),
           fetch(`${API_URL}/api/automation-config?key=stock_replenishment`).then((r) => r.json()).catch(() => null),
+          fetch(`${API_URL}/api/waba-templates`).then((r) => r.json()).catch(() => null),
         ])
         if (suppliersRes.suppliers) setSuppliers(suppliersRes.suppliers)
+        if (Array.isArray(tmplRes)) setWabaTemplates(tmplRes)
         if (cfgRes?.config) {
           const loaded = {
             minStockQty: cfgRes.config.srMinStockQty ?? 5,
@@ -5632,6 +5636,7 @@ function AutomationStockAdjustModal({ onClose, onActivate, isActive, notify }) {
             timeStart: cfgRes.config.timeStart ?? '07:00',
             timeEnd: cfgRes.config.timeEnd ?? '18:00',
             notifyTimes: cfgRes.config.srNotifyTimes ?? [],
+            wabaTemplateId: cfgRes.config.srWabaTemplateId ?? null,
           }
           const loadedBindings = cfgRes.categoryBindings ?? []
           setConfig(loaded)
@@ -5639,7 +5644,7 @@ function AutomationStockAdjustModal({ onClose, onActivate, isActive, notify }) {
           setCategoryBindings(loadedBindings)
           setSavedCategoryBindings(loadedBindings)
         } else {
-          const def = { minStockQty: 5, maxPurchaseQty: 50, timeIntervalMinutes: 30, timeStart: '07:00', timeEnd: '18:00', notifyTimes: [] }
+          const def = { minStockQty: 5, maxPurchaseQty: 50, timeIntervalMinutes: 30, timeStart: '07:00', timeEnd: '18:00', notifyTimes: [], wabaTemplateId: null }
           setSavedConfig(def)
           setSavedCategoryBindings([])
         }
@@ -5700,6 +5705,7 @@ function AutomationStockAdjustModal({ onClose, onActivate, isActive, notify }) {
             timeStart: config.timeStart,
             timeEnd: config.timeEnd,
             srNotifyTimes: config.notifyTimes,
+            srWabaTemplateId: config.wabaTemplateId,
           },
           categoryBindings,
         }),
@@ -5808,6 +5814,35 @@ function AutomationStockAdjustModal({ onClose, onActivate, isActive, notify }) {
                   ))}
                 </div>
               )}
+            </div>
+
+            {/* Template de comunicação com fornecedor */}
+            <div className="autoAdjustSection">
+              <div className="autoAdjustSectionTitle"><MessageCircle size={15} /> Template de comunicação com fornecedor</div>
+              <p style={{ fontSize: '.83rem', color: 'var(--muted)', fontWeight: 600, margin: '0 0 12px' }}>
+                Selecione o template WABA que será enviado ao fornecedor para abrir a conversa quando houver compras criadas para ele.
+              </p>
+              <CustomSelect
+                value={config.wabaTemplateId ? String(config.wabaTemplateId) : ''}
+                onChange={(v) => setC('wabaTemplateId', v || null)}
+                placeholder={wabaTemplates.length ? 'Selecionar template' : 'Nenhum template disponível'}
+                options={wabaTemplates.map((t) => ({ value: String(t.id), label: t.name }))}
+                disabled={!wabaTemplates.length}
+              />
+              {(() => {
+                const tpl = config.wabaTemplateId && wabaTemplates.length
+                  ? wabaTemplates.find((t) => String(t.id) === String(config.wabaTemplateId))
+                  : null
+                if (!tpl) return null
+                return (
+                  <div style={{ marginTop: 10, padding: '10px 14px', background: 'var(--surface)', borderRadius: 8, border: '1px solid var(--border)', fontSize: '.83rem', color: 'var(--muted)', fontWeight: 600, lineHeight: 1.55 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6, color: 'var(--success, #16a34a)', fontWeight: 700, fontSize: '.78rem' }}>
+                      <Info size={12} /> Prévia do template WABA
+                    </div>
+                    {tpl.body}
+                  </div>
+                )
+              })()}
             </div>
 
             {/* Vínculos fornecedor-categoria */}

@@ -67,6 +67,10 @@ async function ensureTables() {
     IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('AutomationConfig') AND name = 'sr_notify_times')
       ALTER TABLE AutomationConfig ADD sr_notify_times NVARCHAR(MAX) NULL
   `;
+  await sql.query`
+    IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('AutomationConfig') AND name = 'sr_waba_template_id')
+      ALTER TABLE AutomationConfig ADD sr_waba_template_id NVARCHAR(200) NULL
+  `;
   // Client Reactivation columns
   await sql.query`
     IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('AutomationConfig') AND name = 'cr_inactive_days')
@@ -116,7 +120,7 @@ app.http('automation-config', {
           SELECT is_active, min_orders, max_orders, max_cities, include_route_cities,
                  time_interval_minutes, time_start, time_end,
                  nfe_notify_on_error, nfe_notify_seller_id, nfe_print_danfe_auto,
-                 sr_min_stock_qty, sr_max_purchase_qty, sr_notify_times,
+                 sr_min_stock_qty, sr_max_purchase_qty, sr_notify_times, sr_waba_template_id,
                  cr_inactive_days, cr_message_type,
                  cr_waba_template_promo_id, cr_waba_template_catalog_id, cr_resend_days
           FROM AutomationConfig
@@ -173,6 +177,7 @@ app.http('automation-config', {
               srMinStockQty: row.sr_min_stock_qty ?? 5,
               srMaxPurchaseQty: row.sr_max_purchase_qty ?? 50,
               srNotifyTimes,
+              srWabaTemplateId: row.sr_waba_template_id ?? process.env.SR_WABA_TEMPLATE_ID ?? null,
               crInactiveDays: row.cr_inactive_days ?? 30,
               crMessageType: row.cr_message_type ?? 'promotion',
               crWabaTemplatePromoId: row.cr_waba_template_promo_id ?? process.env.CR_WABA_TEMPLATE_PROMO_ID ?? null,
@@ -211,6 +216,7 @@ app.http('automation-config', {
         const srMinStockQty = config.srMinStockQty ?? null;
         const srMaxPurchaseQty = config.srMaxPurchaseQty ?? null;
         const srNotifyTimes = config.srNotifyTimes !== undefined ? JSON.stringify(config.srNotifyTimes) : null;
+        const srWabaTemplateId = config.srWabaTemplateId !== undefined ? (config.srWabaTemplateId ?? null) : null;
         const crInactiveDays = config.crInactiveDays ?? null;
         const crMessageType = config.crMessageType ?? null;
         const crWabaTemplatePromoId = config.crWabaTemplatePromoId !== undefined ? (config.crWabaTemplatePromoId ?? null) : null;
@@ -220,7 +226,7 @@ app.http('automation-config', {
         if (!existing.recordset.length) {
           await sql.query`
             INSERT INTO AutomationConfig
-              (automation_key, is_active, min_orders, max_orders, max_cities, include_route_cities, time_interval_minutes, time_start, time_end, nfe_notify_on_error, nfe_notify_seller_id, nfe_print_danfe_auto, sr_min_stock_qty, sr_max_purchase_qty, sr_notify_times, cr_inactive_days, cr_message_type, cr_waba_template_promo_id, cr_waba_template_catalog_id, cr_resend_days, updated_at)
+              (automation_key, is_active, min_orders, max_orders, max_cities, include_route_cities, time_interval_minutes, time_start, time_end, nfe_notify_on_error, nfe_notify_seller_id, nfe_print_danfe_auto, sr_min_stock_qty, sr_max_purchase_qty, sr_notify_times, sr_waba_template_id, cr_inactive_days, cr_message_type, cr_waba_template_promo_id, cr_waba_template_catalog_id, cr_resend_days, updated_at)
             VALUES
               (${key},
                ${isActive ?? 0},
@@ -237,6 +243,7 @@ app.http('automation-config', {
                ${srMinStockQty ?? 5},
                ${srMaxPurchaseQty ?? 50},
                ${srNotifyTimes ?? '[]'},
+               ${srWabaTemplateId ?? null},
                ${crInactiveDays ?? 30},
                ${crMessageType ?? 'promotion'},
                ${crWabaTemplatePromoId ?? null},
@@ -263,6 +270,7 @@ app.http('automation-config', {
               sr_min_stock_qty             = ${srMinStockQty !== null ? srMinStockQty : currentRow.sr_min_stock_qty},
               sr_max_purchase_qty          = ${srMaxPurchaseQty !== null ? srMaxPurchaseQty : currentRow.sr_max_purchase_qty},
               sr_notify_times              = ${srNotifyTimes !== null ? srNotifyTimes : currentRow.sr_notify_times},
+              sr_waba_template_id          = ${srWabaTemplateId !== null ? srWabaTemplateId : currentRow.sr_waba_template_id},
               cr_inactive_days             = ${crInactiveDays !== null ? crInactiveDays : currentRow.cr_inactive_days},
               cr_message_type              = ${crMessageType !== null ? crMessageType : currentRow.cr_message_type},
               cr_waba_template_promo_id    = ${crWabaTemplatePromoId !== null ? crWabaTemplatePromoId : currentRow.cr_waba_template_promo_id},
