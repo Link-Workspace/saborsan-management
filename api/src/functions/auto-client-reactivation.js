@@ -170,6 +170,12 @@ async function runAutoClientReactivation(context) {
 
   await setCrProgress(`Encontrado(s) ${candidates.length} cliente(s) inativo(s). Enviando mensagens...`);
 
+  // Image URL for the promotion template header (set PROMO_HEADER_IMAGE_URL in env)
+  const promoImageUrl = messageType === 'promotion' ? (process.env.PROMO_HEADER_IMAGE_URL || null) : null;
+  const templateComponents = promoImageUrl
+    ? [{ type: 'header', parameters: [{ type: 'image', image: { link: promoImageUrl } }] }]
+    : [];
+
   // ── Send WABA template to each inactive client ────────────────────────────
   let sent = 0;
   let failed = 0;
@@ -183,7 +189,7 @@ async function runAutoClientReactivation(context) {
       continue;
     }
 
-    const result = await sendWabaTemplateMessage(phone, templateName, 'pt_BR');
+    const result = await sendWabaTemplateMessage(phone, templateName, 'pt_BR', templateComponents);
 
     if (result.success) {
       await sql.query`

@@ -15,9 +15,99 @@ app.http('sellers', {
       } catch (e) { context.warn('Migration isActive:', e.message); }
 
       if (request.method === 'GET') {
+        const url = new URL(request.url);
+        const sellerIdParam = url.searchParams.get('sellerId');
+
+        if (sellerIdParam) {
+          const sellerId = parseInt(sellerIdParam, 10);
+          if (!sellerId) return { status: 400, jsonBody: { error: 'sellerId inválido' } };
+
+          const statusConcluida = 'Concluída';
+
+          const ordersResult = await pool.request().query`
+            SELECT
+              o.id AS orderId,
+              o.clientName,
+              o.clientCity,
+              CAST(o.totalValue AS FLOAT) AS totalValue,
+              o.createdAt,
+              d.code AS deliveryCode,
+              d.arrival_date AS arrivalDate
+            FROM GestaoOrders o
+            INNER JOIN DeliveryOrders dor ON dor.order_id = o.id
+            INNER JOIN Deliveries d ON d.id = dor.delivery_id
+            WHERE d.seller_id = ${sellerId} AND d.status = ${statusConcluida}
+            ORDER BY d.arrival_date DESC, o.id ASC
+          `;
+
+          context.log(`sellers deliveries: sellerId=${sellerId} found=${ordersResult.recordset.length} orders`);
+
+          const itemsResult = await pool.request().query`
+            SELECT oi.orderId, oi.productName, oi.quantity, oi.unit
+            FROM GestaoOrderItems oi
+            INNER JOIN DeliveryOrders dor ON dor.order_id = oi.orderId
+            INNER JOIN Deliveries d ON d.id = dor.delivery_id
+            WHERE d.seller_id = ${sellerId} AND d.status = ${statusConcluida}
+            ORDER BY oi.id ASC
+          `.catch((e) => { context.warn('sellers items query:', e.message); return { recordset: [] }; });
+
+          const paymentsResult = await pool.request().query`
+            SELECT p.orderId, SUM(p.paymentValue) AS totalPaid
+            FROM Payments p
+            WHERE EXISTS (
+              SELECT 1 FROM DeliveryOrders dor
+              INNER JOIN Deliveries d ON d.id = dor.delivery_id
+              WHERE dor.order_id = p.orderId
+                AND d.seller_id = ${sellerId}
+                AND d.status = ${statusConcluida}
+            )
+            GROUP BY p.orderId
+          `.catch((e) => { context.warn('sellers payments query:', e.message); return { recordset: [] }; });
+
+          const itemsByOrder = {};
+          for (const item of itemsResult.recordset) {
+            if (!itemsByOrder[item.orderId]) itemsByOrder[item.orderId] = [];
+            itemsByOrder[item.orderId].push({ name: item.productName, qty: item.quantity, unit: item.unit });
+          }
+
+          const paymentsByOrder = {};
+          for (const p of paymentsResult.recordset) {
+            paymentsByOrder[p.orderId] = parseFloat(p.totalPaid);
+          }
+
+          const sales = ordersResult.recordset.map((o) => ({
+            id: o.orderId,
+            customer: o.clientName || '',
+            city: o.clientCity || '',
+            products: itemsByOrder[o.orderId] || [],
+            payment: paymentsByOrder[o.orderId] != null ? paymentsByOrder[o.orderId] : null,
+            date: o.arrivalDate
+              ? new Date(o.arrivalDate).toLocaleDateString('pt-BR')
+              : o.createdAt ? new Date(o.createdAt).toLocaleDateString('pt-BR') : '',
+            value: Number(o.totalValue) || 0,
+            deliveryCode: o.deliveryCode,
+          }));
+
+          return { jsonBody: { sales } };
+        }
+
         const result = await pool.request().query`
-          SELECT s.id, u.name, u.whatsapp AS phone, s.city, s.dailyGoal, s.soldToday,
-                 ISNULL(s.isActive, 1) AS isActive
+          SELECT s.id, u.name, u.whatsapp AS phone, s.city, s.dailyGoal,
+                 ISNULL(s.isActive, 1) AS isActive,
+                 ISNULL((
+                   SELECT SUM(CAST(o.totalValue AS FLOAT))
+                   FROM GestaoOrders o
+                   INNER JOIN DeliveryOrders dor ON dor.order_id = o.id
+                   INNER JOIN Deliveries d ON d.id = dor.delivery_id
+                   WHERE d.seller_id = s.id AND d.status = 'Concluída'
+                 ), 0) AS totalVendas,
+                 ISNULL((
+                   SELECT COUNT(DISTINCT o.id)
+                   FROM GestaoOrders o
+                   INNER JOIN DeliveryOrders dor ON dor.order_id = o.id
+                   INNER JOIN Deliveries d ON d.id = dor.delivery_id
+                   WHERE d.seller_id = s.id AND d.status = 'Concluída'
+                 ), 0) AS totalOrders
           FROM Sellers s
           INNER JOIN Users u ON s.userId = u.id
           ORDER BY u.name ASC
@@ -30,8 +120,8 @@ app.http('sellers', {
           avatar: (s.name || 'V')[0].toUpperCase(),
           status: s.isActive === false || s.isActive === 0 ? 'Inativo' : 'Ativo',
           meta: Number(s.dailyGoal) || 0,
-          total: Number(s.soldToday) || 0,
-          sales: [],
+          total: Number(s.totalVendas) || 0,
+          sales: Array(Number(s.totalOrders) || 0).fill(null),
         }));
         return { jsonBody: { sellers: sellersData } };
       }

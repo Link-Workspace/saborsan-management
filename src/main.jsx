@@ -2673,9 +2673,8 @@ function Suppliers({ onMessage, search = '', addNotif }) {
               <span>Compras agendadas: <b>{scheduledCounts[supplier.id] ?? 0}</b></span>
             </div>
             <div className="orderActions">
-              <button onClick={() => setTranscript(supplier)}>Ver conversa IA</button>
               <button onClick={() => setDetailSupplier(supplier)}>Detalhes</button>
-              <button onClick={() => handleComunicar(supplier)}>Comunicar</button>
+              <button onClick={() => handleComunicar(supplier)}>Abrir no LinkChat</button>
             </div>
           </article>
         ))}
@@ -6283,7 +6282,7 @@ function AutomationClientReactivationAdjustModal({ onClose, onActivate, isActive
                   { key: 'catalog', label: 'Ver catálogo', icon: ExternalLink, desc: 'Convite para o cliente conferir novidades no catálogo', templateId: config.wabaTemplateCatalogId },
                 ].map(({ key, label, icon: Icon, desc, templateId }) => {
                   const realBody = templateId && wabaTemplates.length
-                    ? (wabaTemplates.find((t) => String(t.id) === String(templateId))?.body ?? null)
+                    ? (wabaTemplates.find((t) => t.name === templateId)?.body ?? null)
                     : null
                   return (
                   <div key={key}>
@@ -6324,11 +6323,11 @@ function AutomationClientReactivationAdjustModal({ onClose, onActivate, isActive
                 </label>
                 <label>
                   <span>Início</span>
-                  <TimePickerInput value={config.timeStart} onChange={(v) => setC('timeStart', v)} />
+                  <TimePickerInput value={config.timeStart} onChange={(v) => setC('timeStart', v)} dropUp />
                 </label>
                 <label>
                   <span>Fim</span>
-                  <TimePickerInput value={config.timeEnd} onChange={(v) => setC('timeEnd', v)} />
+                  <TimePickerInput value={config.timeEnd} onChange={(v) => setC('timeEnd', v)} dropUp />
                 </label>
               </div>
             </div>
@@ -8497,10 +8496,22 @@ function Sellers({ search = '', addNotif }) {
   const [sellersData, setSellersData] = useState([])
   const [sellersLoading, setSellersLoading] = useState(false)
   const [selected, setSelected] = useState(null)
+  const [sellerSales, setSellerSales] = useState([])
+  const [sellerSalesLoading, setSellerSalesLoading] = useState(false)
   const [sellerDetailOpen, setSellerDetailOpen] = useState(false)
   const [newSellerOpen, setNewSellerOpen] = useState(false)
   const [editSeller, setEditSeller] = useState(null)
   const seller = selected ? sellersData.find((s) => s.id === selected) : null
+
+  useEffect(() => {
+    if (!selected) { setSellerSales([]); return }
+    setSellerSalesLoading(true)
+    fetch(`${API_URL}/api/sellers?sellerId=${selected}`)
+      .then((r) => r.json())
+      .then((data) => setSellerSales(data.sales || []))
+      .catch(() => setSellerSales([]))
+      .finally(() => setSellerSalesLoading(false))
+  }, [selected])
   const totalGeral = sellersData.reduce((a, s) => a + s.total, 0)
   const bestSeller = sellersData.length > 0 ? sellersData.reduce((a, b) => a.total > b.total ? a : b) : null
   const notifiedSellersRef = useRef(new Set())
@@ -8558,7 +8569,6 @@ function Sellers({ search = '', addNotif }) {
       <div className="sellersSummary">
         <div className="card sellerStat"><span>Total de vendas</span><strong>{money(totalGeral)}</strong><small>{sellersData.reduce((a, s) => a + s.sales.length, 0)} pedidos no período</small></div>
         <div className="card sellerStat"><span>Vendedores ativos</span><strong>{sellersData.filter(s => s.status === 'Ativo').length}</strong><small>de {sellersData.length} cadastrados</small></div>
-        <div className="card sellerStat"><span>Melhor vendedor</span><strong>{bestSeller ? bestSeller.name.split(' ')[0] : '—'}</strong><small>{bestSeller ? money(bestSeller.total) : '—'}</small></div>
       </div>
 
       {sellersLoading && <p className="loadingText">Carregando vendedores...</p>}
@@ -8595,18 +8605,20 @@ function Sellers({ search = '', addNotif }) {
           </div>
           <div className="sellerSalesList">
             <div className="sellerSalesHeader"><b>Pedido</b><b>Cliente</b><b>Produtos</b><b>Pagamento</b><b>Data</b><b>Valor</b></div>
-            {seller.sales.map((sale) => (
+            {sellerSalesLoading && <p className="loadingText" style={{ gridColumn: '1/-1', padding: '12px 0' }}>Carregando...</p>}
+            {!sellerSalesLoading && sellerSales.length === 0 && <p className="emptyText" style={{ gridColumn: '1/-1', padding: '12px 0' }}>Nenhuma entrega concluída.</p>}
+            {sellerSales.map((sale) => (
               <div key={sale.id}>
                 <b>{sale.id}</b>
                 <span>{sale.customer}<small>{sale.city}</small></span>
                 <span>{sale.products.map(p => `${p.name} ×${p.qty}`).join(', ')}</span>
-                <span>{sale.payment}</span>
+                <span>{sale.payment != null ? money(sale.payment) : ''}</span>
                 <small>{sale.date}</small>
                 <strong>{money(sale.value)}</strong>
               </div>
             ))}
           </div>
-          <div className="sellerDetailTotal"><span>Total do período</span><strong>{money(seller.total)}</strong></div>
+          <div className="sellerDetailTotal"><span>Total do período</span><strong>{money(sellerSales.reduce((a, s) => a + s.value, 0))}</strong></div>
         </div>
       )}
 
