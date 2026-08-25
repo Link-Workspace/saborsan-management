@@ -735,12 +735,10 @@ function App() {
 
   const totals = useMemo(() => {
     const activeOrders = orders.filter((o) => !o.isDeleted)
-    const today = activeOrders.filter((o) => o.time !== 'Ontem')
     return {
       revenue: activeOrders.reduce((sum, item) => sum + item.value, 0),
-      todayCount: today.length,
-      pending: activeOrders.filter((o) => !['Entregue', 'Cancelado'].includes(o.status)).length,
-      lowStock: products.filter((p) => p.stock <= p.min).length,
+      todayCount: activeOrders.filter((o) => /^\d{2}:\d{2}$/.test(o.time)).length,
+      pending: activeOrders.filter((o) => o.status === 'Recebido' && !/^\d{2}:\d{2}$/.test(o.time)).length,
     }
   }, [orders])
 
@@ -1058,20 +1056,20 @@ function App() {
           ))}
         </section>
 
-        {active === 'dashboard' && <Dashboard totals={totals} orders={orders} aiEnabled={aiEnabled} setActive={setActive} />}
+        {active === 'dashboard' && <Dashboard totals={totals} orders={orders} products={apiProductsState} deliveries={deliveriesState} receiveOrdersActive={receiveOrdersActive} generateNfeActive={generateNfeActive} stockReplenishmentActive={stockReplenishmentActive} clientReactivationActive={clientReactivationActive} setActive={setActive} />}
         {active === 'pedidos' && <Orders orders={orders} ordersLoading={ordersLoading} onSelect={setSelectedOrder} updateOrderStatus={updateOrderStatus} createInvoice={createInvoice} onGerarNota={openGerarNota} onNewOrder={() => setNewOrderOpen(true)} onVerNota={setVerNotaOrder} onPayment={(order) => { const client = clientsState.find(c => c.establishmentName === order.customer); setBalcaoPaymentOrder({ ...order, cpf: client?.cpf || order.cpf || '' }) }} search={topbarSearch} receiveOrdersActive={receiveOrdersActive} generateNfeActive={generateNfeActive} />}
         {active === 'vendedores' && <Sellers search={topbarSearch} addNotif={addNotif} />}
         {active === 'notas' && <Invoices orders={orders} onGerarNota={openGerarNota} onVerNota={setVerNotaOrder} search={topbarSearch} generateNfeActive={generateNfeActive} />}
         {active === 'estoque' && <Stock onProduct={setSelectedProduct} refreshKey={stockRefreshKey} search={topbarSearch} addNotif={addNotif} bgImport={bgImport} onStartBgAnalysis={startBackgroundAnalysis} onClearBgImport={() => setBgImport(null)} />}
         {active === 'fornecedores' && <Suppliers onMessage={setSupplierModal} search={topbarSearch} addNotif={addNotif} />}
-        {active === 'compras' && <Purchases notify={notify} addNotif={addNotif} stockReplenishmentActive={stockReplenishmentActive} />}
-        {active === 'entregas' && <Deliveries deliveries={deliveriesState} onNewDelivery={() => setNewDeliveryOpen(true)} onSelect={(d) => { setSelectedDelivery(d); fetchDeliveries() }} onOpenVehicles={() => setVehiclesOpen(true)} />}
+        {active === 'compras' && <Purchases notify={notify} addNotif={addNotif} stockReplenishmentActive={stockReplenishmentActive} search={topbarSearch} />}
+        {active === 'entregas' && <Deliveries deliveries={deliveriesState} onNewDelivery={() => setNewDeliveryOpen(true)} onSelect={(d) => { setSelectedDelivery(d); fetchDeliveries() }} onOpenVehicles={() => setVehiclesOpen(true)} search={topbarSearch} />}
         {active === 'clientes' && <Clients clientsData={clientsState} clientsLoading={clientsLoading} onNewClient={() => setNewClientOpen(true)} onSelectClient={setSelectedClient} search={topbarSearch} />}
         {active === 'pagamentos' && <Payments paymentsData={paymentsState} paymentsLoading={paymentsLoading} onSelectPayment={setSelectedPayment} onNewPayment={() => setNewPaymentOpen(true)} search={topbarSearch} />}
         {active === 'financeiro' && <Finance />}
-        {active === 'relatorios' && <Reports />}
+        {active === 'relatorios' && <Reports orders={orders} deliveries={deliveriesState} payments={paymentsState} clients={clientsState} />}
         {active === 'automacao' && <Automation aiEnabled={aiEnabled} setAiEnabled={setAiEnabled} notify={notify} addNotif={addNotif} receiveOrdersActive={receiveOrdersActive} setReceiveOrdersActive={setReceiveOrdersActive} generateNfeActive={generateNfeActive} setGenerateNfeActive={setGenerateNfeActive} stockReplenishmentActive={stockReplenishmentActive} setStockReplenishmentActive={setStockReplenishmentActive} clientReactivationActive={clientReactivationActive} setClientReactivationActive={setClientReactivationActive} />}
-        {active === 'configuracoes' && <Settings notify={notify} onNotifSettingChange={(key, val) => setNotifSettings((p) => ({ ...p, [key]: val }))} />}
+        {active === 'configuracoes' && <Settings notify={notify} onNotifSettingChange={(key, val) => setNotifSettings((p) => ({ ...p, [key]: val }))} search={topbarSearch} />}
       </main>
 
       {selectedPayment && <PaymentDetailModal payment={selectedPayment} onClose={() => setSelectedPayment(null)} />}
@@ -1157,7 +1155,7 @@ function App() {
       {selectedOrder && (() => {
         const _linkedDelivery = deliveriesState.find((d) => d.orderIds?.includes(selectedOrder.id))
         const _canRemove = !selectedOrder.isDeleted && selectedOrder.status !== 'Entregue' && selectedOrder.status !== 'Rota' && !(selectedOrder.status === 'Balcão' && selectedOrder.balcaoData?.balcaoStatus === 'entregue')
-        return <OrderModal order={selectedOrder} onClose={() => setSelectedOrder(null)} updateOrderStatus={updateOrderStatus} createInvoice={createInvoice} onRemove={_canRemove ? () => setRemoveConfirmOrder(selectedOrder) : null} canRemove={_canRemove} onReactivate={selectedOrder.isDeleted ? () => setReactivateConfirmOrder(selectedOrder) : null} onEdit={() => { setEditOrder(selectedOrder); setSelectedOrder(null) }} receiveOrdersActive={receiveOrdersActive} />
+        return <OrderModal order={selectedOrder} linkedDelivery={_linkedDelivery} onClose={() => setSelectedOrder(null)} updateOrderStatus={updateOrderStatus} createInvoice={createInvoice} onRemove={_canRemove ? () => setRemoveConfirmOrder(selectedOrder) : null} canRemove={_canRemove} onReactivate={selectedOrder.isDeleted ? () => setReactivateConfirmOrder(selectedOrder) : null} onEdit={() => { setEditOrder(selectedOrder); setSelectedOrder(null) }} receiveOrdersActive={receiveOrdersActive} />
       })()}
       {vehiclesOpen && <VehiclesModal
         onClose={() => setVehiclesOpen(false)}
@@ -1350,12 +1348,23 @@ function Login({ onLogin }) {
   )
 }
 
-function Dashboard({ totals, orders, aiEnabled, setActive }) {
+function Dashboard({ totals, orders, products, deliveries, receiveOrdersActive, generateNfeActive, stockReplenishmentActive, clientReactivationActive, setActive }) {
+  const [stockThreshold, setStockThreshold] = useState(10)
+
+  useEffect(() => {
+    fetch(`${API_URL}/api/automation-config?key=stock_replenishment`)
+      .then((r) => r.json())
+      .then((data) => { if (data.config?.srMinStockQty != null) setStockThreshold(data.config.srMinStockQty) })
+      .catch(() => {})
+  }, [])
+
+  const lowStockCount = products.filter((p) => p.stock <= stockThreshold).length
+
   const cards = [
     { label: 'Faturamento em pedidos', value: money(totals.revenue), icon: Wallet, tone: 'orange', detail: '+18% sobre a semana anterior' },
-    { label: 'Pedidos recebidos hoje', value: totals.todayCount, icon: ShoppingCart, tone: 'navy', detail: '3 vindos do app Saborsan' },
-    { label: 'Pedidos pendentes', value: totals.pending, icon: Clock3, tone: 'yellow', detail: 'Separação, rota e nota' },
-    { label: 'Produtos em atenção', value: totals.lowStock, icon: AlertTriangle, tone: 'red', detail: 'Açaí precisa de reposição' },
+    { label: 'Pedidos recebidos hoje', value: totals.todayCount, icon: ShoppingCart, tone: 'navy' },
+    { label: 'Pedidos pendentes', value: totals.pending, icon: Clock3, tone: 'yellow' },
+    { label: 'Produtos em atenção', value: lowStockCount, icon: AlertTriangle, tone: 'red' },
   ]
   return (
     <div className="panelGrid">
@@ -1374,30 +1383,27 @@ function Dashboard({ totals, orders, aiEnabled, setActive }) {
             <div><Icon size={22} /></div>
             <span>{label}</span>
             <strong>{value}</strong>
-            <small>{detail}</small>
+            {detail && <small>{detail}</small>}
           </article>
         ))}
       </section>
-      <section className="contentGrid twoCols">
+      <section className="contentGrid">
         <div className="card">
           <div className="cardHeader"><div><p>Fila de pedidos</p><h3>Solicitações recentes</h3></div><button onClick={() => setActive('pedidos')}>Abrir</button></div>
           <div className="orderList compact">
             {orders.slice(0, 4).map((order) => <OrderLine key={order.id} order={order} />)}
           </div>
         </div>
-        <div className="card automationCard">
-          <div className="cardHeader"><div><p>Operação assistida</p><h3>{aiEnabled ? 'Automação ativa' : 'Automação desativada'}</h3></div><Bot size={24} /></div>
-          <div className="suggestions">
-            <Suggestion icon={AlertTriangle} title="Comprar Açaí Premium" text="Estoque abaixo do mínimo. Sugestão: solicitar 24 baldes ao fornecedor Amazônia Mix." />
-            <Suggestion icon={Route} title="Otimizar rota de hoje" text="Agrupar Centro e Coral reduz 18 min no trajeto e mantém a temperatura ideal." />
-            <Suggestion icon={ReceiptText} title="Gerar nota do PED-2049" text="Pedido aprovado e com dados fiscais completos para emissão demonstrativa." />
-          </div>
-        </div>
       </section>
       <section className="contentGrid threeCols">
-        <MiniTable title="Estoque crítico" data={products.filter((p) => p.stock <= p.min + 10).map((p) => [p.name, `${p.stock} ${p.unit}`, p.stock <= p.min ? 'Baixo' : 'Atenção'])} />
-        <MiniTable title="Entregas" data={deliveries.map((d) => [d.id, d.route, d.status])} />
-        <MiniTable title="Fornecedores" data={suppliers.map((s) => [s.name, s.lead, s.status])} />
+        <MiniTable title="Estoque crítico" data={products.filter((p) => p.stock <= stockThreshold).sort((a, b) => a.stock - b.stock).slice(0, 5).map((p) => [p.name, `${p.stock} ${p.unit}`, p.stock <= Math.floor(stockThreshold / 2) ? 'Baixo' : 'Atenção'])} />
+        <MiniTable title="Entregas" data={deliveries.filter((d) => !['Cancelada', 'Concluída'].includes(d.status)).slice(0, 5).map((d) => [d.id, d.route, d.status])} />
+        <MiniTable title="Automações" data={[
+          ['Criar entregas', '', receiveOrdersActive ? 'Ativa' : 'Manual'],
+          ['Gerar nota fiscal', '', generateNfeActive ? 'Ativa' : 'Manual'],
+          ['Reposição de estoque', '', stockReplenishmentActive ? 'Ativa' : 'Manual'],
+          ['Acompanhar clientes', '', clientReactivationActive ? 'Ativa' : 'Manual'],
+        ]} />
       </section>
     </div>
   )
@@ -1408,7 +1414,12 @@ function Orders({ orders, ordersLoading, onSelect, updateOrderStatus, createInvo
   const activeOrders = orders.filter((o) => !o.isDeleted)
   const removedOrders = orders.filter((o) => o.isDeleted)
   const byStatus = filter === 'Todos' ? activeOrders : filter === 'Removido' ? removedOrders : activeOrders.filter((o) => o.status === filter)
-  const filtered = !search ? byStatus : byStatus.filter((o) => o.customer.toLowerCase().includes(search.toLowerCase()) || o.id.toLowerCase().includes(search.toLowerCase()))
+  const filtered = byStatus.filter((o) => {
+    if (!search) return true
+    const q = search.toLowerCase()
+    const productNames = (o.products || []).map((p) => `${p.qty ?? ''} ${p.unit ?? ''} ${p.name ?? ''}`).join(' ')
+    return [o.id, o.customer, o.city, o.whatsapp, o.source, o.status, o.delivery, String(o.value || ''), productNames].some((f) => f && f.toLowerCase().includes(q))
+  })
   return (
     <section className="pageStack">
       <div className="sectionHeader">
@@ -1462,14 +1473,29 @@ function Orders({ orders, ordersLoading, onSelect, updateOrderStatus, createInvo
 }
 
 function Invoices({ orders, onGerarNota, onVerNota, search = '', generateNfeActive = false }) {
-  const fiscalHistory = orders.filter((o) => o.nfeData && (!search || o.customer.toLowerCase().includes(search.toLowerCase())))
+  const matchesSearch = (o) => {
+    if (!search) return true
+    const q = search.toLowerCase()
+    const nfe = o.nfeData || {}
+    const docType = nfe.documentType || (String(nfe.reference || '').toUpperCase().startsWith('NFCE') ? 'NFC-e' : 'NF-e')
+    const nfeStatus = nfe.nfeStatus === 'AUTHORIZED' ? 'emitida' : (nfe.nfeStatus === 'PROCESSING' || nfe.nfeStatus === 'SUBMITTING') ? 'processando' : nfe.nfeStatus ? 'erro' : ''
+    const dateStr = nfe.authorizedAt ? new Date(nfe.authorizedAt).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit' }) : ''
+    const fields = [
+      o.id, o.customer, String(o.value || ''),
+      nfe.number ? `${docType} ${nfe.number}` : '',
+      docType, String(nfe.number || ''), dateStr, nfeStatus,
+      ...(o.items || []).map((i) => i.productName || ''),
+    ]
+    return fields.some((f) => f.toLowerCase().includes(q))
+  }
+
+  const fiscalHistory = orders.filter((o) => o.nfeData && matchesSearch(o))
   const readyToEmit = orders.filter((o) => {
     if (o.isDeleted) return false
     const noNfe = !o.nfeData || (o.nfeData.nfeStatus !== 'AUTHORIZED' && o.nfeData.nfeStatus !== 'PROCESSING' && o.nfeData.nfeStatus !== 'SUBMITTING' && o.nfeData.nfeStatus !== 'MANUAL_REVIEW')
-    const matchSearch = !search || o.customer.toLowerCase().includes(search.toLowerCase())
     const isPronto = o.status === 'Pronto'
     const isBalcaoPago = o.status === 'Balcão' && o.balcaoData?.balcaoStatus === 'pago'
-    return (isPronto || isBalcaoPago) && noNfe && matchSearch
+    return (isPronto || isBalcaoPago) && noNfe && matchesSearch(o)
   })
 
   const [printOrder, setPrintOrder] = useState(null)
@@ -2447,7 +2473,11 @@ function Stock({ onProduct, refreshKey, search = '', addNotif, bgImport, onStart
     return () => document.removeEventListener('mousedown', handleClick)
   }, [viewMenuOpen])
 
-  const filtered = stockProducts.filter((p) => !search || p.name.toLowerCase().includes(search.toLowerCase()))
+  const filtered = stockProducts.filter((p) => {
+    if (!search) return true
+    const q = search.toLowerCase()
+    return [p.name, p.category, p.group, p.description, p.badge, p.unit, p.conservation].some((f) => f && f.toLowerCase().includes(q))
+  })
 
   // IDs de produtos que compartilham nome e grupo com pelo menos outro produto
   const dupIds = new Set(
@@ -3478,7 +3508,7 @@ function PurchaseDetailModal({ item, getDayLabel, onClose, onRemove, onEdit, sup
   )
 }
 
-function Purchases({ notify, addNotif, stockReplenishmentActive }) {
+function Purchases({ notify, addNotif, stockReplenishmentActive, search = '' }) {
   const [planningItems, setPlanningItems] = useState([])
   const [planningLoading, setPlanningLoading] = useState(true)
   const [suppliersData, setSuppliersData] = useState([])
@@ -3627,7 +3657,9 @@ function Purchases({ notify, addNotif, stockReplenishmentActive }) {
     }
   }
 
-  const activeItems = planningItems.filter((item) => !item.completed)
+  const matchSearch = (fields) => !search || fields.some((f) => f && String(f).toLowerCase().includes(search.toLowerCase()))
+  const activeItems = planningItems.filter((item) => !item.completed && matchSearch([item.title, item.notes, item.scheduledDate]))
+  const filteredSuggestions = purchaseSuggestions.filter((item) => matchSearch([item.item, item.category, item.supplier, item.unit, item.reason]))
 
   const pendingStatusLabel = (status) => {
     const map = { pending: 'Pendente', 'in-progress': 'Em andamento', confirmed: 'Confirmado', processing: 'Em processamento' }
@@ -3650,10 +3682,10 @@ function Purchases({ notify, addNotif, stockReplenishmentActive }) {
       <div className="contentGrid twoCols">
         <div className="card wideList">
           <div className="cardHeader"><div><p>Lista sugerida</p><h3>Reposições prioritárias</h3></div><ClipboardList /></div>
-          {purchaseSuggestions.length === 0 && (
+          {filteredSuggestions.length === 0 && (
             <p className="emptyText" style={{ fontSize: '.85rem', margin: '8px 0' }}>Nenhuma reposição necessária no momento.</p>
           )}
-          {purchaseSuggestions.map((item) => {
+          {filteredSuggestions.map((item) => {
             const existingStatus = getExistingPurchaseStatus(item.item)
             const isSent = sentIds.has(item.id)
             return (
@@ -3739,7 +3771,7 @@ function Purchases({ notify, addNotif, stockReplenishmentActive }) {
   )
 }
 
-function Deliveries({ onNewDelivery, onSelect, deliveries: list, onOpenVehicles }) {
+function Deliveries({ onNewDelivery, onSelect, deliveries: list, onOpenVehicles, search = '' }) {
   const [view, setView] = useState('ativas')
   const driversWithActiveDelivery = new Set(
     list.filter((d) => !['Concluída', 'Cancelada'].includes(d.status)).map((d) => d.driver)
@@ -3751,17 +3783,22 @@ function Deliveries({ onNewDelivery, onSelect, deliveries: list, onOpenVehicles 
       latestCompletedIdByDriver.set(d.driver, d.id)
     }
   })
+  const matchSearch = (d) => {
+    if (!search) return true
+    const q = search.toLowerCase()
+    return [d.id, d.driver, d.vehicle, d.route, d.status, d.temperature, String(d.stops ?? ''), String(d.progress ?? '')].some((f) => f && String(f).toLowerCase().includes(q))
+  }
   const filtered = view === 'ativas'
     ? list.filter((d) => {
         if (d.status === 'Cancelada') return false
         if (d.status === 'Concluída') return latestCompletedIdByDriver.get(d.driver) === d.id
         return true
-      })
+      }).filter(matchSearch)
     : list.filter((d) => {
         if (d.status === 'Cancelada') return true
         if (d.status === 'Concluída') return driversWithActiveDelivery.has(d.driver) || latestCompletedIdByDriver.get(d.driver) !== d.id
         return false
-      })
+      }).filter(matchSearch)
   return (
     <section className="pageStack">
       <div className="sectionHeader stockSectionHeader"><div><p>Rotas, motoristas e temperatura</p></div><div className="viewFilterWrap"><div className="deliverySegmented"><button className={`deliverySegBtn${view === 'ativas' ? ' active' : ''}`} onClick={() => setView('ativas')}>Entregas ativas</button><button className={`deliverySegBtn${view === 'historico' ? ' active' : ''}`} onClick={() => setView('historico')}>Histórico de entregas</button></div></div><div style={{display:'flex',gap:'8px'}}><button className="btnSolid" onClick={onNewDelivery}><Plus size={18} /> Nova entrega</button><button className="btnSolid" onClick={onOpenVehicles}><Truck size={18} /> Veículos</button></div></div>
@@ -4291,7 +4328,6 @@ function DeliveryDetailModal({ delivery, onClose, orders, onCancel, onRemove, on
             <h2>{delivery.driver}</h2>
             <p>{delivery.route}</p>
           </div>
-          <Status status={delivery.status} />
         </div>
 
         <div className="newOrderScrollArea" style={{padding:'0 28px 24px'}}>
@@ -4878,19 +4914,160 @@ function Finance() {
   )
 }
 
-function Reports() {
+function Reports({ orders = [], deliveries = [], payments = [], clients = [] }) {
+  const [supplierPurchases, setSupplierPurchases] = useState([])
+
+  useEffect(() => {
+    fetch(`${API_URL}/api/supplier-purchases`)
+      .then((r) => r.json())
+      .then((data) => { if (data.purchases) setSupplierPurchases(data.purchases) })
+      .catch(() => {})
+  }, [])
+
+  // ── Top products ───────────────────────────────────────────────────────────
+  const activeOrders = orders.filter((o) => !o.isDeleted)
+  const productCounts = {}
+  activeOrders.forEach((o) => {
+    ;(o.products || []).forEach((p) => {
+      if (!productCounts[p.name]) productCounts[p.name] = { name: p.name, orders: 0 }
+      productCounts[p.name].orders += 1
+    })
+  })
+  const sortedProducts = Object.values(productCounts).sort((a, b) => b.orders - a.orders)
+  const topProduct = sortedProducts[0]
+  const totalProductOrders = sortedProducts.reduce((s, p) => s + p.orders, 0)
+  const topProductPct = topProduct && totalProductOrders > 0 ? Math.round((topProduct.orders / totalProductOrders) * 100) : 0
+
+  // ── Top client segment ─────────────────────────────────────────────────────
+  const segmentCounts = {}
+  clients.forEach((c) => {
+    const seg = (c.segment || '').trim() || 'Outros'
+    segmentCounts[seg] = (segmentCounts[seg] || 0) + 1
+  })
+  const sortedSegments = Object.entries(segmentCounts).sort((a, b) => b[1] - a[1])
+  const topSegment = sortedSegments[0]
+
+  // ── Delivery efficiency ────────────────────────────────────────────────────
+  const nonCancelledDeliveries = deliveries.filter((d) => d.status !== 'Cancelada')
+  const completedDeliveries = deliveries.filter((d) => d.status === 'Concluída').length
+  const deliveryEfficiency = nonCancelledDeliveries.length > 0 ? Math.round((completedDeliveries / nonCancelledDeliveries.length) * 100) : 0
+
+  // ── NF-e stats from orders ─────────────────────────────────────────────────
+  const nfeOrders = orders.filter((o) => o.nfeData)
+  const nfeAuthorized = nfeOrders.filter((o) => o.nfeData?.nfeStatus === 'AUTHORIZED').length
+  const nfeErrors = nfeOrders.filter((o) => ['REJECTED', 'SUBMISSION_FAILED'].includes(o.nfeData?.nfeStatus)).length
+  const nfeTotal = nfeOrders.length
+  const nfeSuccessPct = nfeTotal > 0 ? Math.round((nfeAuthorized / nfeTotal) * 100) : 0
+  const nfeErrorPct = nfeTotal > 0 ? Math.round((nfeErrors / nfeTotal) * 100) : 0
+
+  // ── Finance data ───────────────────────────────────────────────────────────
+  const totalRevenue = activeOrders.reduce((sum, o) => sum + (o.value || 0), 0)
+  const pendingPayments = payments.filter((p) => p.status === 'Pendente' || p.status === 'Atrasado')
+  const pendingPaymentsValue = pendingPayments.reduce((sum, p) => sum + (p.paymentValue || 0), 0)
+  const paidPayments = payments.filter((p) => (p.status || '').toLowerCase() === 'pago')
+  const paidPct = payments.length > 0 ? Math.round((paidPayments.length / payments.length) * 100) : 0
+  const openPurchases = supplierPurchases.filter((p) => p.status !== 'Concluída' && !p.completedAt)
+  const openPurchasesValue = openPurchases.reduce((sum, p) => sum + (p.totalAmount || 0), 0)
+
+  // Weekly revenue bars from orders that have createdAt — indexed Mon=0 … Sun=6
+  const weeklyRevenue = Array(7).fill(0)
+  const now = new Date()
+  activeOrders.forEach((o) => {
+    if (!o.createdAt) return
+    const diffDays = Math.floor((now - new Date(o.createdAt)) / 86400000)
+    if (diffDays >= 0 && diffDays < 7) {
+      const jsDay = new Date(o.createdAt).getDay() // 0=Sun
+      const weekIdx = jsDay === 0 ? 6 : jsDay - 1  // Mon=0 … Sun=6
+      weeklyRevenue[weekIdx] += o.value || 0
+    }
+  })
+  const maxWeekly = Math.max(...weeklyRevenue, 1)
+  const ptDayLabels = ['S', 'T', 'Q', 'Q', 'S', 'S', 'D'] // Seg Ter Qua Qui Sex Sáb Dom
+
+  // ── Auto summary ───────────────────────────────────────────────────────────
+  const summaryParts = []
+  if (topProduct) summaryParts.push(`Produto mais pedido: ${topProduct.name} (${topProductPct}% das solicitações)`)
+  if (topSegment) summaryParts.push(`Segmento dominante: ${topSegment[0]} com ${topSegment[1]} cliente${topSegment[1] !== 1 ? 's' : ''}`)
+  if (nonCancelledDeliveries.length > 0) summaryParts.push(`Eficiência de entregas: ${deliveryEfficiency}% concluídas`)
+  if (nfeTotal > 0) summaryParts.push(`NF-e: ${nfeSuccessPct}% autorizadas, ${nfeErrorPct}% com erro`)
+  const summaryText = summaryParts.length
+    ? summaryParts.join('. ') + '.'
+    : 'Dados insuficientes para gerar o resumo automático. Aguardando movimentação no sistema.'
+
   return (
     <section className="pageStack">
-      <div className="sectionHeader"><div><p>Relatórios comerciais e operacionais</p></div><button className="btnSolid"><FileText size={18} /> Exportar demo</button></div>
+      <div className="sectionHeader"><div><p>Relatórios comerciais e operacionais</p></div></div>
+
       <div className="reportGrid">
-        <ReportCard icon={BarChart3} title="Produtos mais vendidos" value="Pão de queijo lidera" text="Representa 34% das solicitações comerciais da semana." />
-        <ReportCard icon={Store} title="Segmentos em crescimento" value="Cafeterias +22%" text="Croissants e polpas impulsionaram novos pedidos." />
-        <ReportCard icon={Truck} title="Eficiência de entregas" value="91% no prazo" text="Rotas com câmara fria mantiveram temperatura ideal." />
-        <ReportCard icon={Factory} title="Fornecedores" value="98% confiabilidade" text="Frutas do Vale e Queijos Serra Alta com melhor desempenho." />
+        <ReportCard
+          icon={BarChart3}
+          title="Produtos mais vendidos"
+          value={topProduct ? topProduct.name : 'Sem dados'}
+          text={topProduct
+            ? `Representa ${topProductPct}% das solicitações${sortedProducts[1] ? ` • 2º: ${sortedProducts[1].name}` : ''}`
+            : 'Nenhum pedido registrado ainda.'}
+        />
+        <ReportCard
+          icon={Store}
+          title="Segmentos de clientes"
+          value={topSegment ? topSegment[0] : 'Sem dados'}
+          text={clients.length > 0
+            ? `${clients.length} cliente${clients.length !== 1 ? 's' : ''} em ${sortedSegments.length} segmento${sortedSegments.length !== 1 ? 's' : ''}${topSegment ? ` — ${topSegment[0]}: ${topSegment[1]}` : ''}`
+            : 'Nenhum cliente cadastrado.'}
+        />
+        <ReportCard
+          icon={Truck}
+          title="Eficiência de entregas"
+          value={nonCancelledDeliveries.length > 0 ? `${deliveryEfficiency}% no prazo` : 'Sem entregas'}
+          text={nonCancelledDeliveries.length > 0
+            ? `${completedDeliveries} de ${nonCancelledDeliveries.length} entrega${nonCancelledDeliveries.length !== 1 ? 's' : ''} concluída${completedDeliveries !== 1 ? 's' : ''}`
+            : 'Nenhuma entrega registrada.'}
+        />
+        <ReportCard
+          icon={ReceiptText}
+          title="Automação NF-e"
+          value={nfeTotal > 0 ? `${nfeSuccessPct}% autorizadas` : 'Sem emissões'}
+          text={nfeTotal > 0
+            ? `${nfeAuthorized} autorizada${nfeAuthorized !== 1 ? 's' : ''} • ${nfeErrors} erro${nfeErrors !== 1 ? 's' : ''} (${nfeErrorPct}%) de ${nfeTotal} NF-e`
+            : 'Nenhuma NF-e emitida ainda.'}
+        />
       </div>
+
+
+      {/* Auto summary */}
       <div className="card">
         <div className="cardHeader"><div><p>Análise mensal</p><h3>Resumo automático</h3></div><Sparkles /></div>
-        <p className="analysisText">A operação mostra maior concentração de vendas em pão de queijo, croissants e açaí. O estoque de açaí está abaixo do ideal para o fim de semana e deve ser priorizado nas próximas compras. A carteira de cafeterias demonstra maior potencial para campanhas de combos com croissant, polpas e mini pizzas.</p>
+        <p className="analysisText">{summaryText}</p>
+      </div>
+
+      {/* Finance section */}
+      <div className="reportSectionDivider"><span>Visão Financeira</span></div>
+      <div className="financeHero">
+        <div>
+          <span className="badge navy">Receita em pedidos</span>
+          <h2>{money(totalRevenue)}</h2>
+          <p>Total dos pedidos ativos no sistema — {activeOrders.length} pedido{activeOrders.length !== 1 ? 's' : ''}.</p>
+        </div>
+        <TrendingUp size={78} />
+      </div>
+      <div className="contentGrid twoCols">
+        <MiniTable title="Indicadores financeiros" data={[
+          ['Receita em pedidos',    money(totalRevenue),          `${activeOrders.length} pedidos`],
+          ['Pagamentos pendentes',  money(pendingPaymentsValue),  `${pendingPayments.length} cliente${pendingPayments.length !== 1 ? 's' : ''}`],
+          ['Compras em aberto',     money(openPurchasesValue),    `${openPurchases.length} item${openPurchases.length !== 1 ? 's' : ''}`],
+          ['% pagamentos pagos',    `${paidPct}%`,                `${paidPayments.length} de ${payments.length}`],
+        ]} />
+        <div className="card">
+          <div className="cardHeader"><div><p>Receita por dia (últimos 7 dias)</p><h3>Fluxo de pedidos</h3></div><Wallet /></div>
+          <div className="bars">
+            {weeklyRevenue.map((val, i) => (
+              <div key={i}>
+                <span style={{ height: `${Math.round((val / maxWeekly) * 100) || 2}%` }} />
+                <small>{ptDayLabels[i]}</small>
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
     </section>
   )
@@ -7232,23 +7409,22 @@ function BalcaoPaymentModal({ order, onClose, onConfirm }) {
   )
 }
 
-function OrderModal({ order, onClose, updateOrderStatus, createInvoice, onRemove, onEdit, canRemove = true, onReactivate = null, receiveOrdersActive = false }) {
+function OrderModal({ order, linkedDelivery = null, onClose, updateOrderStatus, createInvoice, onRemove, onEdit, canRemove = true, onReactivate = null, receiveOrdersActive = false }) {
+  const deliveryLabel = linkedDelivery ? `${linkedDelivery.id} · ${linkedDelivery.status}` : order.delivery
   return (
     <div className="modalBackdrop">
       <div className="detailModal orderModal">
         <button className="closeBtn" onClick={onClose}><X /></button>
-        <div className="modalHeader"><div><span>{order.id}</span><h2>{order.customer}</h2><p>{order.cnpj} • {order.city}</p></div><Status status={order.isDeleted ? 'Removido' : order.status} /></div>
+        <div className="modalHeader"><div><span>{order.id}</span><h2>{order.customer}</h2><p>{order.whatsapp} • {order.city}</p></div></div>
         <div className="orderModalBody">
-          <div className="modalSplit">
-            <div>
-              <h3>Produtos solicitados</h3>
-              <div className="modalItems">{order.products.map((p) => <div key={p.name}><span>{p.qty} {p.unit}</span><b>{p.name}</b><strong>{money(p.qty * p.price)}</strong></div>)}</div>
-              <div className="noteBox"><b>Observações</b><p>{order.notes}</p></div>
-            </div>
-            <div className="summaryBox">
+          <div>
+            <h3>Produtos solicitados</h3>
+            <div className="modalItems">{order.products.map((p) => <div key={p.name}><span>{p.qty} {p.unit}</span><b>{p.name}</b><strong>{money(p.qty * p.price)}</strong></div>)}</div>
+            <div className="modalItems" style={{marginTop:8,display:'block',padding:'12px 14px'}}><b>Observações</b><p style={{marginTop:6,color:'var(--muted)',fontWeight:400}}>{order.notes || '—'}</p></div>
+            <div className="summaryBox" style={{marginTop:16}}>
               <h3>Resumo</h3>
               <p><b>WhatsApp:</b> {order.whatsapp}</p>
-              <p><b>Entrega:</b> {order.delivery}</p>
+              <p><b>Entrega:</b> {deliveryLabel}</p>
               <p><b>Valor:</b> {money(order.value)}</p>
             </div>
           </div>
@@ -7327,7 +7503,7 @@ function MiniTable({ title, data }) {
   return <div className="card miniTable"><div className="cardHeader"><h3>{title}</h3></div>{data.map((row, i) => <div className="miniRow" key={i}>{row.map((cell, j) => <span key={j} className={j === 0 ? 'main' : ''}>{cell}</span>)}</div>)}</div>
 }
 function ReportCard({ icon: Icon, title, value, text }) {
-  return <article className="reportCard"><Icon size={28} /><span>{title}</span><h3>{value}</h3><p>{text}</p></article>
+  return <article className="reportCard"><div className="reportCardTop"><Icon size={28} /><span>{title}</span></div><h3>{value}</h3><p>{text}</p></article>
 }
 
 function DispositivosSection({ form, set, printerList, setPrinterList, printersLoading, setPrintersLoading }) {
@@ -7735,7 +7911,7 @@ function FiscalConfigSection({ notify }) {
   )
 }
 
-function Settings({ notify, onNotifSettingChange }) {
+function Settings({ notify, onNotifSettingChange, search = '' }) {
   const [form, setForm] = useState(() => {
     try {
       const stored = localStorage.getItem('saborsan_settings')
@@ -8048,15 +8224,24 @@ function Settings({ notify, onNotifSettingChange }) {
   }
 
   const settingsSections = [
-    { id: 'empresa',       label: 'Dados da empresa',        icon: Building2  },
-    { id: 'operacao',      label: 'Estoque e fornecedores',  icon: Boxes      },
-    { id: 'notificacoes',  label: 'Notificações',            icon: Bell       },
-    { id: 'relatorios',    label: 'Relatórios',              icon: BarChart3  },
-    { id: 'fiscal',        label: 'Fiscal e NCM',            icon: ReceiptText },
-    { id: 'dispositivos',  label: 'Dispositivos conectados', icon: Printer    },
+    { id: 'empresa',       label: 'Dados da empresa',        icon: Building2,   keywords: ['empresa', 'nome', 'cnpj', 'email', 'telefone', 'cidade', 'uf', 'identidade', 'corporativo'] },
+    { id: 'operacao',      label: 'Estoque e fornecedores',  icon: Boxes,       keywords: ['estoque', 'fornecedor', 'alerta', 'ia', 'whatsapp', 'notifica', 'prompt', 'compra', 'horário', 'limite', 'mínimo', 'reposição', 'automação'] },
+    { id: 'notificacoes',  label: 'Notificações',            icon: Bell,        keywords: ['notificação', 'notif', 'alerta', 'pedido', 'vendedor', 'nota', 'fiscal', 'entrega', 'cliente', 'pagamento', 'push'] },
+    { id: 'relatorios',    label: 'Relatórios',              icon: BarChart3,   keywords: ['relatório', 'email', 'frequência', 'semanal', 'mensal', 'diário', 'vendas', 'financeiro', 'envio'] },
+    { id: 'fiscal',        label: 'Fiscal e NCM',            icon: ReceiptText, keywords: ['fiscal', 'ncm', 'cfop', 'icms', 'nota', 'nfe', 'nfc', 'tribut', 'cst', 'pis', 'cofins', 'sefaz'] },
+    { id: 'dispositivos',  label: 'Dispositivos conectados', icon: Printer,     keywords: ['dispositivo', 'impressora', 'térmica', 'printer', 'conectado', 'danfe'] },
   ]
 
   const [activeSection, setActiveSection] = useState('empresa')
+
+  useEffect(() => {
+    if (!search) return
+    const match = settingsSections.find((s) => {
+      const q = search.toLowerCase()
+      return s.label.toLowerCase().includes(q) || s.keywords.some((k) => k.includes(q))
+    })
+    if (match) setActiveSection(match.id)
+  }, [search])
   const active = settingsSections.find((s) => s.id === activeSection)
   const showSaveBtn = activeSection !== 'fiscal' && activeSection !== 'empresa' && activeSection !== 'notificacoes'
   const operacaoDirty    = activeSection !== 'operacao'     || snapOperacao(form)    !== savedOperacaoSnap
@@ -8445,36 +8630,36 @@ function SellerDetailModal({ seller, onClose, onToggleActive, onEdit }) {
         <button className="closeBtn" onClick={onClose}><X /></button>
         <div className="modalHeader">
           <div>
-            <span>Vendedor #{seller.id}</span>
+            <span>Vendedor</span>
             <h2>{seller.name}</h2>
             <p>{seller.region} • {seller.phone}</p>
           </div>
-          <Status status={seller.status} />
         </div>
         <div className="orderModalBody">
-          <div className="modalSplit">
-            <div>
-              <h3>Desempenho de vendas</h3>
-              <div className="detailGrid">
-                <div><b>Total vendido</b><span>{money(seller.total)}</span></div>
-                <div><b>Meta do período</b><span>{money(seller.meta)}</span></div>
-                <div><b>Atingimento</b><span>{pct}%</span></div>
-                <div><b>Nº de vendas</b><span>{seller.sales.length}</span></div>
-              </div>
-              <div className="stockLevel" style={{ marginTop: 12 }}><div style={{ width: `${pct}%` }}></div></div>
-              <small style={{ color: 'var(--muted)', fontSize: 12 }}>{money(seller.total)} de {money(seller.meta)} ({pct}%)</small>
+          <div>
+            <h3>Desempenho de vendas</h3>
+            <div className="detailGrid">
+              <div><b>Total vendido</b><span>{money(seller.total)}</span></div>
+              <div><b>Meta do período</b><span>{money(seller.meta)}</span></div>
+              <div><b>Nº de pedidos</b><span>{(seller.sales || []).length}</span></div>
+              <div><b>Nº de vendas</b><span>{seller.deliveriesCount ?? 0}</span></div>
             </div>
-            <div className="summaryBox">
-              <h3>Dados do vendedor</h3>
-              <p><b>Nome:</b> {seller.name}</p>
-              <p><b>Região:</b> {seller.region}</p>
-              <p><b>WhatsApp:</b> {seller.phone}</p>
-              <p><b>Status:</b> {seller.status}</p>
-            </div>
+            <div className="stockLevel" style={{ marginTop: 12 }}><div style={{ width: `${pct}%` }}></div></div>
+            <small style={{ color: 'var(--muted)', fontSize: 12 }}>{money(seller.total)} de {money(seller.meta)} ({pct}%)</small>
+          </div>
+          <div className="summaryBox" style={{ marginTop: 20 }}>
+            <h3>Dados do vendedor</h3>
+            <p><b>Nome:</b> {seller.name}</p>
+            <p><b>Região:</b> {seller.region}</p>
+            <p><b>WhatsApp:</b> {seller.phone}</p>
+            <p><b>Status:</b> {seller.status}</p>
           </div>
           <h3 style={{ marginTop: 20 }}>Vendas realizadas</h3>
+          {(seller.sales || []).filter(Boolean).length === 0 && (
+            <p style={{ color: 'var(--muted)', fontSize: 13, marginTop: 6 }}>Nenhuma venda registrada para este vendedor.</p>
+          )}
           <div className="modalItems">
-            {seller.sales.map((sale) => (
+            {(seller.sales || []).filter(Boolean).map((sale) => (
               <div key={sale.id}>
                 <span>{sale.date}</span>
                 <b>{sale.customer} <small style={{ fontWeight: 400, color: 'var(--muted)' }}>({sale.city})</small></b>
@@ -9728,14 +9913,11 @@ function Payments({ paymentsData = [], paymentsLoading = false, onSelectPayment,
   const [viewMenuOpen, setViewMenuOpen] = useState(false)
   const viewMenuRef = useRef(null)
 
-  const filtered = !search
-    ? paymentsData
-    : paymentsData.filter((p) =>
-        (p.clientName || '').toLowerCase().includes(search.toLowerCase()) ||
-        (p.sellerName || '').toLowerCase().includes(search.toLowerCase()) ||
-        (p.id || '').toLowerCase().includes(search.toLowerCase()) ||
-        (p.paymentMethod || '').toLowerCase().includes(search.toLowerCase())
-      )
+  const filtered = paymentsData.filter((p) => {
+    if (!search) return true
+    const q = search.toLowerCase()
+    return [p.clientName, p.sellerName, p.id, p.orderId, p.paymentMethod, p.paymentDate, p.status, String(p.paymentValue ?? '')].some((f) => f && String(f).toLowerCase().includes(q))
+  })
 
   useEffect(() => {
     if (!viewMenuOpen) return

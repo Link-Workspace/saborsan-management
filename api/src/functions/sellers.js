@@ -107,7 +107,8 @@ app.http('sellers', {
                    INNER JOIN DeliveryOrders dor ON dor.order_id = o.id
                    INNER JOIN Deliveries d ON d.id = dor.delivery_id
                    WHERE d.seller_id = s.id AND d.status = 'Concluída'
-                 ), 0) AS totalOrders
+                 ), 0) AS totalOrders,
+                 ISNULL((SELECT COUNT(*) FROM Deliveries WHERE seller_id = s.id AND status = 'Concluída'), 0) AS totalDeliveries
           FROM Sellers s
           INNER JOIN Users u ON s.userId = u.id
           ORDER BY u.name ASC
@@ -122,6 +123,7 @@ app.http('sellers', {
           meta: Number(s.dailyGoal) || 0,
           total: Number(s.totalVendas) || 0,
           sales: Array(Number(s.totalOrders) || 0).fill(null),
+          deliveriesCount: Number(s.totalDeliveries) || 0,
         }));
         return { jsonBody: { sellers: sellersData } };
       }

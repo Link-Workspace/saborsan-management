@@ -1504,10 +1504,14 @@ app.http('auto-nfe-progress', {
       await sql.connect(sqlConfig);
       await migrateNfeProgressColumns();
 
-      const [cfgRes, logRes, intRes] = await Promise.all([
+      const historyMode = request.query?.get('history') === 'true';
+      const [cfgRes, logRes, intRes, histRes] = await Promise.all([
         sql.query`SELECT nfe_is_running, nfe_current_step, nfe_run_total, nfe_run_done, nfe_run_started_at, nfe_interventions_json FROM AutomationConfig WHERE automation_key='generate_nfe'`.catch(() => ({ recordset: [] })),
         sql.query`SELECT TOP 1 result_message, created_at FROM AutomationRunLog WHERE automation_key='generate_nfe' ORDER BY id DESC`.catch(() => ({ recordset: [] })),
         sql.query`SELECT order_id, error_code, error_message, action_required, created_at FROM NfeInterventions WHERE resolved = 0 ORDER BY created_at DESC`.catch(() => ({ recordset: [] })),
+        historyMode
+          ? sql.query`SELECT TOP 30 result_message, created_at FROM AutomationRunLog WHERE automation_key='generate_nfe' ORDER BY id DESC`.catch(() => ({ recordset: [] }))
+          : Promise.resolve({ recordset: [] }),
       ]);
 
       const row = cfgRes.recordset[0] || {};
@@ -1529,6 +1533,11 @@ app.http('auto-nfe-progress', {
         }));
       }
 
+      const runHistory = histRes.recordset.map((r) => ({
+        message: r.result_message,
+        createdAt: r.created_at,
+      }));
+
       return {
         jsonBody: {
           isRunning: !!row.nfe_is_running,
@@ -1538,6 +1547,7 @@ app.http('auto-nfe-progress', {
           startedAt: row.nfe_run_started_at || null,
           lastRun: lastRun ? { message: lastRun.result_message, createdAt: lastRun.created_at } : null,
           pendingInterventions,
+          ...(historyMode && { runHistory }),
         },
       };
     } catch (err) {
