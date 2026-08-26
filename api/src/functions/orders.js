@@ -39,19 +39,25 @@ app.http('orders', {
       await sql.connect(sqlConfig);
 
       if (request.method === 'GET') {
-        // Ensure soft-delete column exists (one-time migration, safe to repeat)
         await sql.query`
           IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('GestaoOrders') AND name = 'deletedAt')
             ALTER TABLE GestaoOrders ADD deletedAt DATETIME NULL
+        `.catch(() => {});
+        await sql.query`
+          IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('GestaoOrders') AND name = 'balcaoStatus')
+            ALTER TABLE GestaoOrders ADD balcaoStatus NVARCHAR(50) NULL
+        `.catch(() => {});
+        await sql.query`
+          IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('GestaoOrders') AND name = 'balcaoPaymentMethod')
+            ALTER TABLE GestaoOrders ADD balcaoPaymentMethod NVARCHAR(50) NULL
         `.catch(() => {});
 
         const [ordersResult, itemsResult, nfeResult] = await Promise.all([
           sql.query`
             SELECT id, clientName, clientCnpj, clientCity, clientPhone,
-                   status, totalValue, deliveryAt, observations, purchasePurpose, createdAt, deletedAt
+                   status, totalValue, deliveryAt, observations, purchasePurpose, createdAt, deletedAt,
+                   balcaoStatus, balcaoPaymentMethod
             FROM GestaoOrders
-            WHERE deletedAt IS NULL
-               OR id IN (SELECT orderId FROM GestaoFiscalDocuments WHERE status = 'AUTHORIZED')
             ORDER BY createdAt DESC
           `,
           sql.query`
@@ -62,10 +68,10 @@ app.http('orders', {
           sql.query`
             SELECT orderId, focusReference, nfeNumber, nfeSeries, accessKey, protocol, authorizedAt, sentToClientAt, status, errorCode, errorMessage
             FROM GestaoFiscalDocuments
-            WHERE status IN ('AUTHORIZED', 'REJECTED', 'SUBMISSION_FAILED')
+            WHERE status IN ('AUTHORIZED', 'REJECTED', 'SUBMISSION_FAILED', 'PROCESSING', 'SUBMITTING', 'MANUAL_REVIEW')
               AND id IN (
                 SELECT MAX(id) FROM GestaoFiscalDocuments
-                WHERE status IN ('AUTHORIZED', 'REJECTED', 'SUBMISSION_FAILED')
+                WHERE status IN ('AUTHORIZED', 'REJECTED', 'SUBMISSION_FAILED', 'PROCESSING', 'SUBMITTING', 'MANUAL_REVIEW')
                 GROUP BY orderId
               )
           `.catch(() => ({ recordset: [] })),
@@ -109,6 +115,8 @@ app.http('orders', {
             })),
           notes: o.observations || '',
           purchasePurpose: o.purchasePurpose || 'consumo',
+          source: o.status === 'Balcão' ? 'Balcão' : undefined,
+          ...(o.balcaoStatus ? { balcaoData: { balcaoStatus: o.balcaoStatus, paymentMethod: o.balcaoPaymentMethod || null, paymentConfirmedAt: null } } : {}),
           ...(nfeByOrder[o.id] ? {
             nfeData: nfeByOrder[o.id],
             nfeSentAt: nfeByOrder[o.id].sentToClientAt || null,
@@ -120,9 +128,19 @@ app.http('orders', {
 
       if (request.method === 'PATCH') {
         const body = await request.json();
-        const { orderId, status, sentToClient } = body;
+        const { orderId, status, sentToClient, balcaoStatus, paymentMethod } = body;
         if (!orderId) {
           return { status: 400, jsonBody: { error: 'orderId é obrigatório' } };
+        }
+
+        if (balcaoStatus) {
+          await sql.query`
+            UPDATE GestaoOrders
+            SET balcaoStatus = ${balcaoStatus},
+                balcaoPaymentMethod = ${paymentMethod || null},
+                updatedAt = GETUTCDATE()
+            WHERE id = ${orderId}
+          `;
         }
 
         if (status) {
@@ -140,6 +158,30 @@ app.http('orders', {
                 SELECT delivery_id FROM DeliveryOrders WHERE order_id = ${orderId}
               )
             `;
+          }
+
+          if (status === 'Pronto') {
+            const deliveryResult = await sql.query`
+              SELECT d.id FROM Deliveries d
+              INNER JOIN DeliveryOrders dor ON dor.delivery_id = d.id
+              WHERE dor.order_id = ${orderId}
+                AND d.status NOT IN (N'Cancelada', N'Concluída', N'Em rota')
+            `;
+            for (const delivery of deliveryResult.recordset) {
+              const pending = await sql.query`
+                SELECT COUNT(*) AS cnt FROM DeliveryOrders dor
+                INNER JOIN GestaoOrders o ON o.id = dor.order_id
+                WHERE dor.delivery_id = ${delivery.id}
+                  AND o.status NOT IN (N'Pronto', N'Rota', N'Em rota', N'Entregue')
+                  AND o.deletedAt IS NULL
+              `;
+              if (pending.recordset[0].cnt === 0) {
+                await sql.query`
+                  UPDATE Deliveries SET status = N'Carregando', updated_at = GETUTCDATE()
+                  WHERE id = ${delivery.id}
+                `;
+              }
+            }
           }
         }
 
@@ -207,7 +249,9 @@ app.http('orders', {
 
       if (request.method === 'POST') {
         const body = await request.json();
-        const { clientId, clientName, clientCnpj, clientCity, clientPhone, totalValue, observations, items, purchasePurpose } = body;
+        const { clientId, clientName, clientCnpj, clientCity, clientPhone, totalValue, observations, items, purchasePurpose, source, balcaoStatus: initialBalcaoStatus } = body;
+        const isBalcao = source === 'Balcão';
+        const initialStatus = isBalcao ? 'Balcão' : 'Recebido';
 
         if (!clientName || !items || items.length === 0) {
           return { status: 400, jsonBody: { error: 'clientName e items são obrigatórios' } };
@@ -221,7 +265,7 @@ app.http('orders', {
         const newId = `PED-${idResult.recordset[0].nextNum}`;
 
         const insertResult = await sql.query`
-          INSERT INTO GestaoOrders (id, clientId, clientName, clientCnpj, clientCity, clientPhone, status, totalValue, observations, purchasePurpose, createdAt, updatedAt)
+          INSERT INTO GestaoOrders (id, clientId, clientName, clientCnpj, clientCity, clientPhone, status, balcaoStatus, totalValue, observations, purchasePurpose, createdAt, updatedAt)
           OUTPUT INSERTED.createdAt
           VALUES (
             ${newId},
@@ -230,7 +274,8 @@ app.http('orders', {
             ${clientCnpj || null},
             ${clientCity || null},
             ${clientPhone || null},
-            'Recebido',
+            ${initialStatus},
+            ${isBalcao ? (initialBalcaoStatus || 'aguardando_pagamento') : null},
             ${totalValue || 0},
             ${observations || null},
             ${purchasePurpose || null},
@@ -264,7 +309,9 @@ app.http('orders', {
               city: clientCity || '',
               whatsapp: clientPhone || '',
               value: Number(totalValue) || 0,
-              status: 'Recebido',
+              status: initialStatus,
+              source: isBalcao ? 'Balcão' : undefined,
+              ...(isBalcao ? { balcaoData: { balcaoStatus: initialBalcaoStatus || 'aguardando_pagamento', paymentMethod: null, paymentConfirmedAt: null } } : {}),
               priority: 'Normal',
               time: formatTime(new Date(insertResult.recordset[0].createdAt)),
               delivery: 'A confirmar',
@@ -302,21 +349,22 @@ app.http('orders', {
           }
         }
 
-        if (hasAuthorizedNfe) {
-          // Soft delete: keep the order and its fiscal document for fiscal history
-          await sql.query`UPDATE GestaoOrders SET deletedAt = GETUTCDATE() WHERE id = ${orderId}`;
-        } else {
+        // Always soft-delete: preserves the ID so it can't be reused by a new order
+        await sql.query`UPDATE GestaoOrders SET deletedAt = GETUTCDATE() WHERE id = ${orderId}`;
+
+        if (!hasAuthorizedNfe) {
+          await sql.query`DELETE FROM DeliveryOrders WHERE order_id = ${orderId}`;
           await sql.query`DELETE FROM GestaoFiscalDocuments WHERE orderId = ${orderId}`;
-          await sql.query`DELETE FROM GestaoOrders WHERE id = ${orderId}`;
         }
 
-        return { jsonBody: { success: true, softDeleted: hasAuthorizedNfe } };
+        // Remove any pending intervention for this order so stale data doesn't bleed into a new order with the same ID
+        await sql.query`DELETE FROM NfeInterventions WHERE order_id = ${orderId}`.catch(() => {});
+
+        return { jsonBody: { success: true, softDeleted: true } };
       }
     } catch (error) {
       context.error('Erro na função orders:', error);
       return { status: 500, jsonBody: { error: 'Erro interno do servidor' } };
-    } finally {
-      await sql.close();
     }
   },
 });

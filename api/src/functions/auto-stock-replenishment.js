@@ -1,0 +1,436 @@
+'use strict';
+const { app } = require('@azure/functions');
+const sql = require('mssql');
+const { sendWabaTemplateMessage } = require('../linkchat-integration');
+
+const sqlConfig = {
+  server: process.env.SQL_SERVER,
+  database: process.env.SQL_DATABASE,
+  user: process.env.SQL_USER,
+  password: process.env.SQL_PASSWORD,
+  options: { encrypt: true, trustServerCertificate: false },
+};
+
+const SR_CATEGORIES = ['Assados', 'Frutas', 'Salgados', 'Condimentos', 'Legumes', 'Polpa de fruta', 'Doces', 'Pizza', 'Bebidas'];
+
+async function ensureTables() {
+  await sql.query`
+    IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('AutomationConfig') AND name = 'sr_min_stock_qty')
+      ALTER TABLE AutomationConfig ADD sr_min_stock_qty INT NOT NULL DEFAULT 5
+  `.catch(() => {});
+  await sql.query`
+    IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('AutomationConfig') AND name = 'sr_max_purchase_qty')
+      ALTER TABLE AutomationConfig ADD sr_max_purchase_qty INT NOT NULL DEFAULT 50
+  `.catch(() => {});
+  await sql.query`
+    IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('AutomationConfig') AND name = 'sr_notify_times')
+      ALTER TABLE AutomationConfig ADD sr_notify_times NVARCHAR(MAX) NULL
+  `.catch(() => {});
+  await sql.query`
+    IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'StockReplenishmentCategoryBindings')
+    CREATE TABLE StockReplenishmentCategoryBindings (
+      id          INT           IDENTITY(1,1) NOT NULL,
+      supplier_id INT           NOT NULL,
+      category    NVARCHAR(100) NOT NULL,
+      created_at  DATETIME      NOT NULL DEFAULT GETUTCDATE(),
+      CONSTRAINT PK_StockReplenishmentCategoryBindings PRIMARY KEY CLUSTERED (id ASC)
+    )
+  `.catch(() => {});
+  await sql.query`
+    IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'AutomationRunLog')
+    CREATE TABLE AutomationRunLog (
+      id INT PRIMARY KEY IDENTITY,
+      automation_key NVARCHAR(100) NOT NULL,
+      result_message NVARCHAR(500),
+      created_at DATETIME DEFAULT GETUTCDATE()
+    )
+  `.catch(() => {});
+  await sql.query`
+    IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'PurchasePlanningItems')
+    CREATE TABLE PurchasePlanningItems (
+      id            INT           IDENTITY(1,1) NOT NULL,
+      title         NVARCHAR(255) NOT NULL,
+      scheduledDate DATE          NOT NULL,
+      completed     BIT           NOT NULL DEFAULT 0,
+      completedAt   DATETIME2     NULL,
+      notes         NVARCHAR(500) NULL,
+      supplier_purchase_id INT   NULL,
+      createdAt     DATETIME2     NOT NULL DEFAULT GETUTCDATE(),
+      updatedAt     DATETIME2     NOT NULL DEFAULT GETUTCDATE(),
+      CONSTRAINT PK_PurchasePlanningItems PRIMARY KEY CLUSTERED (id ASC)
+    )
+  `.catch(() => {});
+  await sql.query`
+    IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('PurchasePlanningItems') AND name = 'supplier_purchase_id')
+      ALTER TABLE PurchasePlanningItems ADD supplier_purchase_id INT NULL
+  `.catch(() => {});
+  await sql.query`
+    IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('AutomationConfig') AND name = 'sr_waba_template_id')
+      ALTER TABLE AutomationConfig ADD sr_waba_template_id NVARCHAR(200) NULL
+  `.catch(() => {});
+  await sql.query`
+    IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('PurchasePlanningItems') AND name = 'supplier_notified')
+      ALTER TABLE PurchasePlanningItems ADD supplier_notified BIT NOT NULL DEFAULT 0
+  `.catch(() => {});
+  await sql.query`
+    IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'SupplierNotificationLog')
+    CREATE TABLE SupplierNotificationLog (
+      id             INT           IDENTITY(1,1) NOT NULL,
+      supplier_id    INT           NOT NULL,
+      supplier_phone NVARCHAR(30)  NOT NULL,
+      template_id    NVARCHAR(200) NULL,
+      status         NVARCHAR(50)  NOT NULL DEFAULT 'SENT',
+      error_message  NVARCHAR(500) NULL,
+      sent_at        DATETIME      NOT NULL DEFAULT GETUTCDATE(),
+      CONSTRAINT PK_SupplierNotificationLog PRIMARY KEY CLUSTERED (id ASC)
+    )
+  `.catch(() => {});
+}
+
+function normalisePhone(raw) {
+  if (!raw) return null;
+  const digits = raw.replace(/\D/g, '');
+  if (digits.length < 10) return null;
+  if (digits.startsWith('55') && digits.length >= 12) return digits;
+  if (digits.length >= 10) return `55${digits}`;
+  return null;
+}
+
+// Returns true if currentTime (HH:MM) is within toleranceMinutes of any time in notifyTimes
+function isNotifyWindow(currentTime, notifyTimes, toleranceMinutes = 5) {
+  if (!notifyTimes || notifyTimes.length === 0) return true;
+  const [ch, cm] = currentTime.split(':').map(Number);
+  const currentMins = ch * 60 + cm;
+  return notifyTimes.some((t) => {
+    const [th, tm] = t.split(':').map(Number);
+    const notifyMins = th * 60 + tm;
+    return Math.abs(currentMins - notifyMins) <= toleranceMinutes;
+  });
+}
+
+async function setSrProgress(step, isRunning = true) {
+  try {
+    await sql.query`UPDATE AutomationConfig SET sr_is_running=${isRunning?1:0}, sr_current_step=${step}, updated_at=GETUTCDATE() WHERE automation_key='stock_replenishment'`;
+  } catch (_) {}
+}
+
+async function runAutoStockReplenishment(context) {
+  await sql.connect(sqlConfig);
+  await ensureTables();
+
+  const cfgResult = await sql.query`
+    SELECT is_active, sr_min_stock_qty, sr_max_purchase_qty, sr_notify_times,
+           sr_waba_template_id, time_interval_minutes, time_start, time_end
+    FROM AutomationConfig WHERE automation_key = 'stock_replenishment'
+  `.catch(() => ({ recordset: [] }));
+
+  if (!cfgResult.recordset.length || !cfgResult.recordset[0].is_active) {
+    return { skipped: true, reason: 'Automação não está ativa.' };
+  }
+
+  const cfg = cfgResult.recordset[0];
+  const minStockQty = cfg.sr_min_stock_qty ?? 5;
+  const maxPurchaseQty = cfg.sr_max_purchase_qty ?? 50;
+  const srWabaTemplateId = cfg.sr_waba_template_id ?? process.env.SR_WABA_TEMPLATE_ID ?? null;
+  let notifyTimes = [];
+  try { notifyTimes = JSON.parse(cfg.sr_notify_times || '[]'); } catch { notifyTimes = []; }
+
+  // Check time window
+  const now = new Date();
+  const nowBRT = new Date(now.getTime() - 3 * 60 * 60 * 1000);
+  const currentTime = `${String(nowBRT.getUTCHours()).padStart(2, '0')}:${String(nowBRT.getUTCMinutes()).padStart(2, '0')}`;  
+
+  if (cfg.time_start && cfg.time_end) {
+    const overnight = cfg.time_end < cfg.time_start;
+    const inWindow = overnight
+      ? (currentTime >= cfg.time_start || currentTime <= cfg.time_end)
+      : (currentTime >= cfg.time_start && currentTime <= cfg.time_end);
+    if (!inWindow) return { skipped: true, reason: 'Fora do horário configurado.' };
+  }
+
+  // Check if current time matches a configured notify window
+  const intervalMinutes = cfg.time_interval_minutes || 30;
+  const tolerance = Math.max(Math.floor(intervalMinutes / 2), 2);
+  if (!isNotifyWindow(currentTime, notifyTimes, tolerance)) {
+    return { skipped: true, reason: 'Nenhum horário de comunicação programado para agora.' };
+  }
+
+  await setSrProgress('Verificando produtos com estoque baixo...');
+
+  // Load supplier-category bindings
+  const bindingsResult = await sql.query`
+    SELECT b.supplier_id, s.name AS supplier_name, b.category
+    FROM StockReplenishmentCategoryBindings b
+    INNER JOIN Suppliers s ON b.supplier_id = s.id
+  `.catch(() => ({ recordset: [] }));
+
+  const categoryBindingMap = {};
+  for (const row of bindingsResult.recordset) {
+    if (!categoryBindingMap[row.category]) categoryBindingMap[row.category] = [];
+    categoryBindingMap[row.category].push(row.supplier_id);
+  }
+
+  // Find low-stock products
+  const lowStockResult = await sql.query`
+    SELECT id, name, category, availableQuantity
+    FROM Products
+    WHERE active = 1 AND availableQuantity <= ${minStockQty}
+    ORDER BY availableQuantity ASC
+  `;
+
+  const lowStockProducts = lowStockResult.recordset;
+  if (!lowStockProducts.length) {
+    await sql.query`
+      INSERT INTO AutomationRunLog (automation_key, result_message)
+      VALUES ('stock_replenishment', N'Nenhum produto com estoque baixo.')
+    `.catch(() => {});
+    return { skipped: true, reason: 'Nenhum produto com estoque baixo.' };
+  }
+
+  const createdPurchases = [];
+  const skippedProducts = [];
+  const pendingSupplierIds = new Set(); // suppliers with already-existing purchases
+
+  for (const product of lowStockProducts) {
+    await setSrProgress(`Processando produto "${product.name}" (estoque: ${product.availableQuantity})...`);
+    // Skip if any pending/in_progress purchase already exists for this product
+    const existingPurchase = await sql.query`
+      SELECT TOP 1 id, supplierId FROM SupplierPurchases
+      WHERE purchaseName = ${product.name}
+        AND status IN ('pending', 'in_progress')
+    `.catch(() => ({ recordset: [] }));
+
+    if (existingPurchase.recordset.length) {
+      const existingSuppId = existingPurchase.recordset[0].supplierId;
+      if (existingSuppId) pendingSupplierIds.add(existingSuppId);
+      skippedProducts.push({ product: product.name, reason: 'Compra já existe nas últimas 24h' });
+      continue;
+    }
+
+    // Find the last supplier used for this product (AI logic: look at purchase history)
+    const lastPurchaseResult = await sql.query`
+      SELECT TOP 1 supplierId FROM SupplierPurchases
+      WHERE purchaseName = ${product.name}
+      ORDER BY createdAt DESC
+    `.catch(() => ({ recordset: [] }));
+
+    let supplierId = null;
+
+    if (lastPurchaseResult.recordset.length) {
+      // Use last supplier from purchase history
+      supplierId = lastPurchaseResult.recordset[0].supplierId;
+      context?.log(`[auto-stock-replenishment] Produto "${product.name}": usando último fornecedor (id=${supplierId}) do histórico de compras`);
+    } else {
+      // Fall back to category binding
+      const category = product.category || '';
+      const categorySuppliers = categoryBindingMap[category];
+      if (categorySuppliers && categorySuppliers.length > 0) {
+        supplierId = categorySuppliers[0];
+        context?.log(`[auto-stock-replenishment] Produto "${product.name}": sem histórico, usando fornecedor da categoria "${category}" (id=${supplierId})`);
+      }
+    }
+
+    if (!supplierId) {
+      context?.log(`[auto-stock-replenishment] Produto "${product.name}": nenhum fornecedor encontrado (categoria: "${product.category}")`);
+      skippedProducts.push({ product: product.name, reason: `Nenhum fornecedor encontrado para a categoria "${product.category || 'sem categoria'}"` });
+      continue;
+    }
+
+    // If this supplier already has any pending/in-progress purchase (created manually
+    // or with a different purchaseName), just queue notification — don't duplicate.
+    const supplierAlreadyPending = await sql.query`
+      SELECT TOP 1 id FROM SupplierPurchases
+      WHERE supplierId = ${supplierId} AND status IN ('pending', 'in_progress')
+    `.catch(() => ({ recordset: [] }));
+
+    if (supplierAlreadyPending.recordset.length) {
+      context?.log(`[auto-stock-replenishment] Produto "${product.name}": fornecedor id=${supplierId} já tem compra pendente, agendando notificação.`);
+      pendingSupplierIds.add(supplierId);
+      skippedProducts.push({ product: product.name, reason: 'Fornecedor já tem compra pendente em aberto' });
+      continue;
+    }
+
+    const purchaseNotes = `${maxPurchaseQty} unidade(s) — Criado automaticamente pela automação de Reposição de Estoque. Estoque atual: ${product.availableQuantity} unidade(s).`;
+
+    const spInsert = await sql.query`
+      INSERT INTO SupplierPurchases (supplierId, purchaseName, description, quantity, status, notes)
+      OUTPUT INSERTED.id
+      VALUES (${supplierId}, ${product.name}, N'Reposição automática de estoque', ${maxPurchaseQty}, 'pending', ${purchaseNotes})
+    `;
+    const newPurchaseId = spInsert.recordset[0]?.id ?? null;
+
+    // Mirror to PurchasePlanningItems so it appears in "Próximas compras"
+    const todayBRT = new Date(Date.UTC(nowBRT.getUTCFullYear(), nowBRT.getUTCMonth(), nowBRT.getUTCDate()));
+    await sql.query`
+      INSERT INTO PurchasePlanningItems (title, scheduledDate, notes, supplier_purchase_id)
+      VALUES (${product.name}, ${todayBRT}, ${purchaseNotes}, ${newPurchaseId})
+    `.catch(() => {});
+
+    createdPurchases.push({ name: product.name, supplierId });
+    context?.log(`[auto-stock-replenishment] Compra criada: "${product.name}", fornecedor id=${supplierId}, quantidade=${maxPurchaseQty}`);
+  }
+
+  // Send template to all suppliers - show progress
+  if (allSupplierIds.size > 0) {
+    await setSrProgress(`Notificando ${allSupplierIds.size} fornecedor(es)...`);
+  }
+
+  const allSupplierIds = new Set([...createdPurchases.map((p) => p.supplierId), ...pendingSupplierIds]);
+  if (!srWabaTemplateId) {
+    context?.log('[auto-stock-replenishment] Nenhum template WABA configurado — envio de mensagem pulado.');
+  } else if (allSupplierIds.size === 0) {
+    context?.log('[auto-stock-replenishment] Nenhum fornecedor identificado para notificar.');
+  } else {
+    const uniqueSupplierIds = [...allSupplierIds];
+    for (const suppId of uniqueSupplierIds) {
+      // Avoid double-send within the same interval window
+      const recentNotif = await sql.query`
+        SELECT TOP 1 id FROM SupplierNotificationLog
+        WHERE supplier_id = ${suppId} AND status = 'SENT'
+          AND sent_at > DATEADD(MINUTE, -${intervalMinutes}, GETUTCDATE())
+      `.catch(() => ({ recordset: [] }));
+      if (recentNotif.recordset.length) {
+        context?.log(`[auto-stock-replenishment] Fornecedor id=${suppId} já notificado nos últimos ${intervalMinutes} min, pulando.`);
+        continue;
+      }
+
+      const supplierRow = await sql.query`
+        SELECT contactPhone FROM Suppliers WHERE id = ${suppId}
+      `.catch(() => ({ recordset: [] }));
+      const rawPhone = supplierRow.recordset[0]?.contactPhone;
+      const phone = normalisePhone(rawPhone);
+      if (!phone) {
+        context?.log(`[auto-stock-replenishment] Fornecedor id=${suppId} sem telefone válido, pulando.`);
+        continue;
+      }
+
+      const result = await sendWabaTemplateMessage(phone, srWabaTemplateId, 'pt_BR');
+      if (result.success) {
+        await sql.query`
+          INSERT INTO SupplierNotificationLog (supplier_id, supplier_phone, template_id, status)
+          VALUES (${suppId}, ${phone}, ${srWabaTemplateId}, 'SENT')
+        `.catch(() => {});
+        // Mark all planning items linked to this supplier's pending purchase as notified
+        await sql.query`
+          UPDATE ppi SET ppi.supplier_notified = 1
+          FROM PurchasePlanningItems ppi
+          INNER JOIN SupplierPurchases sp ON ppi.supplier_purchase_id = sp.id
+          WHERE sp.supplierId = ${suppId} AND ppi.completed = 0
+        `.catch(() => {});
+        context?.log(`[auto-stock-replenishment] Template enviado para fornecedor id=${suppId} (${phone})`);
+      } else {
+        await sql.query`
+          INSERT INTO SupplierNotificationLog (supplier_id, supplier_phone, template_id, status, error_message)
+          VALUES (${suppId}, ${phone}, ${srWabaTemplateId}, 'FAILED', ${result.error ?? ''})
+        `.catch(() => {});
+        context?.log(`[auto-stock-replenishment] Falha ao enviar para fornecedor id=${suppId}: ${result.error}`);
+      }
+    }
+  }
+
+  const resultMessage = `${createdPurchases.length} compra(s) criada(s) automaticamente. ${skippedProducts.length} produto(s) ignorado(s).`;
+  context?.log(`[auto-stock-replenishment] ${resultMessage}`);
+
+  await sql.query`
+    INSERT INTO AutomationRunLog (automation_key, result_message)
+    VALUES ('stock_replenishment', ${resultMessage})
+  `.catch(() => {});
+  await setSrProgress(resultMessage, false);
+
+  return {
+    success: true,
+    created: createdPurchases.length,
+    createdProducts: createdPurchases.map((p) => p.name),
+    skipped: skippedProducts.length,
+    skippedProducts,
+    message: resultMessage,
+  };
+}
+
+// ── HTTP trigger (manual call) ────────────────────────────────────────────────
+
+app.http('auto-stock-replenishment', {
+  methods: ['GET', 'POST'],
+  authLevel: 'anonymous',
+  handler: async (request, context) => {
+    try {
+      await sql.connect(sqlConfig);
+
+      if (request.method === 'GET') {
+        const cfgResult = await sql.query`
+          SELECT is_active, updated_at FROM AutomationConfig WHERE automation_key = 'stock_replenishment'
+        `.catch(() => ({ recordset: [] }));
+
+        const lastRun = await sql.query`
+          SELECT TOP 1 created_at, result_message FROM AutomationRunLog
+          WHERE automation_key = 'stock_replenishment'
+          ORDER BY id DESC
+        `.catch(() => ({ recordset: [] }));
+
+        return {
+          jsonBody: {
+            isActive: cfgResult.recordset[0]?.is_active ?? false,
+            lastRun: lastRun.recordset[0] || null,
+          },
+        };
+      }
+
+      const result = await runAutoStockReplenishment(context);
+      return { jsonBody: result };
+    } catch (err) {
+      context.error('[auto-stock-replenishment] Erro:', err);
+      return { status: 500, jsonBody: { error: err.message } };
+    }
+  },
+});
+
+// ── Timer trigger — fires every minute, runs when interval has elapsed ────────
+
+app.timer('autoStockReplenishmentTimer', {
+  schedule: '0 * * * * *',
+  handler: async (myTimer, context) => {
+    try {
+      await sql.connect(sqlConfig);
+
+      const cfgResult = await sql.query`
+        SELECT is_active, time_interval_minutes, sr_notify_times
+        FROM AutomationConfig WHERE automation_key = 'stock_replenishment'
+      `.catch(() => ({ recordset: [] }));
+
+      if (!cfgResult.recordset.length || !cfgResult.recordset[0].is_active) return;
+
+      const cfg = cfgResult.recordset[0];
+      const intervalMinutes = cfg.time_interval_minutes || 30;
+
+      // When notify times are configured, silently skip if we are outside every window.
+      // This prevents the "Nenhum horário" message from flooding the log every minute.
+      let notifyTimes = [];
+      try { notifyTimes = JSON.parse(cfg.sr_notify_times || '[]'); } catch { notifyTimes = []; }
+
+      if (notifyTimes.length > 0) {
+        const now = new Date();
+        const nowBRT = new Date(now.getTime() - 3 * 60 * 60 * 1000);
+        const currentTime = `${String(nowBRT.getUTCHours()).padStart(2, '0')}:${String(nowBRT.getUTCMinutes()).padStart(2, '0')}`;
+        const tolerance = Math.max(Math.floor(intervalMinutes / 2), 2);
+        if (!isNotifyWindow(currentTime, notifyTimes, tolerance)) return;
+      }
+
+      const lastRunResult = await sql.query`
+        SELECT TOP 1 created_at FROM AutomationRunLog
+        WHERE automation_key = 'stock_replenishment'
+        ORDER BY id DESC
+      `.catch(() => ({ recordset: [] }));
+
+      if (lastRunResult.recordset.length) {
+        const lastRun = new Date(lastRunResult.recordset[0].created_at);
+        const minutesSinceLastRun = (Date.now() - lastRun.getTime()) / 60000;
+        if (minutesSinceLastRun < intervalMinutes) return;
+      }
+
+      const result = await runAutoStockReplenishment(context);
+      context.log('[auto-stock-replenishment] timer:', result.message || result.reason || JSON.stringify(result));
+    } catch (err) {
+      context.error('[auto-stock-replenishment] Erro no timer:', err);
+    }
+  },
+});

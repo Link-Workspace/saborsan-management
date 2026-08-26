@@ -162,8 +162,6 @@ app.http('fiscal-config', {
     } catch (err) {
       context.error('fiscal-config error:', err);
       return { status: 500, jsonBody: { error: 'Erro ao processar configuração fiscal.' } };
-    } finally {
-      try { await sql.close(); } catch (_) {}
     }
   },
 });

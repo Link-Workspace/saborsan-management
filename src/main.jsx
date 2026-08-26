@@ -58,6 +58,10 @@ import {
   Wand2,
   Database,
   ImageOff,
+  Printer,
+  AlertCircle,
+  Banknote,
+  QrCode,
 } from 'lucide-react'
 import './styles.css'
 
@@ -333,7 +337,6 @@ const navItems = [
   { id: 'entregas', label: 'Entregas', icon: Truck },
   { id: 'clientes', label: 'Clientes', icon: Users },
   { id: 'pagamentos', label: 'Pagamentos', icon: CreditCard },
-  { id: 'financeiro', label: 'Financeiro', icon: Wallet },
   { id: 'relatorios', label: 'Relatórios', icon: BarChart3 },
   { id: 'automacao', label: 'Automação', icon: Bot },
   { id: 'configuracoes', label: 'Configurações', icon: Settings2 },
@@ -341,8 +344,8 @@ const navItems = [
 
 const statusClass = (status) => {
   const s = status.toLowerCase()
-  if (s.includes('recebido') || s.includes('aguardando') || s.includes('preparo') || s.includes('pendente')) return 'warning'
-  if (s.includes('separação') || s.includes('rota') || s.includes('carregando') || s.includes('parcial')) return 'info'
+  if (s.includes('recebido') || s.includes('aguardando') || s.includes('preparo') || s.includes('pendente') || s.includes('reativação')) return 'warning'
+  if (s.includes('separação') || s.includes('rota') || s.includes('carregando') || s.includes('parcial') || s.includes('balcão')) return 'info'
   if (s.includes('entregue') || s.includes('emitida') || s.includes('ativo') || s.includes('vip') || s.includes('pronto') || s.includes('pago')) return 'success'
   if (s.includes('inativo') || s.includes('atenção') || s.includes('reativar') || s.includes('baixo') || s.includes('erro') || s.includes('rejeitad') || s.includes('atrasado') || s.includes('cancelado') || s.includes('removido')) return 'danger'
   return 'neutral'
@@ -403,6 +406,7 @@ function App() {
   const [removeConfirmOrder, setRemoveConfirmOrder] = useState(null)
   const [reactivateConfirmOrder, setReactivateConfirmOrder] = useState(null)
   const [editOrder, setEditOrder] = useState(null)
+  const [balcaoPaymentOrder, setBalcaoPaymentOrder] = useState(null)
   const [removeConfirmProduct, setRemoveConfirmProduct] = useState(null)
   const [editProduct, setEditProduct] = useState(null)
   const [stockRefreshKey, setStockRefreshKey] = useState(0)
@@ -426,6 +430,24 @@ function App() {
   const [apiProductsState, setApiProductsState] = useState([])
   const [bgImport, setBgImport] = useState(null)
   const [bgImportPanelOpen, setBgImportPanelOpen] = useState(false)
+  const [bgNfe, setBgNfe] = useState(null)
+  const [bgNfePanelOpen, setBgNfePanelOpen] = useState(false)
+  const bgNfeIntervalRef = useRef(null)
+  const prevBgNfeStatusRef = useRef(null)
+  const [bgDelivery, setBgDelivery] = useState(null)
+  const [bgDeliveryPanelOpen, setBgDeliveryPanelOpen] = useState(false)
+  const bgDeliveryIntervalRef = useRef(null)
+  const [bgStockReplenishment, setBgStockReplenishment] = useState(null)
+  const [bgStockReplenishmentPanelOpen, setBgStockReplenishmentPanelOpen] = useState(false)
+  const bgStockReplenishmentIntervalRef = useRef(null)
+  const [bgClientReactivation, setBgClientReactivation] = useState(null)
+  const [bgClientReactivationPanelOpen, setBgClientReactivationPanelOpen] = useState(false)
+  const bgClientReactivationIntervalRef = useRef(null)
+  const [receiveOrdersActive, setReceiveOrdersActive] = useState(false)
+  const [generateNfeActive, setGenerateNfeActive] = useState(false)
+  const [stockReplenishmentActive, setStockReplenishmentActive] = useState(false)
+  const [clientReactivationActive, setClientReactivationActive] = useState(false)
+  const [crInactiveDays, setCrInactiveDays] = useState(30)
 
   const [systemNotifications, setSystemNotifications] = useState([])
   const [notifSettings, setNotifSettings] = useState(() => {
@@ -468,7 +490,26 @@ function App() {
     setOrdersLoading(true)
     fetch(`${API_URL}/api/orders`)
       .then((r) => r.json())
-      .then((data) => { if (data.orders) setOrders(data.orders) })
+      .then((data) => {
+        if (data.orders) {
+          setOrders(data.orders)
+          // Auto-resolve any NF-e documents still stuck in processing state
+          data.orders
+            .filter((o) => o.nfeData?.reference && (o.nfeData.nfeStatus === 'PROCESSING' || o.nfeData.nfeStatus === 'SUBMITTING' || o.nfeData.nfeStatus === 'MANUAL_REVIEW'))
+            .forEach((o) => {
+              fetch(`${API_URL}/api/emit-nfe?ref=${encodeURIComponent(o.nfeData.reference)}`)
+                .then((r) => r.json())
+                .then((statusData) => {
+                  if (statusData.status === 'AUTHORIZED') {
+                    updateOrderStatus(o.id, o.status, { nfeData: { ...statusData, reference: o.nfeData.reference, nfeStatus: 'AUTHORIZED' } })
+                  } else if (statusData.status === 'REJECTED' || statusData.status === 'SUBMISSION_FAILED') {
+                    updateOrderStatus(o.id, o.status, { nfeData: { nfeStatus: statusData.status, errorCode: statusData.errorCode || null, errorMessage: statusData.errorMessage || null, reference: o.nfeData.reference } })
+                  }
+                })
+                .catch(() => {})
+            })
+        }
+      })
       .catch(() => {})
       .finally(() => setOrdersLoading(false))
   }
@@ -491,7 +532,25 @@ function App() {
     setClientsLoading(true)
     fetch(`${API_URL}/api/clients`)
       .then((r) => r.json())
-      .then((data) => { if (data.clients) setClientsState(data.clients) })
+      .then((data) => {
+        if (data.clients) {
+          setClientsState(data.clients)
+          data.clients
+            .filter((c) => c.daysSinceLastPurchase != null && c.daysSinceLastPurchase >= 20)
+            .forEach((c) => {
+              const key = `notif_reativar_${c.id}`
+              if (!sessionStorage.getItem(key)) {
+                sessionStorage.setItem(key, '1')
+                addNotif('notifClients', {
+                  icon: Users,
+                  type: 'warning',
+                  title: 'Cliente sem compra há mais de 20 dias',
+                  text: `${c.establishmentName} não compra há ${c.daysSinceLastPurchase} dias.`,
+                })
+              }
+            })
+        }
+      })
       .catch(() => {})
       .finally(() => setClientsLoading(false))
   }
@@ -518,6 +577,140 @@ function App() {
 
   useEffect(() => { fetchOrders() }, [])
   useEffect(() => { fetchDeliveries() }, [])
+  useEffect(() => {
+    fetch(`${API_URL}/api/automation-config?key=receive_orders`)
+      .then((r) => r.json())
+      .then((data) => { setReceiveOrdersActive(!!(data?.config?.isActive)) })
+      .catch((err) => { console.error('Falha ao carregar status da automação:', err) })
+  }, [])
+  useEffect(() => {
+    fetch(`${API_URL}/api/automation-config?key=generate_nfe`)
+      .then((r) => r.json())
+      .then((data) => { setGenerateNfeActive(!!(data?.config?.isActive)) })
+      .catch(() => {})
+  }, [])
+  useEffect(() => {
+    fetch(`${API_URL}/api/automation-config?key=stock_replenishment`)
+      .then((r) => r.json())
+      .then((data) => { setStockReplenishmentActive(!!(data?.config?.isActive)) })
+      .catch(() => {})
+  }, [])
+  useEffect(() => {
+    fetch(`${API_URL}/api/automation-config?key=client_reactivation`)
+      .then((r) => r.json())
+      .then((data) => {
+        setClientReactivationActive(!!(data?.config?.isActive))
+        if (data?.config?.crInactiveDays != null) setCrInactiveDays(data.config.crInactiveDays)
+      })
+      .catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    if (!generateNfeActive) {
+      if (bgNfeIntervalRef.current) { clearInterval(bgNfeIntervalRef.current); bgNfeIntervalRef.current = null; }
+      return;
+    }
+    const poll = () => {
+      fetch(`${API_URL}/api/auto-nfe-progress`)
+        .then((r) => r.json())
+        .then((data) => {
+          const interventions = data.pendingInterventions || [];
+          if (data.isRunning) {
+            setBgNfe({ status: 'running', step: data.currentStep || 'Processando...', total: data.total, done: data.done, startedAt: data.startedAt, interventions: [] });
+          } else {
+            setBgNfe((prev) => {
+              if (prev?.status === 'running') {
+                return { status: 'done', step: data.currentStep || data.lastRun?.message || 'Concluído', total: data.total, done: data.done, message: data.lastRun?.message, interventions };
+              }
+              if (!prev && interventions.length > 0) {
+                return { status: 'done', step: data.lastRun?.message || 'Verificação necessária', message: data.lastRun?.message, interventions };
+              }
+              if (prev?.status === 'done') {
+                return { ...prev, interventions };
+              }
+              return prev;
+            });
+          }
+        })
+        .catch(() => {});
+    };
+    bgNfeIntervalRef.current = setInterval(poll, 3000);
+    poll();
+    return () => { if (bgNfeIntervalRef.current) { clearInterval(bgNfeIntervalRef.current); bgNfeIntervalRef.current = null; } };
+  }, [generateNfeActive])
+
+  useEffect(() => {
+    if (!receiveOrdersActive) {
+      if (bgDeliveryIntervalRef.current) { clearInterval(bgDeliveryIntervalRef.current); bgDeliveryIntervalRef.current = null; }
+      setBgDelivery(null);
+      return;
+    }
+    const poll = () => {
+      fetch(`${API_URL}/api/auto-delivery-progress`)
+        .then((r) => r.json())
+        .then((data) => {
+          setBgDelivery({ isRunning: !!data.isRunning, step: data.currentStep || data.lastRun?.message || null, lastMessage: data.lastRun?.message || null });
+        })
+        .catch(() => {});
+    };
+    bgDeliveryIntervalRef.current = setInterval(poll, 3000);
+    poll();
+    return () => { if (bgDeliveryIntervalRef.current) { clearInterval(bgDeliveryIntervalRef.current); bgDeliveryIntervalRef.current = null; } };
+  }, [receiveOrdersActive])
+
+  useEffect(() => {
+    if (!stockReplenishmentActive) {
+      if (bgStockReplenishmentIntervalRef.current) { clearInterval(bgStockReplenishmentIntervalRef.current); bgStockReplenishmentIntervalRef.current = null; }
+      setBgStockReplenishment(null);
+      return;
+    }
+    const poll = () => {
+      fetch(`${API_URL}/api/auto-stock-replenishment-progress`)
+        .then((r) => r.json())
+        .then((data) => {
+          setBgStockReplenishment({ isRunning: !!data.isRunning, step: data.currentStep || data.lastRun?.message || null, lastMessage: data.lastRun?.message || null });
+        })
+        .catch(() => {});
+    };
+    bgStockReplenishmentIntervalRef.current = setInterval(poll, 3000);
+    poll();
+    return () => { if (bgStockReplenishmentIntervalRef.current) { clearInterval(bgStockReplenishmentIntervalRef.current); bgStockReplenishmentIntervalRef.current = null; } };
+  }, [stockReplenishmentActive])
+
+  useEffect(() => {
+    if (!clientReactivationActive) {
+      if (bgClientReactivationIntervalRef.current) { clearInterval(bgClientReactivationIntervalRef.current); bgClientReactivationIntervalRef.current = null; }
+      setBgClientReactivation(null);
+      return;
+    }
+    const poll = () => {
+      fetch(`${API_URL}/api/auto-client-reactivation-progress`)
+        .then((r) => r.json())
+        .then((data) => {
+          setBgClientReactivation({ isRunning: !!data.isRunning, step: data.currentStep || data.lastRun?.message || null, lastMessage: data.lastRun?.message || null });
+        })
+        .catch(() => {});
+    };
+    bgClientReactivationIntervalRef.current = setInterval(poll, 3000);
+    poll();
+    return () => { if (bgClientReactivationIntervalRef.current) { clearInterval(bgClientReactivationIntervalRef.current); bgClientReactivationIntervalRef.current = null; } };
+  }, [clientReactivationActive])
+
+  useEffect(() => {
+    const prev = prevBgNfeStatusRef.current;
+    prevBgNfeStatusRef.current = bgNfe?.status ?? null;
+    if (prev === 'running' && bgNfe?.status === 'done') {
+      const hasInterventions = (bgNfe.interventions?.length ?? 0) > 0;
+      addNotif('notifFiscalDocuments', {
+        icon: hasInterventions ? AlertTriangle : Settings2,
+        type: hasInterventions ? 'warning' : 'default',
+        title: hasInterventions ? `Automação: ${bgNfe.interventions.length} intervenção(ões) necessária(s)` : 'Automação de NF-e concluída',
+        text: bgNfe.message || 'As notas fiscais foram processadas.',
+      });
+      fetchOrders();
+      setBgNfePanelOpen(true);
+    }
+  }, [bgNfe?.status])
   useEffect(() => { fetchVehicles() }, [])
   useEffect(() => { fetchClients() }, [])
   useEffect(() => { fetchPayments() }, [])
@@ -545,12 +738,10 @@ function App() {
 
   const totals = useMemo(() => {
     const activeOrders = orders.filter((o) => !o.isDeleted)
-    const today = activeOrders.filter((o) => o.time !== 'Ontem')
     return {
       revenue: activeOrders.reduce((sum, item) => sum + item.value, 0),
-      todayCount: today.length,
-      pending: activeOrders.filter((o) => !['Entregue', 'Cancelado'].includes(o.status)).length,
-      lowStock: products.filter((p) => p.stock <= p.min).length,
+      todayCount: activeOrders.filter((o) => /^\d{2}:\d{2}$/.test(o.time)).length,
+      pending: activeOrders.filter((o) => o.status === 'Recebido' && !/^\d{2}:\d{2}$/.test(o.time)).length,
     }
   }, [orders])
 
@@ -622,7 +813,19 @@ function App() {
     }
 
     if (status === 'Pronto') {
-      addNotif('notifDeliveries', { icon: CheckCircle2, title: 'Pedidos prontos para rota', text: `Os pedidos foram confirmados como prontos. Nota fiscal gerada com sucesso.` })
+      const linkedDelivery = deliveriesState.find((d) => d.orderIds?.includes(id))
+      if (linkedDelivery) {
+        const updatedOrders = orders.map((item) => item.id === id ? { ...item, status } : item)
+        const allReady = linkedDelivery.orderIds.every((oid) => {
+          const o = updatedOrders.find((x) => x.id === oid)
+          return o && ['Pronto', 'Rota', 'Em rota', 'Entregue'].includes(o.status)
+        })
+        if (allReady) {
+          setDeliveriesState((prev) => prev.map((d) => d.id === linkedDelivery.id ? { ...d, status: 'Carregando', progress: 25 } : d))
+          setSelectedDelivery((d) => d?.id === linkedDelivery.id ? { ...d, status: 'Carregando', progress: 25 } : d)
+        }
+      }
+      addNotif('notifDeliveries', { icon: CheckCircle2, title: 'Pedidos prontos para rota', text: `Os pedidos foram confirmados como prontos.` })
     }
 
     notify(`Pedido ${id} atualizado para ${status}.`)
@@ -676,6 +879,11 @@ function App() {
     setStockRefreshKey((k) => k + 1)
     notify(`Pedido ${order.id} criado com sucesso!`)
     addNotif('notifOrders', { icon: ShoppingCart, title: 'Novo pedido recebido', text: `Pedido ${order.id} de ${order.customer} no valor de ${money(order.value)} aguarda separação.` })
+    setClientsState((prev) => prev.map((c) =>
+      c.establishmentName === order.customer
+        ? { ...c, daysSinceLastPurchase: 0, lastPurchase: 'Hoje' }
+        : c
+    ))
   }
 
   const openGerarNota = (order) => {
@@ -730,6 +938,22 @@ function App() {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ orderId: id, reactivate: true }),
+    }).catch(() => {})
+  }
+
+  const confirmBalcaoPayment = (orderId, paymentMethod) => {
+    const confirmedAt = new Date().toISOString()
+    setOrders((items) => items.map((item) =>
+      item.id === orderId
+        ? { ...item, balcaoData: { ...(item.balcaoData || {}), balcaoStatus: 'pago', paymentMethod, paymentConfirmedAt: confirmedAt } }
+        : item
+    ))
+    setBalcaoPaymentOrder(null)
+    notify(`Pagamento confirmado para pedido ${orderId}.`)
+    fetch(`${API_URL}/api/orders`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ orderId, balcaoStatus: 'pago', paymentMethod }),
     }).catch(() => {})
   }
 
@@ -788,7 +1012,7 @@ function App() {
             <span className="topKicker">Saborsan Distribuidora</span>
             <h1>{title}</h1>
           </div>
-          <div className="searchBox topbarSearch"><Search size={17} /><input placeholder={{ pedidos: 'Buscar pedidos, clientes...', estoque: 'Buscar produtos', notas: 'Buscar notas fiscais...', vendedores: 'Buscar vendedores...', fornecedores: 'Buscar fornecedores...', clientes: 'Buscar clientes...', pagamentos: 'Buscar pagamentos...' }[active] || 'Buscar no painel...'} value={topbarSearch} onChange={(e) => setTopbarSearch(e.target.value)} /></div>
+          {active !== 'automacao' && active !== 'relatorios' && active !== 'dashboard' && <div className="searchBox topbarSearch"><Search size={17} /><input placeholder={{ pedidos: 'Buscar pedidos, clientes...', estoque: 'Buscar produtos', notas: 'Buscar notas fiscais...', vendedores: 'Buscar vendedores...', fornecedores: 'Buscar fornecedores...', clientes: 'Buscar clientes...', pagamentos: 'Buscar pagamentos...' }[active] || 'Buscar no painel...'} value={topbarSearch} onChange={(e) => setTopbarSearch(e.target.value)} /></div>}
           <div className="topActions">
             {bgImport && (
               <button
@@ -799,6 +1023,32 @@ function App() {
                 <PackageCheck size={19} />
               </button>
             )}
+            {(() => {
+              const activeBtns = [
+                receiveOrdersActive && { key: 'delivery', label: 'Criar Entregas', isRunning: !!bgDelivery?.isRunning, onClick: () => setBgDeliveryPanelOpen(true) },
+                generateNfeActive && { key: 'nfe', label: 'Gerar Nota Fiscal', isRunning: bgNfe?.status === 'running', badge: (bgNfe?.interventions?.length ?? 0) > 0 ? bgNfe.interventions.length : null, onClick: () => setBgNfePanelOpen(true) },
+                stockReplenishmentActive && { key: 'sr', label: 'Reposição de Estoque', isRunning: !!bgStockReplenishment?.isRunning, onClick: () => setBgStockReplenishmentPanelOpen(true) },
+                clientReactivationActive && { key: 'cr', label: 'Acompanhar Clientes Parados', isRunning: !!bgClientReactivation?.isRunning, onClick: () => setBgClientReactivationPanelOpen(true) },
+              ].filter(Boolean)
+              if (!activeBtns.length) return null
+              return (
+                <div className="automationStatusGroup">
+                  {activeBtns.map((btn, idx) => (
+                    <React.Fragment key={btn.key}>
+                      {idx > 0 && <span className="automationBtnConnector" />}
+                      <button
+                        className={`automationStatusBtn${btn.isRunning ? ' automationStatusRunning' : ''}`}
+                        onClick={btn.onClick}
+                        title={btn.label}
+                      >
+                        <Bot size={19} />
+                        {btn.badge != null && <span className="automationStatusBadge">{btn.badge}</span>}
+                      </button>
+                    </React.Fragment>
+                  ))}
+                </div>
+              )
+            })()}
             <button className="iconButton" onClick={() => setNotifOpen(!notifOpen)}><Bell size={19} />{systemNotifications.length > 0 && <span>{systemNotifications.length}</span>}</button>
           </div>
         </header>
@@ -809,20 +1059,19 @@ function App() {
           ))}
         </section>
 
-        {active === 'dashboard' && <Dashboard totals={totals} orders={orders} aiEnabled={aiEnabled} setActive={setActive} />}
-        {active === 'pedidos' && <Orders orders={orders} ordersLoading={ordersLoading} onSelect={setSelectedOrder} updateOrderStatus={updateOrderStatus} createInvoice={createInvoice} onGerarNota={openGerarNota} onNewOrder={() => setNewOrderOpen(true)} onVerNota={setVerNotaOrder} search={topbarSearch} />}
+        {active === 'dashboard' && <Dashboard totals={totals} orders={orders} products={apiProductsState} deliveries={deliveriesState} receiveOrdersActive={receiveOrdersActive} generateNfeActive={generateNfeActive} stockReplenishmentActive={stockReplenishmentActive} clientReactivationActive={clientReactivationActive} setActive={setActive} />}
+        {active === 'pedidos' && <Orders orders={orders} ordersLoading={ordersLoading} onSelect={setSelectedOrder} updateOrderStatus={updateOrderStatus} createInvoice={createInvoice} onGerarNota={openGerarNota} onNewOrder={() => setNewOrderOpen(true)} onVerNota={setVerNotaOrder} onPayment={(order) => { const client = clientsState.find(c => c.establishmentName === order.customer); setBalcaoPaymentOrder({ ...order, cpf: client?.cpf || order.cpf || '' }) }} search={topbarSearch} receiveOrdersActive={receiveOrdersActive} generateNfeActive={generateNfeActive} />}
         {active === 'vendedores' && <Sellers search={topbarSearch} addNotif={addNotif} />}
-        {active === 'notas' && <Invoices orders={orders} onGerarNota={openGerarNota} onVerNota={setVerNotaOrder} search={topbarSearch} />}
+        {active === 'notas' && <Invoices orders={orders} onGerarNota={openGerarNota} onVerNota={setVerNotaOrder} search={topbarSearch} generateNfeActive={generateNfeActive} />}
         {active === 'estoque' && <Stock onProduct={setSelectedProduct} refreshKey={stockRefreshKey} search={topbarSearch} addNotif={addNotif} bgImport={bgImport} onStartBgAnalysis={startBackgroundAnalysis} onClearBgImport={() => setBgImport(null)} />}
         {active === 'fornecedores' && <Suppliers onMessage={setSupplierModal} search={topbarSearch} addNotif={addNotif} />}
-        {active === 'compras' && <Purchases notify={notify} addNotif={addNotif} />}
-        {active === 'entregas' && <Deliveries deliveries={deliveriesState} onNewDelivery={() => setNewDeliveryOpen(true)} onSelect={(d) => { setSelectedDelivery(d); fetchDeliveries() }} onOpenVehicles={() => setVehiclesOpen(true)} />}
-        {active === 'clientes' && <Clients clientsData={clientsState} clientsLoading={clientsLoading} onNewClient={() => setNewClientOpen(true)} onSelectClient={setSelectedClient} search={topbarSearch} />}
+        {active === 'compras' && <Purchases notify={notify} addNotif={addNotif} stockReplenishmentActive={stockReplenishmentActive} search={topbarSearch} />}
+        {active === 'entregas' && <Deliveries deliveries={deliveriesState} onNewDelivery={() => setNewDeliveryOpen(true)} onSelect={(d) => { setSelectedDelivery(d); fetchDeliveries() }} onOpenVehicles={() => setVehiclesOpen(true)} search={topbarSearch} />}
+        {active === 'clientes' && <Clients clientsData={clientsState} clientsLoading={clientsLoading} onNewClient={() => setNewClientOpen(true)} onSelectClient={setSelectedClient} search={topbarSearch} clientReactivationActive={clientReactivationActive} crInactiveDays={crInactiveDays} />}
         {active === 'pagamentos' && <Payments paymentsData={paymentsState} paymentsLoading={paymentsLoading} onSelectPayment={setSelectedPayment} onNewPayment={() => setNewPaymentOpen(true)} search={topbarSearch} />}
-        {active === 'financeiro' && <Finance />}
-        {active === 'relatorios' && <Reports />}
-        {active === 'automacao' && <Automation aiEnabled={aiEnabled} setAiEnabled={setAiEnabled} notify={notify} />}
-        {active === 'configuracoes' && <Settings notify={notify} onNotifSettingChange={(key, val) => setNotifSettings((p) => ({ ...p, [key]: val }))} />}
+        {active === 'relatorios' && <Reports orders={orders} deliveries={deliveriesState} payments={paymentsState} clients={clientsState} />}
+        {active === 'automacao' && <Automation aiEnabled={aiEnabled} setAiEnabled={setAiEnabled} notify={notify} addNotif={addNotif} receiveOrdersActive={receiveOrdersActive} setReceiveOrdersActive={setReceiveOrdersActive} generateNfeActive={generateNfeActive} setGenerateNfeActive={setGenerateNfeActive} stockReplenishmentActive={stockReplenishmentActive} setStockReplenishmentActive={setStockReplenishmentActive} clientReactivationActive={clientReactivationActive} setClientReactivationActive={setClientReactivationActive} />}
+        {active === 'configuracoes' && <Settings notify={notify} onNotifSettingChange={(key, val) => setNotifSettings((p) => ({ ...p, [key]: val }))} search={topbarSearch} />}
       </main>
 
       {selectedPayment && <PaymentDetailModal payment={selectedPayment} onClose={() => setSelectedPayment(null)} />}
@@ -830,6 +1079,7 @@ function App() {
       {selectedProduct && <ProductModal product={selectedProduct} onClose={() => setSelectedProduct(null)} onRemove={() => setRemoveConfirmProduct(selectedProduct)} onEdit={() => { setEditProduct(selectedProduct); setSelectedProduct(null) }} />}
       {supplierModal && <SupplierModal supplier={supplierModal} onClose={() => setSupplierModal(null)} notify={notify} />}
       {notaFiscalOrder && <NotaFiscalModal order={notaFiscalOrder} onClose={() => setNotaFiscalOrder(null)} updateOrderStatus={updateOrderStatus} notify={notify} addNotif={addNotif} />}
+      {balcaoPaymentOrder && <BalcaoPaymentModal order={balcaoPaymentOrder} onClose={() => setBalcaoPaymentOrder(null)} onConfirm={(method) => confirmBalcaoPayment(balcaoPaymentOrder.id, method)} />}
       {verNotaOrder && <VerNotaModal order={verNotaOrder} onClose={() => setVerNotaOrder(null)} onSendToClient={sendNfeToClient} onGerarNota={(o) => { setVerNotaOrder(null); setNotaFiscalOrder(o) }} updateOrderStatus={updateOrderStatus} />}
       {notifOpen && (
         <NotifPanel
@@ -852,13 +1102,62 @@ function App() {
           onClearBgImport={() => { setBgImport(null); setBgImportPanelOpen(false) }}
         />
       )}
+      {bgNfePanelOpen && (bgNfe
+        ? (
+          <BgNfePanel
+            bgNfe={bgNfe}
+            onClose={() => setBgNfePanelOpen(false)}
+            onDismiss={() => {
+              if ((bgNfe.interventions?.length ?? 0) === 0) {
+                setBgNfe(null);
+              }
+              setBgNfePanelOpen(false);
+            }}
+          />
+        ) : (
+          <AutoStatusPanel
+            title="Gerar Nota Fiscal"
+            isRunning={false}
+            step={null}
+            lastMessage={null}
+            onClose={() => setBgNfePanelOpen(false)}
+          />
+        )
+      )}
+      {bgDeliveryPanelOpen && (
+        <AutoStatusPanel
+          title="Criar Entregas"
+          isRunning={!!bgDelivery?.isRunning}
+          step={bgDelivery?.step}
+          lastMessage={bgDelivery?.lastMessage}
+          onClose={() => setBgDeliveryPanelOpen(false)}
+        />
+      )}
+      {bgStockReplenishmentPanelOpen && (
+        <AutoStatusPanel
+          title="Reposição de Estoque"
+          isRunning={!!bgStockReplenishment?.isRunning}
+          step={bgStockReplenishment?.step}
+          lastMessage={bgStockReplenishment?.lastMessage}
+          onClose={() => setBgStockReplenishmentPanelOpen(false)}
+        />
+      )}
+      {bgClientReactivationPanelOpen && (
+        <AutoStatusPanel
+          title="Acompanhar Clientes Parados"
+          isRunning={!!bgClientReactivation?.isRunning}
+          step={bgClientReactivation?.step}
+          lastMessage={bgClientReactivation?.lastMessage}
+          onClose={() => setBgClientReactivationPanelOpen(false)}
+        />
+      )}
       {newDeliveryOpen && <NewDeliveryModal onClose={() => setNewDeliveryOpen(false)} orders={orders} vehicles={vehiclesState} onCreate={(d) => { setDeliveriesState((prev) => [d, ...prev]); notify(`Entrega ${d.id} criada com sucesso! O entregador será notificado sobre os pedidos em separação.`); addNotif('notifDeliveries', { icon: Truck, title: 'Nova entrega criada', text: `Entrega ${d.id} com ${d.driver} foi criada e está planejada.` }) }} />}
       {editDelivery && <NewDeliveryModal onClose={() => setEditDelivery(null)} orders={orders} vehicles={vehiclesState} editDelivery={editDelivery} onUpdate={(d) => { setDeliveriesState((prev) => prev.map((x) => x.id === d.id ? d : x)); setEditDelivery(null); notify(`Entrega ${d.id} atualizada com sucesso!`); if (d.status === 'Concluída') addNotif('notifDeliveries', { icon: CheckCircle2, title: 'Entrega concluída', text: `Entrega ${d.id} com ${d.driver} foi concluída com sucesso.` }); else if (d.status === 'Em rota') addNotif('notifDeliveries', { icon: Route, title: 'Entrega em rota', text: `Entrega ${d.id} com ${d.driver} entrou em rota.` }) }} onCreate={(d) => { setDeliveriesState((prev) => [d, ...prev]); notify(`Entrega ${d.id} criada com sucesso! O entregador será notificado sobre os pedidos em separação.`); addNotif('notifDeliveries', { icon: Truck, title: 'Nova entrega criada', text: `Entrega ${d.id} com ${d.driver} foi criada e está planejada.` }) }} />}
       {selectedDelivery && <DeliveryDetailModal delivery={deliveriesState.find((d) => d.id === selectedDelivery.id) || selectedDelivery} onClose={() => setSelectedDelivery(null)} orders={orders} onCancel={cancelDelivery} onRemove={removeDelivery} onReactivate={reactivateDelivery} onEdit={(d) => { setEditDelivery(d); setSelectedDelivery(null) }} onSelectOrder={setSelectedOrder} />}
       {selectedOrder && (() => {
         const _linkedDelivery = deliveriesState.find((d) => d.orderIds?.includes(selectedOrder.id))
-        const _canRemove = !selectedOrder.isDeleted && selectedOrder.status !== 'Entregue' && selectedOrder.status !== 'Rota'
-        return <OrderModal order={selectedOrder} onClose={() => setSelectedOrder(null)} updateOrderStatus={updateOrderStatus} createInvoice={createInvoice} onRemove={_canRemove ? () => setRemoveConfirmOrder(selectedOrder) : null} canRemove={_canRemove} onReactivate={selectedOrder.isDeleted ? () => setReactivateConfirmOrder(selectedOrder) : null} onEdit={() => { setEditOrder(selectedOrder); setSelectedOrder(null) }} />
+        const _canRemove = !selectedOrder.isDeleted && selectedOrder.status !== 'Entregue' && selectedOrder.status !== 'Rota' && !(selectedOrder.status === 'Balcão' && selectedOrder.balcaoData?.balcaoStatus === 'entregue')
+        return <OrderModal order={selectedOrder} linkedDelivery={_linkedDelivery} onClose={() => setSelectedOrder(null)} updateOrderStatus={updateOrderStatus} createInvoice={createInvoice} onRemove={_canRemove ? () => setRemoveConfirmOrder(selectedOrder) : null} canRemove={_canRemove} onReactivate={selectedOrder.isDeleted ? () => setReactivateConfirmOrder(selectedOrder) : null} onEdit={() => { setEditOrder(selectedOrder); setSelectedOrder(null) }} receiveOrdersActive={receiveOrdersActive} />
       })()}
       {vehiclesOpen && <VehiclesModal
         onClose={() => setVehiclesOpen(false)}
@@ -894,7 +1193,7 @@ function App() {
         const _linkedDelivery = editOrder ? deliveriesState.find((d) => d.orderIds?.includes(editOrder.id)) : null
         const _lockedEdit = !!(editOrder && editOrder.status === 'Rota' && _linkedDelivery?.status === 'Em rota')
         const _notesOnlyEdit = !!(editOrder && editOrder.status === 'Entregue')
-        return <NewOrderModal onClose={() => { setNewOrderOpen(false); setEditOrder(null) }} onCreateOrder={createOrder} onUpdateOrder={updateOrder} editOrder={editOrder} clients={clientsState} lockedEdit={_lockedEdit} notesOnlyEdit={_notesOnlyEdit} products={apiProductsState} />
+        return <NewOrderModal onClose={() => { setNewOrderOpen(false); setEditOrder(null) }} onCreateOrder={createOrder} onUpdateOrder={updateOrder} editOrder={editOrder} clients={clientsState} lockedEdit={_lockedEdit} notesOnlyEdit={_notesOnlyEdit} balcaoNotesOnlyEdit={!!(editOrder?.status === 'Balcão' && editOrder?.balcaoData?.balcaoStatus === 'entregue')} products={apiProductsState} automationLockClient={!!(receiveOrdersActive && editOrder && editOrder.status === 'Recebido')} onAddClient={(c) => { setClientsState((prev) => [c, ...prev]); addNotif('notifClients', { icon: Users, title: 'Novo cliente cadastrado', text: `${c.establishmentName} foi adicionado à carteira de clientes.` }) }} />
       })()}
       {editProduct && <NewProductModal editProduct={editProduct} onClose={() => setEditProduct(null)} onCreated={() => {}} onUpdated={() => { setStockRefreshKey((k) => k + 1); notify('Produto atualizado com sucesso!') }} />}
       {removeConfirmOrder && (
@@ -957,12 +1256,17 @@ function App() {
             <div className="cancelSepActions">
               <button className="cancelSepConfirm" style={{ background: 'var(--red)' }} onClick={async () => {
                 try {
-                  await fetch(`${API_URL}/api/clients`, {
+                  const res = await fetch(`${API_URL}/api/clients`, {
                     method: 'DELETE',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ id: removeConfirmClient.id, userId: removeConfirmClient.userId }),
                   })
-                } catch {}
+                  if (!res.ok) throw new Error('Falha ao remover cliente')
+                } catch {
+                  notify('Erro ao remover cliente do servidor.')
+                  setRemoveConfirmClient(null)
+                  return
+                }
                 setClientsState((prev) => prev.filter((c) => c.id !== removeConfirmClient.id))
                 if (selectedClient?.id === removeConfirmClient.id) setSelectedClient(null)
                 setRemoveConfirmClient(null)
@@ -1046,12 +1350,23 @@ function Login({ onLogin }) {
   )
 }
 
-function Dashboard({ totals, orders, aiEnabled, setActive }) {
+function Dashboard({ totals, orders, products, deliveries, receiveOrdersActive, generateNfeActive, stockReplenishmentActive, clientReactivationActive, setActive }) {
+  const [stockThreshold, setStockThreshold] = useState(10)
+
+  useEffect(() => {
+    fetch(`${API_URL}/api/automation-config?key=stock_replenishment`)
+      .then((r) => r.json())
+      .then((data) => { if (data.config?.srMinStockQty != null) setStockThreshold(data.config.srMinStockQty) })
+      .catch(() => {})
+  }, [])
+
+  const lowStockCount = products.filter((p) => p.stock <= stockThreshold).length
+
   const cards = [
     { label: 'Faturamento em pedidos', value: money(totals.revenue), icon: Wallet, tone: 'orange', detail: '+18% sobre a semana anterior' },
-    { label: 'Pedidos recebidos hoje', value: totals.todayCount, icon: ShoppingCart, tone: 'navy', detail: '3 vindos do app Saborsan' },
-    { label: 'Pedidos pendentes', value: totals.pending, icon: Clock3, tone: 'yellow', detail: 'Separação, rota e nota' },
-    { label: 'Produtos em atenção', value: totals.lowStock, icon: AlertTriangle, tone: 'red', detail: 'Açaí precisa de reposição' },
+    { label: 'Pedidos recebidos hoje', value: totals.todayCount, icon: ShoppingCart, tone: 'navy' },
+    { label: 'Pedidos pendentes', value: totals.pending, icon: Clock3, tone: 'yellow' },
+    { label: 'Produtos em atenção', value: lowStockCount, icon: AlertTriangle, tone: 'red' },
   ]
   return (
     <div className="panelGrid">
@@ -1070,41 +1385,43 @@ function Dashboard({ totals, orders, aiEnabled, setActive }) {
             <div><Icon size={22} /></div>
             <span>{label}</span>
             <strong>{value}</strong>
-            <small>{detail}</small>
+            {detail && <small>{detail}</small>}
           </article>
         ))}
       </section>
-      <section className="contentGrid twoCols">
+      <section className="contentGrid">
         <div className="card">
           <div className="cardHeader"><div><p>Fila de pedidos</p><h3>Solicitações recentes</h3></div><button onClick={() => setActive('pedidos')}>Abrir</button></div>
           <div className="orderList compact">
             {orders.slice(0, 4).map((order) => <OrderLine key={order.id} order={order} />)}
           </div>
         </div>
-        <div className="card automationCard">
-          <div className="cardHeader"><div><p>Operação assistida</p><h3>{aiEnabled ? 'Automação ativa' : 'Automação desativada'}</h3></div><Bot size={24} /></div>
-          <div className="suggestions">
-            <Suggestion icon={AlertTriangle} title="Comprar Açaí Premium" text="Estoque abaixo do mínimo. Sugestão: solicitar 24 baldes ao fornecedor Amazônia Mix." />
-            <Suggestion icon={Route} title="Otimizar rota de hoje" text="Agrupar Centro e Coral reduz 18 min no trajeto e mantém a temperatura ideal." />
-            <Suggestion icon={ReceiptText} title="Gerar nota do PED-2049" text="Pedido aprovado e com dados fiscais completos para emissão demonstrativa." />
-          </div>
-        </div>
       </section>
       <section className="contentGrid threeCols">
-        <MiniTable title="Estoque crítico" data={products.filter((p) => p.stock <= p.min + 10).map((p) => [p.name, `${p.stock} ${p.unit}`, p.stock <= p.min ? 'Baixo' : 'Atenção'])} />
-        <MiniTable title="Entregas" data={deliveries.map((d) => [d.id, d.route, d.status])} />
-        <MiniTable title="Fornecedores" data={suppliers.map((s) => [s.name, s.lead, s.status])} />
+        <MiniTable title="Estoque crítico" data={products.filter((p) => p.stock <= stockThreshold).sort((a, b) => a.stock - b.stock).slice(0, 5).map((p) => [p.name, `${p.stock} ${p.unit}`, p.stock <= Math.floor(stockThreshold / 2) ? 'Baixo' : 'Atenção'])} />
+        <MiniTable title="Entregas" data={deliveries.filter((d) => !['Cancelada', 'Concluída'].includes(d.status)).slice(0, 5).map((d) => [d.id, d.route, d.status])} />
+        <MiniTable title="Automações" data={[
+          ['Criar entregas', '', receiveOrdersActive ? 'Ativa' : 'Manual'],
+          ['Gerar nota fiscal', '', generateNfeActive ? 'Ativa' : 'Manual'],
+          ['Reposição de estoque', '', stockReplenishmentActive ? 'Ativa' : 'Manual'],
+          ['Acompanhar clientes', '', clientReactivationActive ? 'Ativa' : 'Manual'],
+        ]} />
       </section>
     </div>
   )
 }
 
-function Orders({ orders, ordersLoading, onSelect, updateOrderStatus, createInvoice, onGerarNota, onNewOrder, onVerNota, search = '' }) {
+function Orders({ orders, ordersLoading, onSelect, updateOrderStatus, createInvoice, onGerarNota, onNewOrder, onVerNota, onPayment, search = '', receiveOrdersActive = false, generateNfeActive = false }) {
   const [filter, setFilter] = useState('Todos')
   const activeOrders = orders.filter((o) => !o.isDeleted)
   const removedOrders = orders.filter((o) => o.isDeleted)
   const byStatus = filter === 'Todos' ? activeOrders : filter === 'Removido' ? removedOrders : activeOrders.filter((o) => o.status === filter)
-  const filtered = !search ? byStatus : byStatus.filter((o) => o.customer.toLowerCase().includes(search.toLowerCase()) || o.id.toLowerCase().includes(search.toLowerCase()))
+  const filtered = byStatus.filter((o) => {
+    if (!search) return true
+    const q = search.toLowerCase()
+    const productNames = (o.products || []).map((p) => `${p.qty ?? ''} ${p.unit ?? ''} ${p.name ?? ''}`).join(' ')
+    return [o.id, o.customer, o.city, o.whatsapp, o.source, o.status, o.delivery, String(o.value || ''), productNames].some((f) => f && f.toLowerCase().includes(q))
+  })
   return (
     <section className="pageStack">
       <div className="sectionHeader">
@@ -1112,22 +1429,43 @@ function Orders({ orders, ordersLoading, onSelect, updateOrderStatus, createInvo
         <button className="btnSolid" onClick={onNewOrder}><Plus size={18} /> Novo pedido</button>
       </div>
       <div className="filtersRow">
-        {['Todos', 'Recebido', 'Separação', 'Pronto', 'Rota', 'Entregue', 'Removido'].map((item) => <button key={item} className={filter === item ? 'active' : ''} onClick={() => setFilter(item)}><Filter size={15} />{item}</button>)}
+        {['Todos', 'Recebido', 'Separação', 'Pronto', 'Rota', 'Entregue', 'Balcão', 'Removido'].map((item) => <button key={item} className={filter === item ? 'active' : ''} onClick={() => setFilter(item)}><Filter size={15} />{item}</button>)}
       </div>
       {ordersLoading && <p className="loadingText">Carregando pedidos...</p>}
       <div className="ordersBoard">
         {!ordersLoading && filtered.length === 0 && <p className="emptyText">Nenhum pedido encontrado.</p>}
         {filtered.map((order) => (
           <article className="orderCard" key={order.id}>
-            <div className="orderTop"><div><b>{order.id}</b><span>{order.source}</span></div><div style={{display:'flex',gap:'6px',alignItems:'center',flexWrap:'wrap',justifyContent:'flex-end'}}><Status status={filter === 'Removido' ? 'Removido' : order.status} />{order.status === 'Pronto' && order.nfeData && (order.nfeData.nfeStatus === 'AUTHORIZED' ? <span className="nfeSubStatus success">Nota emitida com sucesso</span> : <span className="nfeSubStatus error">Erro na emição da nota</span>)}</div></div>
+            <div className="orderTop"><div><b>{order.id}</b><span>{order.source}</span></div><div style={{display:'flex',gap:'6px',alignItems:'center',flexWrap:'wrap',justifyContent:'flex-end'}}>
+              <Status status={filter === 'Removido' ? 'Removido' : order.status} />
+              {order.status === 'Balcão' && order.balcaoData?.balcaoStatus === 'pago' && <Status status="Pronto" />}
+              {order.status === 'Balcão' && order.balcaoData?.balcaoStatus === 'entregue' && <Status status="Entregue" />}
+              {order.status === 'Pronto' && order.nfeData && (order.nfeData.nfeStatus === 'AUTHORIZED' ? <span className="nfeSubStatus success">Nota emitida com sucesso</span> : (order.nfeData.nfeStatus === 'PROCESSING' || order.nfeData.nfeStatus === 'SUBMITTING') ? <span className="nfeSubStatus info">Nota em processamento</span> : <span className="nfeSubStatus error">Erro na emição da nota</span>)}
+            </div></div>
             <h3>{order.customer}</h3>
             <p>{order.city} • {order.whatsapp}</p>
             <div className="orderProducts">{order.products.map((p) => <span key={p.name}>{p.qty} {p.unit} • {p.name}</span>)}</div>
-            <div className="orderFooter"><strong>{money(order.value)}</strong><small>Entrega: {order.delivery}</small></div>
+            <div className="orderFooter"><strong>{money(order.value)}</strong><small>{order.status === 'Balcão' ? 'Venda no balcão' : `Entrega: ${order.delivery}`}</small></div>
             <div className="orderActions">
               <button onClick={() => onSelect(order)}>Detalhes</button>
-              {order.status === 'Recebido' && <button style={{background:'var(--orange)',color:'#fff'}} onClick={() => updateOrderStatus(order.id, 'Separação')}>Separar</button>}
-              {order.status === 'Pronto' && order.nfeData?.nfeStatus !== 'AUTHORIZED' && <button onClick={() => onGerarNota(order)}>Gerar nota</button>}
+              {order.status === 'Recebido' && (
+                receiveOrdersActive
+                  ? <button style={{background:'var(--orange)',color:'#fff',opacity:0.5,cursor:'not-allowed'}} disabled title="Desabilitado porque a automação 'Criar entregas' está ativada">Separar</button>
+                  : <button style={{background:'var(--orange)',color:'#fff'}} onClick={() => updateOrderStatus(order.id, 'Separação')}>Separar</button>
+              )}
+              {order.status === 'Pronto' && (!order.nfeData || (order.nfeData.nfeStatus !== 'AUTHORIZED' && order.nfeData.nfeStatus !== 'PROCESSING' && order.nfeData.nfeStatus !== 'SUBMITTING' && order.nfeData.nfeStatus !== 'MANUAL_REVIEW')) && (
+                generateNfeActive
+                  ? <button style={{opacity:0.5,cursor:'not-allowed'}} disabled title="Desabilitado porque a automação 'Gerar nota fiscal' está ativada">Gerar nota</button>
+                  : <button onClick={() => onGerarNota(order)}>Gerar nota</button>
+              )}
+              {order.status === 'Balcão' && (!order.balcaoData || order.balcaoData.balcaoStatus === 'aguardando_pagamento') && (
+                <button style={{background:'var(--orange)',color:'#fff'}} onClick={() => onPayment(order)}>Pagamento</button>
+              )}
+              {order.status === 'Balcão' && order.balcaoData?.balcaoStatus === 'pago' && (
+                generateNfeActive
+                  ? <button style={{opacity:0.5,cursor:'not-allowed'}} disabled title="Desabilitado porque a automação 'Gerar nota fiscal' está ativada">Gerar nota</button>
+                  : <button onClick={() => onGerarNota(order)}>Gerar nota</button>
+              )}
             </div>
           </article>
         ))}
@@ -1136,9 +1474,33 @@ function Orders({ orders, ordersLoading, onSelect, updateOrderStatus, createInvo
   )
 }
 
-function Invoices({ orders, onGerarNota, onVerNota, search = '' }) {
-  const fiscalHistory = orders.filter((o) => o.nfeData && (!search || o.customer.toLowerCase().includes(search.toLowerCase())))
-  const readyToEmit = orders.filter((o) => !o.isDeleted && o.status === 'Pronto' && o.nfeData?.nfeStatus !== 'AUTHORIZED' && (!search || o.customer.toLowerCase().includes(search.toLowerCase())))
+function Invoices({ orders, onGerarNota, onVerNota, search = '', generateNfeActive = false }) {
+  const matchesSearch = (o) => {
+    if (!search) return true
+    const q = search.toLowerCase()
+    const nfe = o.nfeData || {}
+    const docType = nfe.documentType || (String(nfe.reference || '').toUpperCase().startsWith('NFCE') ? 'NFC-e' : 'NF-e')
+    const nfeStatus = nfe.nfeStatus === 'AUTHORIZED' ? 'emitida' : (nfe.nfeStatus === 'PROCESSING' || nfe.nfeStatus === 'SUBMITTING') ? 'processando' : nfe.nfeStatus ? 'erro' : ''
+    const dateStr = nfe.authorizedAt ? new Date(nfe.authorizedAt).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit' }) : ''
+    const fields = [
+      o.id, o.customer, String(o.value || ''),
+      nfe.number ? `${docType} ${nfe.number}` : '',
+      docType, String(nfe.number || ''), dateStr, nfeStatus,
+      ...(o.items || []).map((i) => i.productName || ''),
+    ]
+    return fields.some((f) => f.toLowerCase().includes(q))
+  }
+
+  const fiscalHistory = orders.filter((o) => o.nfeData && matchesSearch(o))
+  const readyToEmit = orders.filter((o) => {
+    if (o.isDeleted) return false
+    const noNfe = !o.nfeData || (o.nfeData.nfeStatus !== 'AUTHORIZED' && o.nfeData.nfeStatus !== 'PROCESSING' && o.nfeData.nfeStatus !== 'SUBMITTING' && o.nfeData.nfeStatus !== 'MANUAL_REVIEW')
+    const isPronto = o.status === 'Pronto'
+    const isBalcaoPago = o.status === 'Balcão' && o.balcaoData?.balcaoStatus === 'pago'
+    return (isPronto || isBalcaoPago) && noNfe && matchesSearch(o)
+  })
+
+  const [printOrder, setPrintOrder] = useState(null)
 
   const formatNfeDate = (o) => {
     const iso = o.nfeData?.authorizedAt
@@ -1148,8 +1510,9 @@ function Invoices({ orders, onGerarNota, onVerNota, search = '' }) {
   }
 
   return (
-    <section className="pageStack">
-      <div className="sectionHeader"><div><p>Geração e acompanhamento fiscal</p></div></div>
+    <>
+      <section className="pageStack">
+        <div className="sectionHeader"><div><p>Geração e acompanhamento fiscal</p></div></div>
       <div className="contentGrid twoCols">
         <div className="card">
           <div className="cardHeader"><div><p>Notas geradas</p><h3>Histórico fiscal</h3></div><ReceiptText /></div>
@@ -1157,12 +1520,17 @@ function Invoices({ orders, onGerarNota, onVerNota, search = '' }) {
             {fiscalHistory.length === 0 && <p className="emptyText">Nenhuma nota emitida ainda.</p>}
             {fiscalHistory.map((o) => (
               <div key={o.id}>
-                <b>{o.nfeData.number ? `NF-e ${o.nfeData.number}` : o.id}{formatNfeDate(o) ? ` • ${formatNfeDate(o)}` : ''}</b>
+                <b>{o.id}{o.nfeData.number ? ` · ${o.nfeData.documentType || (String(o.nfeData.reference || '').toUpperCase().startsWith('NFCE') ? 'NFC-e' : 'NF-e')} ${o.nfeData.number}` : ''}{formatNfeDate(o) ? ` • ${formatNfeDate(o)}` : ''}</b>
                 <span>{o.customer}</span>
                 <strong>{money(o.value)}</strong>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <Status status={o.nfeData.nfeStatus === 'AUTHORIZED' ? 'Emitida' : 'Erro'} />
+                  <Status status={o.nfeData.nfeStatus === 'AUTHORIZED' ? 'Emitida' : (o.nfeData.nfeStatus === 'PROCESSING' || o.nfeData.nfeStatus === 'SUBMITTING') ? 'Processando' : 'Erro'} />
                   <button onClick={() => onVerNota(o)}>Ver nota</button>
+                  {o.nfeData.nfeStatus === 'AUTHORIZED' && (
+                    <button className="printDanfeBtn" onClick={() => setPrintOrder(o)} title="Imprimir DANFE">
+                      <Printer size={20} />
+                    </button>
+                  )}
                 </div>
               </div>
             ))}
@@ -1177,13 +1545,18 @@ function Invoices({ orders, onGerarNota, onVerNota, search = '' }) {
                 <b>{order.id}</b>
                 <span>{order.customer}</span>
                 <strong>{money(order.value)}</strong>
-                <button onClick={() => onGerarNota(order)}>Gerar nota</button>
+                {generateNfeActive
+                  ? <button style={{opacity:0.5,cursor:'not-allowed'}} disabled title="Desabilitado porque a automação 'Gerar nota fiscal' está ativada">Gerar nota</button>
+                  : <button onClick={() => onGerarNota(order)}>Gerar nota</button>
+                }
               </div>
             ))}
           </div>
         </div>
       </div>
     </section>
+    {printOrder && <PrintDanfeModal order={printOrder} onClose={() => setPrintOrder(null)} />}
+    </>
   )
 }
 
@@ -1743,8 +2116,7 @@ function NewProductModal({ onClose, onCreated, editProduct, onUpdated, bgImport,
   )
 }
 
-function BgImportPanel({ bgImport, onClose, onImportDone, onClearBgImport }) {
-  const [uploadResult, setUploadResult] = useState(null)
+function BgImportPanel({ bgImport, onClose, onImportDone, onClearBgImport }) {  const [uploadResult, setUploadResult] = useState(null)
   const [uploadSubmitting, setUploadSubmitting] = useState(false)
   const [uploadError, setUploadError] = useState('')
   const [rowUpdatedSet, setRowUpdatedSet] = useState(new Set())
@@ -1921,6 +2293,139 @@ function BgImportPanel({ bgImport, onClose, onImportDone, onClearBgImport }) {
   )
 }
 
+function AutoStatusPanel({ title, isRunning, step, lastMessage, onClose }) {
+  return (
+    <div className="nfOverlay" onClick={(e) => e.target.classList.contains('nfOverlay') && onClose()}>
+      <div className="bgNfePanel">
+        <div className="bgNfePanelHeader">
+          <div className={`bgNfePanelAnim${isRunning ? '' : ' bgAutoStatusDone'}`}>
+            {isRunning
+              ? <Loader2 size={38} style={{ animation: 'verNotaSpin .7s linear infinite', color: 'var(--orange)' }} />
+              : <Bot size={38} style={{ color: 'var(--orange)' }} />}
+          </div>
+          <h3 className="bgNfePanelTitle">{isRunning ? `${title}...` : title}</h3>
+          <p className="bgNfePanelSubtitle">
+            {isRunning ? 'A automação está sendo executada.' : (lastMessage || 'Aguardando próxima execução.')}
+          </p>
+        </div>
+        {isRunning && step && (
+          <div className="bgNfePanelStepRow">
+            <span className="bgNfePanelStepText">{step}</span>
+          </div>
+        )}
+        {!isRunning && lastMessage && (
+          <div className="bgNfePanelResult">
+            <CheckCircle2 size={14} style={{ flexShrink: 0 }} />
+            <span>{lastMessage}</span>
+          </div>
+        )}
+        <div className="bgNfePanelFooter">
+          <p className="bgImportHint" style={{ marginBottom: 12 }}><Info size={14} /> Ativada — executará conforme o intervalo configurado.</p>
+          <button className="autoActionBtnActivate" style={{ width: '100%', justifyContent: 'center' }} onClick={onClose}>Fechar</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function BgNfePanel({ bgNfe, onClose, onDismiss }) {
+  const isRunning = bgNfe?.status === 'running'
+  const interventions = bgNfe?.interventions || []
+  const hasInterventions = interventions.length > 0
+  const pct = bgNfe?.total > 0 ? Math.min(100, Math.round(((bgNfe.done || 0) / bgNfe.total) * 100)) : null
+
+  return (
+    <div className="nfOverlay" onClick={(e) => e.target.classList.contains('nfOverlay') && onClose()}>
+      <div className={`bgNfePanel${hasInterventions && !isRunning ? ' bgNfePanelWarning' : ''}`}>
+
+        <div className="bgNfePanelHeader">
+          <div className={`bgNfePanelAnim${hasInterventions && !isRunning ? ' bgNfePanelAnimWarn' : ''}`}>
+            {isRunning
+              ? <Loader2 size={38} style={{ animation: 'verNotaSpin .7s linear infinite', color: 'var(--orange)' }} />
+              : hasInterventions
+                ? <AlertTriangle size={38} style={{ color: '#d97706' }} />
+                : <CheckCircle2 size={38} style={{ color: '#16a34a' }} />}
+          </div>
+          <h3 className="bgNfePanelTitle">
+            {isRunning ? 'Gerando notas fiscais...' : hasInterventions ? 'Intervenção necessária' : 'Automação concluída'}
+          </h3>
+          <p className="bgNfePanelSubtitle">
+            {isRunning
+              ? 'A IA está processando os pedidos automaticamente.'
+              : hasInterventions
+                ? `${interventions.length} pedido(s) precisam de ação manual para emitir a NF-e.`
+                : 'As notas fiscais foram processadas.'}
+          </p>
+        </div>
+
+        {isRunning && (
+          <div className="bgNfePanelStepRow">
+            <span className="bgNfePanelStepText">{bgNfe?.step || 'Processando...'}</span>
+          </div>
+        )}
+
+        {pct !== null && isRunning && (
+          <div className="bgNfePanelProgressWrap">
+            <div className="bgNfePanelProgressBar">
+              <div className="bgNfePanelProgressFill" style={{ width: `${pct}%` }} />
+            </div>
+            <span className="bgNfePanelProgressLabel">{bgNfe.done || 0} de {bgNfe.total} pedido(s)</span>
+          </div>
+        )}
+
+        {!isRunning && bgNfe?.message && !hasInterventions && (
+          <div className="bgNfePanelResult">
+            <CheckCircle2 size={14} style={{ flexShrink: 0 }} />
+            <span>{bgNfe.message}</span>
+          </div>
+        )}
+
+        {!isRunning && bgNfe?.message && hasInterventions && (
+          <div className="bgNfePanelResultMixed">
+            <CheckCircle2 size={13} style={{ flexShrink: 0, color: '#16a34a' }} />
+            <span>{bgNfe.message}</span>
+          </div>
+        )}
+
+        {!isRunning && hasInterventions && (
+          <div className="bgNfeInterventionList">
+            <div className="bgNfeInterventionListHeader">
+              <AlertTriangle size={13} />
+              <span>Pedidos que requerem atenção manual:</span>
+            </div>
+            {interventions.map((iv) => (
+              <div key={iv.orderId} className="bgNfeInterventionItem">
+                <div className="bgNfeInterventionItemHeader">
+                  <span className="bgNfeInterventionOrderId">Pedido #{iv.orderId}</span>
+                  {iv.errorCode && <span className="bgNfeInterventionCode">cStat {iv.errorCode}</span>}
+                </div>
+                {iv.errorMessage && (
+                  <p className="bgNfeInterventionError">{iv.errorMessage}</p>
+                )}
+                <div className="bgNfeInterventionAction">
+                  <span className="bgNfeInterventionActionLabel">O que fazer:</span>
+                  <p>{iv.actionRequired || 'Verifique os dados do pedido e tente emitir a NF-e manualmente.'}</p>
+                </div>
+              </div>
+            ))}
+            <p className="bgNfeInterventionHint">
+              <Info size={12} /> Após corrigir, a próxima execução automática verificará se os problemas foram resolvidos.
+            </p>
+          </div>
+        )}
+
+        <div className="bgNfePanelFooter">
+          {isRunning
+            ? <p className="bgImportHint"><Info size={14} /> Você pode fechar esta tela — a automação continuará em segundo plano.</p>
+            : hasInterventions
+              ? <button className="autoActionBtnActivate" style={{ width: '100%', justifyContent: 'center', background: '#d97706' }} onClick={onClose}>Fechar</button>
+              : <button className="autoActionBtnActivate" style={{ width: '100%', justifyContent: 'center' }} onClick={onDismiss}>Fechar</button>}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function Stock({ onProduct, refreshKey, search = '', addNotif, bgImport, onStartBgAnalysis, onClearBgImport }) {
   const [stockProducts, setStockProducts] = useState([])
   const [loading, setLoading] = useState(true)
@@ -1970,7 +2475,11 @@ function Stock({ onProduct, refreshKey, search = '', addNotif, bgImport, onStart
     return () => document.removeEventListener('mousedown', handleClick)
   }, [viewMenuOpen])
 
-  const filtered = stockProducts.filter((p) => !search || p.name.toLowerCase().includes(search.toLowerCase()))
+  const filtered = stockProducts.filter((p) => {
+    if (!search) return true
+    const q = search.toLowerCase()
+    return [p.name, p.category, p.group, p.description, p.badge, p.unit, p.conservation].some((f) => f && f.toLowerCase().includes(q))
+  })
 
   // IDs de produtos que compartilham nome e grupo com pelo menos outro produto
   const dupIds = new Set(
@@ -2086,6 +2595,29 @@ function Suppliers({ onMessage, search = '', addNotif }) {
   const [removeConfirmSupplier, setRemoveConfirmSupplier] = useState(null)
   const notifiedTranscriptRef = useRef(new Set())
 
+  const handleComunicar = async (supplier) => {
+    const phone = (supplier.contactPhone || '').replace(/\D/g, '')
+    if (phone.length < 10) {
+      alert('Número de contato inválido para este fornecedor.')
+      return
+    }
+    try {
+      const res = await fetch(`${API_URL}/api/linkchat-contact-intent`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          clientPhone: phone,
+          clientName: supplier.contactName || supplier.name,
+        }),
+      })
+      if (!res.ok) throw new Error('Não foi possível gerar o link de contato.')
+      const { url } = await res.json()
+      window.open(url, '_blank', 'noopener,noreferrer')
+    } catch (err) {
+      alert(err.message || 'Erro ao abrir o LinkChat.')
+    }
+  }
+
   useEffect(() => {
     setLoading(true)
     fetch(`${API_URL}/api/suppliers`)
@@ -2173,9 +2705,8 @@ function Suppliers({ onMessage, search = '', addNotif }) {
               <span>Compras agendadas: <b>{scheduledCounts[supplier.id] ?? 0}</b></span>
             </div>
             <div className="orderActions">
-              <button onClick={() => setTranscript(supplier)}>Ver conversa IA</button>
               <button onClick={() => setDetailSupplier(supplier)}>Detalhes</button>
-              <button onClick={() => onMessage(supplier)}>Comunicar</button>
+              <button onClick={() => handleComunicar(supplier)}>Abrir no LinkChat</button>
             </div>
           </article>
         ))}
@@ -2230,22 +2761,6 @@ function SupplierDetailModal({ supplier, onClose, onEdit, onRemove }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id: purchase.id }),
       })
-      // Also try to remove the corresponding planning item by title
-      const planRes = await fetch(`${API_URL}/api/purchase-planning`)
-      if (planRes.ok) {
-        const planData = await planRes.json()
-        const titlePattern = `Compra: ${purchase.purchaseName} com ${supplier.name}`.toLowerCase()
-        const matching = (planData.items || []).find(
-          (item) => item.title?.toLowerCase() === titlePattern && !item.completed
-        )
-        if (matching) {
-          await fetch(`${API_URL}/api/purchase-planning`, {
-            method: 'DELETE',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ id: matching.id }),
-          })
-        }
-      }
       setPurchases((prev) => prev.filter((p) => p.id !== purchase.id))
       setConfirmRemovePurchase(null)
     } catch {
@@ -2995,7 +3510,7 @@ function PurchaseDetailModal({ item, getDayLabel, onClose, onRemove, onEdit, sup
   )
 }
 
-function Purchases({ notify, addNotif }) {
+function Purchases({ notify, addNotif, stockReplenishmentActive, search = '' }) {
   const [planningItems, setPlanningItems] = useState([])
   const [planningLoading, setPlanningLoading] = useState(true)
   const [suppliersData, setSuppliersData] = useState([])
@@ -3007,6 +3522,8 @@ function Purchases({ notify, addNotif }) {
   const [detailModal, setDetailModal] = useState(null)
   const [editModal, setEditModal] = useState(null)
   const notifiedPurchaseDueRef = useRef(new Set())
+  const [srMinStockQty, setSrMinStockQty] = useState(5)
+  const [stockAlertThreshold, setStockAlertThreshold] = useState(10)
 
   useEffect(() => {
     setPlanningLoading(true)
@@ -3052,21 +3569,30 @@ function Purchases({ notify, addNotif }) {
       .then((r) => r.json())
       .then((data) => { if (data.purchases) setSupplierPurchases(data.purchases) })
       .catch(() => {})
+
+    fetch(`${API_URL}/api/automation-config?key=stock_replenishment`)
+      .then((r) => r.json())
+      .then((data) => { if (data.config?.srMinStockQty != null) setSrMinStockQty(data.config.srMinStockQty) })
+      .catch(() => {})
+
+    fetch(`${API_URL}/api/stock-purchase-config`)
+      .then((r) => r.json())
+      .then((data) => { if (data.stockAlertPct != null) setStockAlertThreshold(parseFloat(data.stockAlertPct) || 10) })
+      .catch(() => {})
   }, [])
 
   const purchaseSuggestions = useMemo(() => {
+    const threshold = stockReplenishmentActive ? srMinStockQty : stockAlertThreshold
     return stockProducts
-      .filter((p) => {
-        if (p.stock === 0) return true
-        if (p.min > 0) {
-          const pct = p.stock / (p.min * 2)
-          return pct <= 0.1
-        }
-        return false
-      })
+      .filter((p) => p.stock <= threshold)
       .map((p) => {
         const isZero = p.stock === 0
-        const suggestedQty = p.min > 0 ? Math.max(p.min * 2 - p.stock, 1) : 10
+        const suggestedQty = Math.max(threshold * 2 - p.stock, 1)
+        const reasonText = isZero
+          ? 'Estoque zerado — reposição urgente'
+          : stockReplenishmentActive
+            ? `Estoque abaixo do mínimo da automação: ${p.stock} ${p.unit || 'unidades'} (mínimo: ${srMinStockQty})`
+            : `Estoque abaixo do limite configurado: ${p.stock} ${p.unit || 'unidades'} (limite: ${stockAlertThreshold})`
         return {
           id: p.id,
           item: p.name,
@@ -3074,13 +3600,11 @@ function Purchases({ notify, addNotif }) {
           supplier: suppliersData.find((s) => s.category === p.category)?.name || '—',
           qty: suggestedQty,
           unit: p.unit || 'unidades',
-          reason: isZero
-            ? 'Estoque zerado — reposição urgente'
-            : `Estoque crítico: ${p.stock} ${p.unit || 'unidades'} restantes (abaixo de 10%)`,
+          reason: reasonText,
           value: p.price > 0 ? p.price * suggestedQty : 0,
         }
       })
-  }, [stockProducts, suppliersData])
+  }, [stockProducts, suppliersData, stockReplenishmentActive, srMinStockQty, stockAlertThreshold])
 
   const getDayLabel = (dateStr) => {
     const date = new Date(dateStr + 'T00:00:00')
@@ -3135,7 +3659,9 @@ function Purchases({ notify, addNotif }) {
     }
   }
 
-  const activeItems = planningItems.filter((item) => !item.completed)
+  const matchSearch = (fields) => !search || fields.some((f) => f && String(f).toLowerCase().includes(search.toLowerCase()))
+  const activeItems = planningItems.filter((item) => !item.completed && matchSearch([item.title, item.notes, item.scheduledDate]))
+  const filteredSuggestions = purchaseSuggestions.filter((item) => matchSearch([item.item, item.category, item.supplier, item.unit, item.reason]))
 
   const pendingStatusLabel = (status) => {
     const map = { pending: 'Pendente', 'in-progress': 'Em andamento', confirmed: 'Confirmado', processing: 'Em processamento' }
@@ -3158,10 +3684,10 @@ function Purchases({ notify, addNotif }) {
       <div className="contentGrid twoCols">
         <div className="card wideList">
           <div className="cardHeader"><div><p>Lista sugerida</p><h3>Reposições prioritárias</h3></div><ClipboardList /></div>
-          {purchaseSuggestions.length === 0 && (
+          {filteredSuggestions.length === 0 && (
             <p className="emptyText" style={{ fontSize: '.85rem', margin: '8px 0' }}>Nenhuma reposição necessária no momento.</p>
           )}
-          {purchaseSuggestions.map((item) => {
+          {filteredSuggestions.map((item) => {
             const existingStatus = getExistingPurchaseStatus(item.item)
             const isSent = sentIds.has(item.id)
             return (
@@ -3183,17 +3709,27 @@ function Purchases({ notify, addNotif }) {
             {!planningLoading && activeItems.length === 0 && (
               <p className="emptyText" style={{ fontSize: '.85rem', margin: 0 }}>Nenhuma compra agendada.</p>
             )}
-            {activeItems.map((item) => (
-              <div key={item.id} className="calendarItemRow">
-                <div>
-                  <b>{getDayLabel(item.scheduledDate)}</b>
-                  <span>{item.title}</span>
+            {activeItems.map((item) => {
+              const isAutomationItem = item.notes?.includes('automação de Reposição de Estoque')
+              return (
+                <div key={item.id} className="calendarItemRow">
+                  <div>
+                    <b style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                      {getDayLabel(item.scheduledDate)}
+                      {isAutomationItem && !stockReplenishmentActive && !item.supplierNotified && (
+                        <span style={{ fontSize: '.72rem', fontWeight: 700, background: '#fee2e2', color: '#dc2626', borderRadius: 999, padding: '2px 10px', textTransform: 'none', letterSpacing: 0 }}>
+                          Compra não realizada
+                        </span>
+                      )}
+                    </b>
+                    <span>{item.title}</span>
+                  </div>
+                  <div className="calendarItemActions">
+                    <button className="calendarDetailBtn" onClick={() => setDetailModal(item)}>Detalhes</button>
+                  </div>
                 </div>
-                <div className="calendarItemActions">
-                  <button className="calendarDetailBtn" onClick={() => setDetailModal(item)}>Detalhes</button>
-                </div>
-              </div>
-            ))}
+              )
+            })}
           </div>
         </div>
       </div>
@@ -3237,7 +3773,7 @@ function Purchases({ notify, addNotif }) {
   )
 }
 
-function Deliveries({ onNewDelivery, onSelect, deliveries: list, onOpenVehicles }) {
+function Deliveries({ onNewDelivery, onSelect, deliveries: list, onOpenVehicles, search = '' }) {
   const [view, setView] = useState('ativas')
   const driversWithActiveDelivery = new Set(
     list.filter((d) => !['Concluída', 'Cancelada'].includes(d.status)).map((d) => d.driver)
@@ -3249,17 +3785,22 @@ function Deliveries({ onNewDelivery, onSelect, deliveries: list, onOpenVehicles 
       latestCompletedIdByDriver.set(d.driver, d.id)
     }
   })
+  const matchSearch = (d) => {
+    if (!search) return true
+    const q = search.toLowerCase()
+    return [d.id, d.driver, d.vehicle, d.route, d.status, d.temperature, String(d.stops ?? ''), String(d.progress ?? '')].some((f) => f && String(f).toLowerCase().includes(q))
+  }
   const filtered = view === 'ativas'
     ? list.filter((d) => {
         if (d.status === 'Cancelada') return false
         if (d.status === 'Concluída') return latestCompletedIdByDriver.get(d.driver) === d.id
         return true
-      })
+      }).filter(matchSearch)
     : list.filter((d) => {
         if (d.status === 'Cancelada') return true
         if (d.status === 'Concluída') return driversWithActiveDelivery.has(d.driver) || latestCompletedIdByDriver.get(d.driver) !== d.id
         return false
-      })
+      }).filter(matchSearch)
   return (
     <section className="pageStack">
       <div className="sectionHeader stockSectionHeader"><div><p>Rotas, motoristas e temperatura</p></div><div className="viewFilterWrap"><div className="deliverySegmented"><button className={`deliverySegBtn${view === 'ativas' ? ' active' : ''}`} onClick={() => setView('ativas')}>Entregas ativas</button><button className={`deliverySegBtn${view === 'historico' ? ' active' : ''}`} onClick={() => setView('historico')}>Histórico de entregas</button></div></div><div style={{display:'flex',gap:'8px'}}><button className="btnSolid" onClick={onNewDelivery}><Plus size={18} /> Nova entrega</button><button className="btnSolid" onClick={onOpenVehicles}><Truck size={18} /> Veículos</button></div></div>
@@ -3789,7 +4330,6 @@ function DeliveryDetailModal({ delivery, onClose, orders, onCancel, onRemove, on
             <h2>{delivery.driver}</h2>
             <p>{delivery.route}</p>
           </div>
-          <Status status={delivery.status} />
         </div>
 
         <div className="newOrderScrollArea" style={{padding:'0 28px 24px'}}>
@@ -3934,7 +4474,7 @@ function DeliveryDetailModal({ delivery, onClose, orders, onCancel, onRemove, on
   )
 }
 
-function Clients({ clientsData = [], clientsLoading = false, onNewClient, onSelectClient, search = '' }) {
+function Clients({ clientsData = [], clientsLoading = false, onNewClient, onSelectClient, search = '', clientReactivationActive = false, crInactiveDays = 30 }) {
   const [viewMode, setViewMode] = useState('grid')
   const [viewMenuOpen, setViewMenuOpen] = useState(false)
   const viewMenuRef = useRef(null)
@@ -3956,10 +4496,33 @@ function Clients({ clientsData = [], clientsLoading = false, onNewClient, onSele
     return () => document.removeEventListener('mousedown', handleClick)
   }, [viewMenuOpen])
 
-  const getPriorityStatus = (priority) => {
-    const p = (priority || '').toLowerCase()
-    if (p === 'baixa') return 'Reativar'
+  const getPriorityStatus = (client) => {
+    if (client.reactivationSent) return 'Mensagem de reativação enviada'
+    if (clientReactivationActive && client.daysSinceLastPurchase != null && client.daysSinceLastPurchase >= crInactiveDays) return 'Reativar'
     return 'Ativo'
+  }
+
+  const handleFazerContato = async (client) => {
+    const phone = (client.contactNumber || '').replace(/\D/g, '')
+    if (phone.length < 10) {
+      alert('Número de contato inválido para este cliente.')
+      return
+    }
+    try {
+      const res = await fetch(`${API_URL}/api/linkchat-contact-intent`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          clientPhone: phone,
+          clientName: client.establishmentName || client.clientName,
+        }),
+      })
+      if (!res.ok) throw new Error('Não foi possível gerar o link de contato.')
+      const { url } = await res.json()
+      window.open(url, '_blank', 'noopener,noreferrer')
+    } catch (err) {
+      alert(err.message || 'Erro ao abrir o LinkChat.')
+    }
   }
 
   const viewOptions = [
@@ -3995,7 +4558,7 @@ function Clients({ clientsData = [], clientsLoading = false, onNewClient, onSele
             <article className="clientCard" key={client.id}>
               <div className="avatar">{(client.establishmentName || client.clientName || 'C')[0].toUpperCase()}</div>
               <div><h3>{client.establishmentName}</h3><p>{client.segment || '—'}</p></div>
-              <Status status={getPriorityStatus(client.priority)} />
+              <Status status={getPriorityStatus(client)} />
               <div className="clientStats">
                 <span>Responsável <b>{client.clientName || '—'}</b></span>
                 <span>Cidade <b>{client.city || '—'}</b></span>
@@ -4004,18 +4567,13 @@ function Clients({ clientsData = [], clientsLoading = false, onNewClient, onSele
               </div>
               <div className="orderActions">
                 <button onClick={() => onSelectClient && onSelectClient(client)}>Ver detalhes</button>
-                {client.contactNumber && (
-                  <a
-                    href={`https://wa.me/${client.contactNumber.replace(/\D/g, '')}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="btn"
-                    style={{ all: 'unset', cursor: 'pointer' }}
-                  >
-                    <button>Fazer contato</button>
-                  </a>
-                )}
-                {!client.contactNumber && <button disabled>Fazer contato</button>}
+                <button
+                  className="btn"
+                  disabled={!client.contactNumber}
+                  onClick={() => handleFazerContato(client)}
+                >
+                  Fazer contato
+                </button>
               </div>
             </article>
           ))}
@@ -4032,21 +4590,15 @@ function Clients({ clientsData = [], clientsLoading = false, onNewClient, onSele
               <div className="clientListMeta">
                 {client.avgTicket != null && client.avgTicket > 0 && <span>Ticket médio <b>{money(client.avgTicket)}</b></span>}
               </div>
-              <Status status={getPriorityStatus(client.priority)} />
+              <Status status={getPriorityStatus(client)} />
               <div className="clientListActions">
                 <button onClick={() => onSelectClient && onSelectClient(client)}>Ver detalhes</button>
-                {client.contactNumber ? (
-                  <a
-                    href={`https://wa.me/${client.contactNumber.replace(/\D/g, '')}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    style={{ all: 'unset', cursor: 'pointer' }}
-                  >
-                    <button>Contato</button>
-                  </a>
-                ) : (
-                  <button disabled>Contato</button>
-                )}
+                <button
+                  disabled={!client.contactNumber}
+                  onClick={() => handleFazerContato(client)}
+                >
+                  Contato
+                </button>
               </div>
             </article>
           ))}
@@ -4082,10 +4634,21 @@ function ClientDetailModal({ client, onClose, onEdit, onRemove }) {
 
           <h3>Dados fiscais</h3>
           <div className="supplierDetailGrid">
-            <div className="supplierDetailItem">
-              <span>{client.documentType === 'cpf' ? 'CPF' : 'CNPJ'}</span>
-              <b>{client.document || client.cnpj || '—'}</b>
-            </div>
+            {client.cnpj && (
+              <div className="supplierDetailItem">
+                <span>CNPJ</span>
+                <b>{client.cnpj}</b>
+              </div>
+            )}
+            {client.cpf && (
+              <div className="supplierDetailItem">
+                <span>CPF</span>
+                <b>{client.cpf}</b>
+              </div>
+            )}
+            {!client.cnpj && !client.cpf && (
+              <div className="supplierDetailItem"><span>Documento fiscal</span><b>—</b></div>
+            )}
             <div className="supplierDetailItem"><span>Preferência de nota fiscal</span><b>{client.invoicePreference || '—'}</b></div>
           </div>
 
@@ -4113,7 +4676,7 @@ function ClientDetailModal({ client, onClose, onEdit, onRemove }) {
         </div>
         <div className="newOrderFooter">
           <div className="newOrderFooterActions" style={{ marginLeft: 'auto' }}>
-            <button type="button" className="orderModalBtn orderModalBtnDanger" onClick={() => onRemove(client)}>Remover</button>
+            <button type="button" className="orderModalBtn orderModalBtnDanger" onClick={() => onRemove(client)} disabled={client.hasActiveOrders} title={client.hasActiveOrders ? 'Não é possível remover: cliente possui pedido(s) em andamento' : undefined}>Remover</button>
             <button type="button" className="btnPrimary" onClick={() => onEdit(client)}>
               <ClipboardEdit size={16} /> Editar
             </button>
@@ -4129,8 +4692,8 @@ function NewClientModal({ onClose, onCreated, editClient, onUpdated }) {
     establishmentName: editClient.establishmentName || '',
     clientName: editClient.clientName || '',
     email: editClient.email || '',
-    documentType: editClient.documentType || 'cnpj',
-    cnpj: editClient.document || editClient.cnpj || '',
+    cnpj: editClient.cnpj || '',
+    cpf: editClient.cpf || '',
     contactNumber: editClient.contactNumber || '',
     address: editClient.address || '',
     city: editClient.city || '',
@@ -4144,8 +4707,8 @@ function NewClientModal({ onClose, onCreated, editClient, onUpdated }) {
     establishmentName: '',
     clientName: '',
     email: '',
-    documentType: 'cnpj',
     cnpj: '',
+    cpf: '',
     contactNumber: '',
     address: '',
     city: '',
@@ -4165,8 +4728,8 @@ function NewClientModal({ onClose, onCreated, editClient, onUpdated }) {
     form.establishmentName !== (editClient.establishmentName || '') ||
     form.clientName !== (editClient.clientName || '') ||
     form.email !== (editClient.email || '') ||
-    form.documentType !== (editClient.documentType || 'cnpj') ||
-    form.cnpj !== (editClient.document || editClient.cnpj || '') ||
+    form.cnpj !== (editClient.cnpj || '') ||
+    form.cpf !== (editClient.cpf || '') ||
     form.contactNumber !== (editClient.contactNumber || '') ||
     form.address !== (editClient.address || '') ||
     form.city !== (editClient.city || '') ||
@@ -4190,8 +4753,8 @@ function NewClientModal({ onClose, onCreated, editClient, onUpdated }) {
         establishmentName: form.establishmentName.trim(),
         clientName: form.clientName.trim(),
         email: form.email.trim() || null,
-        documentType: form.documentType,
         cnpj: form.cnpj.trim() || null,
+        cpf: form.cpf.trim() || null,
         contactNumber: form.contactNumber.trim() || null,
         address: form.address.trim() || null,
         city: form.city.trim() || null,
@@ -4273,18 +4836,18 @@ function NewClientModal({ onClose, onCreated, editClient, onUpdated }) {
               </label>
 
               <p style={sectionTitle}>Dados fiscais</p>
-              <label className="full">
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-                  <span>Documento fiscal</span>
-                  <div className="deliverySegmented">
-                    <button type="button" className={`deliverySegBtn${form.documentType === 'cnpj' ? ' active' : ''}`} onClick={() => set('documentType', 'cnpj')}>CNPJ</button>
-                    <button type="button" className={`deliverySegBtn${form.documentType === 'cpf' ? ' active' : ''}`} onClick={() => set('documentType', 'cpf')}>CPF</button>
-                  </div>
-                </div>
+              <label>CNPJ
                 <input
-                  placeholder={form.documentType === 'cnpj' ? '00.000.000/0001-00' : '000.000.000-00'}
+                  placeholder="00.000.000/0001-00"
                   value={form.cnpj}
                   onChange={(e) => set('cnpj', e.target.value)}
+                />
+              </label>
+              <label>CPF
+                <input
+                  placeholder="000.000.000-00"
+                  value={form.cpf}
+                  onChange={(e) => set('cpf', e.target.value)}
                 />
               </label>
               <label>Preferência de nota fiscal
@@ -4353,44 +4916,1646 @@ function Finance() {
   )
 }
 
-function Reports() {
+function Reports({ orders = [], deliveries = [], payments = [], clients = [] }) {
+  const [supplierPurchases, setSupplierPurchases] = useState([])
+
+  useEffect(() => {
+    fetch(`${API_URL}/api/supplier-purchases`)
+      .then((r) => r.json())
+      .then((data) => { if (data.purchases) setSupplierPurchases(data.purchases) })
+      .catch(() => {})
+  }, [])
+
+  // ── Top products ───────────────────────────────────────────────────────────
+  const activeOrders = orders.filter((o) => !o.isDeleted)
+  const productCounts = {}
+  activeOrders.forEach((o) => {
+    ;(o.products || []).forEach((p) => {
+      if (!productCounts[p.name]) productCounts[p.name] = { name: p.name, orders: 0 }
+      productCounts[p.name].orders += 1
+    })
+  })
+  const sortedProducts = Object.values(productCounts).sort((a, b) => b.orders - a.orders)
+  const topProduct = sortedProducts[0]
+  const totalProductOrders = sortedProducts.reduce((s, p) => s + p.orders, 0)
+  const topProductPct = topProduct && totalProductOrders > 0 ? Math.round((topProduct.orders / totalProductOrders) * 100) : 0
+
+  // ── Top client segment ─────────────────────────────────────────────────────
+  const segmentCounts = {}
+  clients.forEach((c) => {
+    const seg = (c.segment || '').trim() || 'Outros'
+    segmentCounts[seg] = (segmentCounts[seg] || 0) + 1
+  })
+  const sortedSegments = Object.entries(segmentCounts).sort((a, b) => b[1] - a[1])
+  const topSegment = sortedSegments[0]
+
+  // ── Delivery efficiency ────────────────────────────────────────────────────
+  const nonCancelledDeliveries = deliveries.filter((d) => d.status !== 'Cancelada')
+  const completedDeliveries = deliveries.filter((d) => d.status === 'Concluída').length
+  const deliveryEfficiency = nonCancelledDeliveries.length > 0 ? Math.round((completedDeliveries / nonCancelledDeliveries.length) * 100) : 0
+
+  // ── NF-e stats from orders ─────────────────────────────────────────────────
+  const nfeOrders = orders.filter((o) => o.nfeData)
+  const nfeAuthorized = nfeOrders.filter((o) => o.nfeData?.nfeStatus === 'AUTHORIZED').length
+  const nfeErrors = nfeOrders.filter((o) => ['REJECTED', 'SUBMISSION_FAILED'].includes(o.nfeData?.nfeStatus)).length
+  const nfeTotal = nfeOrders.length
+  const nfeSuccessPct = nfeTotal > 0 ? Math.round((nfeAuthorized / nfeTotal) * 100) : 0
+  const nfeErrorPct = nfeTotal > 0 ? Math.round((nfeErrors / nfeTotal) * 100) : 0
+
+  // ── Finance data ───────────────────────────────────────────────────────────
+  const totalRevenue = activeOrders.reduce((sum, o) => sum + (o.value || 0), 0)
+  const pendingPayments = payments.filter((p) => p.status === 'Pendente' || p.status === 'Atrasado')
+  const pendingPaymentsValue = pendingPayments.reduce((sum, p) => sum + (p.paymentValue || 0), 0)
+  const paidPayments = payments.filter((p) => (p.status || '').toLowerCase() === 'pago')
+  const paidPct = payments.length > 0 ? Math.round((paidPayments.length / payments.length) * 100) : 0
+  const openPurchases = supplierPurchases.filter((p) => p.status !== 'Concluída' && !p.completedAt)
+  const openPurchasesValue = openPurchases.reduce((sum, p) => sum + (p.totalAmount || 0), 0)
+
+  // Weekly revenue bars from orders that have createdAt — indexed Mon=0 … Sun=6
+  const weeklyRevenue = Array(7).fill(0)
+  const now = new Date()
+  activeOrders.forEach((o) => {
+    if (!o.createdAt) return
+    const diffDays = Math.floor((now - new Date(o.createdAt)) / 86400000)
+    if (diffDays >= 0 && diffDays < 7) {
+      const jsDay = new Date(o.createdAt).getDay() // 0=Sun
+      const weekIdx = jsDay === 0 ? 6 : jsDay - 1  // Mon=0 … Sun=6
+      weeklyRevenue[weekIdx] += o.value || 0
+    }
+  })
+  const maxWeekly = Math.max(...weeklyRevenue, 1)
+  const ptDayLabels = ['S', 'T', 'Q', 'Q', 'S', 'S', 'D'] // Seg Ter Qua Qui Sex Sáb Dom
+
+  // ── Auto summary ───────────────────────────────────────────────────────────
+  const summaryParts = []
+  if (topProduct) summaryParts.push(`Produto mais pedido: ${topProduct.name} (${topProductPct}% das solicitações)`)
+  if (topSegment) summaryParts.push(`Segmento dominante: ${topSegment[0]} com ${topSegment[1]} cliente${topSegment[1] !== 1 ? 's' : ''}`)
+  if (nonCancelledDeliveries.length > 0) summaryParts.push(`Eficiência de entregas: ${deliveryEfficiency}% concluídas`)
+  if (nfeTotal > 0) summaryParts.push(`NF-e: ${nfeSuccessPct}% autorizadas, ${nfeErrorPct}% com erro`)
+  const summaryText = summaryParts.length
+    ? summaryParts.join('. ') + '.'
+    : 'Dados insuficientes para gerar o resumo automático. Aguardando movimentação no sistema.'
+
   return (
     <section className="pageStack">
-      <div className="sectionHeader"><div><p>Relatórios comerciais e operacionais</p></div><button className="btnSolid"><FileText size={18} /> Exportar demo</button></div>
+      <div className="sectionHeader"><div><p>Relatórios comerciais e operacionais</p></div></div>
+
       <div className="reportGrid">
-        <ReportCard icon={BarChart3} title="Produtos mais vendidos" value="Pão de queijo lidera" text="Representa 34% das solicitações comerciais da semana." />
-        <ReportCard icon={Store} title="Segmentos em crescimento" value="Cafeterias +22%" text="Croissants e polpas impulsionaram novos pedidos." />
-        <ReportCard icon={Truck} title="Eficiência de entregas" value="91% no prazo" text="Rotas com câmara fria mantiveram temperatura ideal." />
-        <ReportCard icon={Factory} title="Fornecedores" value="98% confiabilidade" text="Frutas do Vale e Queijos Serra Alta com melhor desempenho." />
+        <ReportCard
+          icon={BarChart3}
+          title="Produtos mais vendidos"
+          value={topProduct ? topProduct.name : 'Sem dados'}
+          text={topProduct
+            ? `Representa ${topProductPct}% das solicitações${sortedProducts[1] ? ` • 2º: ${sortedProducts[1].name}` : ''}`
+            : 'Nenhum pedido registrado ainda.'}
+        />
+        <ReportCard
+          icon={Store}
+          title="Segmentos de clientes"
+          value={topSegment ? topSegment[0] : 'Sem dados'}
+          text={clients.length > 0
+            ? `${clients.length} cliente${clients.length !== 1 ? 's' : ''} em ${sortedSegments.length} segmento${sortedSegments.length !== 1 ? 's' : ''}${topSegment ? ` — ${topSegment[0]}: ${topSegment[1]}` : ''}`
+            : 'Nenhum cliente cadastrado.'}
+        />
+        <ReportCard
+          icon={Truck}
+          title="Eficiência de entregas"
+          value={nonCancelledDeliveries.length > 0 ? `${deliveryEfficiency}% no prazo` : 'Sem entregas'}
+          text={nonCancelledDeliveries.length > 0
+            ? `${completedDeliveries} de ${nonCancelledDeliveries.length} entrega${nonCancelledDeliveries.length !== 1 ? 's' : ''} concluída${completedDeliveries !== 1 ? 's' : ''}`
+            : 'Nenhuma entrega registrada.'}
+        />
+        <ReportCard
+          icon={ReceiptText}
+          title="Automação NF-e"
+          value={nfeTotal > 0 ? `${nfeSuccessPct}% autorizadas` : 'Sem emissões'}
+          text={nfeTotal > 0
+            ? `${nfeAuthorized} autorizada${nfeAuthorized !== 1 ? 's' : ''} • ${nfeErrors} erro${nfeErrors !== 1 ? 's' : ''} (${nfeErrorPct}%) de ${nfeTotal} NF-e`
+            : 'Nenhuma NF-e emitida ainda.'}
+        />
       </div>
+
+
+      {/* Auto summary */}
       <div className="card">
         <div className="cardHeader"><div><p>Análise mensal</p><h3>Resumo automático</h3></div><Sparkles /></div>
-        <p className="analysisText">A operação mostra maior concentração de vendas em pão de queijo, croissants e açaí. O estoque de açaí está abaixo do ideal para o fim de semana e deve ser priorizado nas próximas compras. A carteira de cafeterias demonstra maior potencial para campanhas de combos com croissant, polpas e mini pizzas.</p>
+        <p className="analysisText">{summaryText}</p>
+      </div>
+
+      {/* Finance section */}
+      <div className="reportSectionDivider"><span>Visão Financeira</span></div>
+      <div className="financeHero">
+        <div>
+          <span className="badge navy">Receita em pedidos</span>
+          <h2>{money(totalRevenue)}</h2>
+          <p>Total dos pedidos ativos no sistema — {activeOrders.length} pedido{activeOrders.length !== 1 ? 's' : ''}.</p>
+        </div>
+        <TrendingUp size={78} />
+      </div>
+      <div className="contentGrid twoCols">
+        <MiniTable title="Indicadores financeiros" data={[
+          ['Receita em pedidos',    money(totalRevenue),          `${activeOrders.length} pedidos`],
+          ['Pagamentos pendentes',  money(pendingPaymentsValue),  `${pendingPayments.length} cliente${pendingPayments.length !== 1 ? 's' : ''}`],
+          ['Compras em aberto',     money(openPurchasesValue),    `${openPurchases.length} item${openPurchases.length !== 1 ? 's' : ''}`],
+          ['% pagamentos pagos',    `${paidPct}%`,                `${paidPayments.length} de ${payments.length}`],
+        ]} />
+        <div className="card">
+          <div className="cardHeader"><div><p>Receita por dia (últimos 7 dias)</p><h3>Fluxo de pedidos</h3></div><Wallet /></div>
+          <div className="bars">
+            {weeklyRevenue.map((val, i) => (
+              <div key={i}>
+                <span style={{ height: `${Math.round((val / maxWeekly) * 100) || 2}%` }} />
+                <small>{ptDayLabels[i]}</small>
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
     </section>
   )
 }
 
-function Automation({ aiEnabled, setAiEnabled, notify }) {
-  const automations = [
-    ['Receber pedidos do app', 'Captura solicitações, organiza itens e direciona para separação.', true],
-    ['Sugerir reposição de estoque', 'Analisa mínimo, giro e produtos em atenção.', true],
-    ['Gerar nota fiscal demo', 'Prepara dados fiscais do pedido antes da emissão.', true],
-    ['Otimizar rotas de entrega', 'Agrupa regiões, horários e veículos refrigerados.', true],
-    ['Comunicar fornecedores', 'Monta mensagens de cotação e reposição.', false],
-    ['Acompanhar clientes parados', 'Identifica clientes que podem receber nova oferta.', true],
+function ActivateAllModal({ onClose, onConfirm }) {
+  const [loading, setLoading] = useState(true)
+  const [checks, setChecks] = useState({ receiveOrders: false, generateNfe: false, stockReplenishment: false, clientReactivation: false })
+  const [activating, setActivating] = useState(false)
+
+  useEffect(() => {
+    const run = async () => {
+      setLoading(true)
+      try {
+        const [cfgReceive, cfgNfe, cfgStock, cfgClient, prodsRes, fiscalRes] = await Promise.all([
+          fetch(`${API_URL}/api/automation-config?key=receive_orders`).then((r) => r.json()).catch(() => null),
+          fetch(`${API_URL}/api/automation-config?key=generate_nfe`).then((r) => r.json()).catch(() => null),
+          fetch(`${API_URL}/api/automation-config?key=stock_replenishment`).then((r) => r.json()).catch(() => null),
+          fetch(`${API_URL}/api/automation-config?key=client_reactivation`).then((r) => r.json()).catch(() => null),
+          fetch(`${API_URL}/api/products`).then((r) => r.json()).catch(() => ({ products: [] })),
+          fetch(`${API_URL}/api/fiscal-config`).then((r) => r.json()).catch(() => ({ configs: [] })),
+        ])
+        const activeProducts = (prodsRes.products || []).filter((p) => p.active !== false)
+        const configMap = {}
+        ;(fiscalRes.configs || []).forEach((c) => { configMap[String(c.productId)] = c })
+        const fiscalOk = activeProducts.length > 0 && activeProducts.every((p) => {
+          const cfg = configMap[String(p.id)]
+          return cfg && cfg.ibsCbsCst && cfg.ibsCbsClassTrib
+        })
+        setChecks({
+          receiveOrders: !!(cfgReceive?.config),
+          generateNfe: fiscalOk,
+          stockReplenishment: !!(cfgStock?.config),
+          clientReactivation: !!(cfgClient?.config),
+        })
+      } catch {
+        setChecks({ receiveOrders: false, generateNfe: false, stockReplenishment: false, clientReactivation: false })
+      }
+      setLoading(false)
+    }
+    run()
+  }, [])
+
+  const allReady = !loading && Object.values(checks).every(Boolean)
+
+  const items = [
+    { key: 'receiveOrders', label: 'Criar entregas', hint: 'Acesse a automação e salve os ajustes' },
+    { key: 'generateNfe', label: 'Gerar nota fiscal', hint: 'Configure a classificação fiscal dos produtos' },
+    { key: 'stockReplenishment', label: 'Reposição de estoque', hint: 'Acesse a automação e salve os ajustes' },
+    { key: 'clientReactivation', label: 'Acompanhar clientes parados', hint: 'Acesse a automação e salve os ajustes' },
   ]
+
+  const handleConfirm = async () => {
+    setActivating(true)
+    await onConfirm()
+    setActivating(false)
+  }
+
   return (
-    <section className="pageStack">
-      <div className="sectionHeader"><div><p>Configurações inteligentes do sistema</p></div><label className="switch big"><input type="checkbox" checked={aiEnabled} onChange={() => setAiEnabled(!aiEnabled)} /><span></span></label></div>
-      <div className="automationHero">
-        <div><Bot size={34} /><h2>{aiEnabled ? 'Automação ativa na operação' : 'Operação manual ativada'}</h2><p>Controle como o painel apoia pedidos, estoque, compras, notas, fornecedores, clientes e entregas.</p></div>
-        <button onClick={() => notify('Rotina demonstrativa executada com sucesso.')}>Executar rotina agora</button>
+    <div className="nfOverlay" onClick={(e) => e.target.classList.contains('nfOverlay') && onClose()}>
+      <div className="autoActionDialog" style={{ maxWidth: 460, width: '90vw' }}>
+        <div className="autoActionIcon"><Sparkles size={28} /></div>
+        <h3>Ativar automação completa</h3>
+        <p>Para ativar todas as automações, cada uma deve estar devidamente configurada.</p>
+        {loading ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '16px 0', color: 'var(--muted)', fontWeight: 700 }}>
+            <Loader2 size={18} className="verNotaDetailsSpinner" /> Verificando configurações...
+          </div>
+        ) : (
+          <div style={{ width: '100%', margin: '12px 0', display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {items.map(({ key, label, hint }) => (
+              <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', borderRadius: 10, background: checks[key] ? '#e8f5e9' : '#fdecea' }}>
+                {checks[key]
+                  ? <CheckCircle2 size={16} style={{ color: 'var(--green)', flexShrink: 0 }} />
+                  : <AlertCircle size={16} style={{ color: 'var(--red)', flexShrink: 0 }} />}
+                <div style={{ flex: 1 }}>
+                  <span style={{ fontWeight: 700, fontSize: '.9rem', color: 'var(--text)', display: 'block' }}>{label}</span>
+                  {!checks[key] && <small style={{ color: 'var(--muted)', fontSize: '.78rem' }}>{hint}</small>}
+                </div>
+                <span style={{ fontSize: '.8rem', fontWeight: 700, color: checks[key] ? 'var(--green)' : 'var(--red)', flexShrink: 0 }}>
+                  {checks[key] ? 'Pronto' : 'Pendente'}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+        <div className="autoActionButtons">
+          <button className="autoActionBtnAdjust" onClick={onClose}>Cancelar</button>
+          <button className="autoActionBtnActivate" onClick={handleConfirm} disabled={!allReady || activating || loading}>
+            {activating ? <><Loader2 size={15} className="verNotaDetailsSpinner" /> Ativando...</> : 'Ativar todas'}
+          </button>
+        </div>
       </div>
-      <div className="automationGrid">
-        {automations.map(([title, text, active]) => <article key={title} className={active && aiEnabled ? 'on' : ''}><Settings2 size={22} /><div><h3>{title}</h3><p>{text}</p></div><span>{active && aiEnabled ? 'Ativo' : 'Manual'}</span></article>)}
+    </div>
+  )
+}
+
+function AutomationActionDialog({ automation, isActive, onClose, onActivate, onAdjust }) {
+  return (
+    <div className="nfOverlay" onClick={(e) => e.target.classList.contains('nfOverlay') && onClose()}>
+      <div className="autoActionDialog">
+        <button className="nfClose" onClick={onClose}><X size={16} /></button>
+        <div className="autoActionIcon"><Settings2 size={28} /></div>
+        <h3>{automation}</h3>
+        <p>O que deseja fazer com esta automação?</p>
+        <div className="autoActionButtons">
+          <button className="autoActionBtnAdjust" onClick={onAdjust}><Settings2 size={16} /> Ajustar</button>
+          <button className="autoActionBtnActivate" onClick={onActivate}>
+            {isActive ? <><X size={16} /> Desativar</> : <><Sparkles size={16} /> Ativar</>}
+          </button>
+        </div>
       </div>
-    </section>
+    </div>
+  )
+}
+
+function AutomationAdjustModal({ onClose, onActivate, isActive, notify }) {
+  const [sellers, setSellers] = useState([])
+  const [clients, setClients] = useState([])
+  const [saving, setSaving] = useState(false)
+  const [activating, setActivating] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [config, setConfig] = useState({
+    minOrders: 1,
+    maxOrders: 10,
+    maxCities: 5,
+    includeRouteCities: false,
+    timeIntervalMinutes: 30,
+    timeStart: '07:00',
+    timeEnd: '18:00',
+  })
+  const [bindings, setBindings] = useState([])
+  const [savedConfig, setSavedConfig] = useState(null)
+  const [savedBindings, setSavedBindings] = useState(null)
+  const [bindingForm, setBindingForm] = useState({ sellerId: '', type: 'city', value: '' })
+  const [citySearch, setCitySearch] = useState('')
+  const [clientSearch, setClientSearch] = useState('')
+  const [showCitySugg, setShowCitySugg] = useState(false)
+  const [showClientSugg, setShowClientSugg] = useState(false)
+  const cityRef = useRef(null)
+  const clientRef = useRef(null)
+
+  useEffect(() => {
+    const fetchAll = async () => {
+      setLoading(true)
+      try {
+        const [sellersRes, clientsRes, cfgRes] = await Promise.all([
+          fetch(`${API_URL}/api/sellers`).then((r) => r.json()).catch(() => ({ sellers: [] })),
+          fetch(`${API_URL}/api/clients`).then((r) => r.json()).catch(() => ({ clients: [] })),
+          fetch(`${API_URL}/api/automation-config?key=receive_orders`).then((r) => r.json()).catch(() => null),
+        ])
+        if (sellersRes.sellers) setSellers(sellersRes.sellers.filter((s) => s.status === 'Ativo'))
+        if (clientsRes.clients) setClients(clientsRes.clients)
+        if (cfgRes?.config) {
+          const c = cfgRes.config
+          const loadedConfig = {
+            minOrders: c.minOrders ?? 1,
+            maxOrders: c.maxOrders ?? 10,
+            maxCities: c.maxCities ?? 5,
+            includeRouteCities: !!c.includeRouteCities,
+            timeIntervalMinutes: c.timeIntervalMinutes ?? 30,
+            timeStart: c.timeStart ?? '07:00',
+            timeEnd: c.timeEnd ?? '18:00',
+          }
+          const loadedBindings = cfgRes.bindings ?? []
+          setConfig(loadedConfig)
+          setBindings(loadedBindings)
+          setSavedConfig(loadedConfig)
+          setSavedBindings(loadedBindings)
+        } else {
+          // No config in DB yet — treat current defaults as the saved baseline
+          setSavedConfig({ minOrders: 1, maxOrders: 10, maxCities: 5, includeRouteCities: false, timeIntervalMinutes: 30, timeStart: '07:00', timeEnd: '18:00' })
+          setSavedBindings([])
+        }
+      } catch { /* ignore */ }
+      finally { setLoading(false) }
+    }
+    fetchAll()
+  }, [])
+
+  const setC = (k, v) => setConfig((p) => ({ ...p, [k]: v }))
+
+  const isDirty = savedConfig !== null && (
+    JSON.stringify(config) !== JSON.stringify(savedConfig) ||
+    JSON.stringify(bindings.map(({ sellerId, bindingType, bindingValue }) => ({ sellerId, bindingType, bindingValue }))) !==
+    JSON.stringify((savedBindings ?? []).map(({ sellerId, bindingType, bindingValue }) => ({ sellerId, bindingType, bindingValue })))
+  )
+
+  const citySugg = citySearch.trim().length >= 2
+    ? SC_CITIES.filter((c) =>
+        c.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').includes(
+          citySearch.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+        )
+      ).slice(0, 8)
+    : []
+
+  const clientSugg = clientSearch.trim().length >= 2
+    ? clients.filter((c) =>
+        (c.establishmentName || '').toLowerCase().includes(clientSearch.toLowerCase())
+      ).slice(0, 8)
+    : []
+
+  const addBinding = () => {
+    const val = bindingForm.type === 'city' ? citySearch.trim() : clientSearch.trim()
+    if (!bindingForm.sellerId || !val) return
+    const seller = sellers.find((s) => String(s.id) === String(bindingForm.sellerId))
+    if (!seller) return
+    if (bindings.find((b) => b.sellerId === Number(bindingForm.sellerId) && b.bindingType === bindingForm.type && b.bindingValue === val)) return
+    setBindings((prev) => [...prev, { sellerId: Number(bindingForm.sellerId), sellerName: seller.name, bindingType: bindingForm.type, bindingValue: val }])
+    setCitySearch('')
+    setClientSearch('')
+  }
+
+  const removeBinding = (idx) => setBindings((prev) => prev.filter((_, i) => i !== idx))
+
+  const handleSave = async (silent = false) => {
+    setSaving(true)
+    try {
+      const res = await fetch(`${API_URL}/api/automation-config`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: 'receive_orders', config, bindings }),
+      })
+      if (res.ok) {
+        if (!silent) notify('Configurações salvas com sucesso.')
+        setSavedConfig(config)
+        setSavedBindings(bindings)
+      } else if (!silent) notify('Erro ao salvar configurações.')
+      return res.ok
+    } catch {
+      if (!silent) notify('Erro ao salvar configurações.')
+      return false
+    } finally { setSaving(false) }
+  }
+
+  const handleActivate = async () => {
+    setActivating(true)
+    try {
+      const saved = await handleSave(true)
+      if (saved) await onActivate()
+      else notify('Erro ao salvar configurações.')
+    } finally { setActivating(false) }
+  }
+
+  return (
+    <div className="nfOverlay" onClick={(e) => e.target.classList.contains('nfOverlay') && onClose()}>
+      <div className="autoAdjustModal">
+        <div className="autoAdjustHeader">
+          <div className="autoAdjustHeaderInfo">
+            <div>
+              <span>Automação</span>
+              <h2>Criar entregas</h2>
+              <p>Configure como esta automação deve funcionar</p>
+            </div>
+          </div>
+          <button className="nfClose" style={{ position: 'static' }} onClick={onClose}><X size={16} /></button>
+        </div>
+
+        {loading ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '32px 28px', color: 'var(--muted)', fontWeight: 700 }}>
+            <Loader2 size={18} className="verNotaDetailsSpinner" /> Carregando configurações...
+          </div>
+        ) : (
+          <div className="autoAdjustBody">
+
+            {/* Quantidade de pedidos */}
+            <div className="autoAdjustSection">
+              <div className="autoAdjustSectionTitle"><Package size={15} /> Quantidade de pedidos por entrega</div>
+              <div className="autoAdjustRow">
+                <label>
+                  <span>Mínimo</span>
+                  <input type="number" min={1} max={config.maxOrders} value={config.minOrders}
+                    onChange={(e) => setC('minOrders', Math.max(1, Number(e.target.value)))} />
+                </label>
+                <label>
+                  <span>Máximo</span>
+                  <input type="number" min={config.minOrders} max={100} value={config.maxOrders}
+                    onChange={(e) => setC('maxOrders', Math.max(config.minOrders, Number(e.target.value)))} />
+                </label>
+              </div>
+            </div>
+
+            {/* Cidades */}
+            <div className="autoAdjustSection">
+              <div className="autoAdjustSectionTitle"><MapPin size={15} /> Cidades por entrega</div>
+              <div className="autoAdjustRow">
+                <label style={{ flex: 1 }}>
+                  <span>Máximo de cidades</span>
+                  <input type="number" min={1} max={50} value={config.maxCities}
+                    onChange={(e) => setC('maxCities', Math.max(1, Number(e.target.value)))} />
+                </label>
+              </div>
+              <label className="autoAdjustCheckRow">
+                <input type="checkbox" checked={config.includeRouteCities}
+                  onChange={(e) => setC('includeRouteCities', e.target.checked)} />
+                <div>
+                  <span>Incluir cidades no caminho</span>
+                  <small>Ao criar a entrega, selecionar automaticamente todas as cidades que ficam no trajeto até a cidade mais distante selecionada</small>
+                </div>
+              </label>
+            </div>
+
+            {/* Período */}
+            <div className="autoAdjustSection">
+              <div className="autoAdjustSectionTitle"><Clock3 size={15} /> Período de execução</div>
+              <div className="autoAdjustRow">
+                <label>
+                  <span>Intervalo (minutos)</span>
+                  <input type="number" min={5} max={1440} value={config.timeIntervalMinutes}
+                    onChange={(e) => setC('timeIntervalMinutes', Math.max(5, Number(e.target.value)))} />
+                </label>
+                <label>
+                  <span>Início</span>
+                  <TimePickerInput value={config.timeStart} onChange={(v) => setC('timeStart', v)} />
+                </label>
+                <label>
+                  <span>Fim</span>
+                  <TimePickerInput value={config.timeEnd} onChange={(v) => setC('timeEnd', v)} />
+                </label>
+              </div>
+            </div>
+
+            {/* Vínculos vendedor-cliente/cidade */}
+            <div className="autoAdjustSection">
+              <div className="autoAdjustSectionTitle"><UserRound size={15} /> Vínculo vendedor → cliente / cidade</div>
+              <p style={{ fontSize: '.83rem', color: 'var(--muted)', fontWeight: 600, margin: '0 0 12px' }}>
+                Defina quais clientes ou cidades são sempre atendidos por um vendedor específico
+              </p>
+
+              <div className="autoAdjustBindingForm">
+                <CustomSelect
+                  value={bindingForm.sellerId}
+                  onChange={(v) => setBindingForm((p) => ({ ...p, sellerId: v }))}
+                  placeholder="Vendedor"
+                  options={sellers.map((s) => ({ value: String(s.id), label: s.name }))}
+                  dropUp
+                />
+                <div className="autoAdjustBindingType">
+                  <button className={bindingForm.type === 'city' ? 'active' : ''} onClick={() => setBindingForm((p) => ({ ...p, type: 'city' }))}>Cidade</button>
+                  <button className={bindingForm.type === 'client' ? 'active' : ''} onClick={() => setBindingForm((p) => ({ ...p, type: 'client' }))}>Cliente</button>
+                </div>
+                {bindingForm.type === 'city' ? (
+                  <div className="autoAdjustCityWrap" ref={cityRef}>
+                    <input placeholder="Buscar cidade..." value={citySearch}
+                      onChange={(e) => { setCitySearch(e.target.value); setShowCitySugg(true) }}
+                      onFocus={() => setShowCitySugg(true)}
+                      onBlur={() => setTimeout(() => setShowCitySugg(false), 150)} />
+                    {showCitySugg && citySugg.length > 0 && (
+                      <div className="autoAdjustSugg">
+                        {citySugg.map((c) => <button key={c} type="button" onMouseDown={() => { setCitySearch(c); setShowCitySugg(false) }}>{c}</button>)}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="autoAdjustCityWrap" ref={clientRef}>
+                    <input placeholder="Buscar cliente..." value={clientSearch}
+                      onChange={(e) => { setClientSearch(e.target.value); setShowClientSugg(true) }}
+                      onFocus={() => setShowClientSugg(true)}
+                      onBlur={() => setTimeout(() => setShowClientSugg(false), 150)} />
+                    {showClientSugg && clientSugg.length > 0 && (
+                      <div className="autoAdjustSugg">
+                        {clientSugg.map((c) => <button key={c.id} type="button" onMouseDown={() => { setClientSearch(c.establishmentName); setShowClientSugg(false) }}>{c.establishmentName}</button>)}
+                      </div>
+                    )}
+                  </div>
+                )}
+                <button className="autoAdjustAddBinding" onClick={addBinding}><Plus size={15} /></button>
+              </div>
+
+              {bindings.length > 0 && (
+                <div className="autoAdjustBindingList">
+                  {bindings.map((b, i) => (
+                    <div key={i} className="autoAdjustBindingItem">
+                      <UserRound size={13} />
+                      <span className="autoAdjustBindingSellerName">{b.sellerName}</span>
+                      <span className="autoAdjustBindingArrow">→</span>
+                      <span className={`autoAdjustBindingBadge ${b.bindingType}`}>{b.bindingType === 'city' ? <MapPin size={11} /> : <Building2 size={11} />}{b.bindingValue}</span>
+                      <button onClick={() => removeBinding(i)}><X size={13} /></button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        <div className="autoAdjustFooter">
+          <button className="autoAdjustSaveBtn" onClick={() => handleSave()} disabled={saving || loading || !isDirty}>
+            {saving ? <><Loader2 size={15} className="verNotaDetailsSpinner" /> Salvando...</> : 'Salvar'}
+          </button>
+          <button className="autoAdjustActivateBtn" onClick={handleActivate} disabled={activating || loading}>
+            {activating
+              ? <><Loader2 size={15} className="verNotaDetailsSpinner" /> {isActive ? 'Desativando...' : 'Ativando...'}</>
+              : isActive ? <><X size={15} /> Desativar automação</> : <><Sparkles size={15} /> Ativar automação</>
+            }
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function Automation({ aiEnabled, setAiEnabled, notify, addNotif, receiveOrdersActive, setReceiveOrdersActive, generateNfeActive, setGenerateNfeActive, stockReplenishmentActive, setStockReplenishmentActive, clientReactivationActive, setClientReactivationActive }) {
+  const [dialogOpen, setDialogOpen] = useState(false)
+  const [adjustOpen, setAdjustOpen] = useState(false)
+  const [nfeDialogOpen, setNfeDialogOpen] = useState(false)
+  const [nfeAdjustOpen, setNfeAdjustOpen] = useState(false)
+  const [nfeFiscalWarning, setNfeFiscalWarning] = useState(false)
+  const [srDialogOpen, setSrDialogOpen] = useState(false)
+  const [srAdjustOpen, setSrAdjustOpen] = useState(false)
+  const [crDialogOpen, setCrDialogOpen] = useState(false)
+  const [crAdjustOpen, setCrAdjustOpen] = useState(false)
+  const [activateAllOpen, setActivateAllOpen] = useState(false)
+
+  const automations = [
+    ['Criar entregas', 'Recebe pedidos do app, organiza itens e gera entregas automaticamente para os vendedores.', true],
+    ['Gerar nota fiscal', 'Emite automaticamente a NF-e dos pedidos prontos e corrige erros com IA.', true],
+    ['Reposição de estoque', 'Analisa níveis de estoque, identifica itens críticos e comunica fornecedores automaticamente.', true],
+    ['Acompanhar clientes parados', 'Identifica clientes inativos e envia mensagem de reativação via WhatsApp.', true],
+  ]
+
+  const handleCardClick = async (title) => {
+    if (title === 'Criar entregas') { setDialogOpen(true); return }
+    if (title === 'Reposição de estoque') { setSrDialogOpen(true); return }
+    if (title === 'Acompanhar clientes parados') { setCrDialogOpen(true); return }
+    if (title === 'Gerar nota fiscal') {
+      // Verifica se todos os produtos têm configuração fiscal completa (ibsCbsCst e ibsCbsClassTrib)
+      try {
+        const [cfgRes, prodsRes] = await Promise.all([
+          fetch(`${API_URL}/api/fiscal-config`).then((r) => r.json()).catch(() => ({ configs: [] })),
+          fetch(`${API_URL}/api/products`).then((r) => r.json()).catch(() => ({ products: [] })),
+        ])
+        const activeProducts = (prodsRes.products || []).filter((p) => p.active !== false)
+        const configs = cfgRes.configs || []
+        const configMap = {}
+        configs.forEach((c) => { configMap[String(c.productId)] = c })
+        const incomplete = activeProducts.filter((p) => {
+          const cfg = configMap[String(p.id)]
+          return !cfg || !cfg.ibsCbsCst || !cfg.ibsCbsClassTrib
+        })
+        if (incomplete.length > 0) { setNfeFiscalWarning(true); return }
+      } catch (_) {}
+      setNfeDialogOpen(true)
+    }
+  }
+
+  const handleActivateToggle = async () => {
+    const newVal = !receiveOrdersActive
+    try {
+      const res = await fetch(`${API_URL}/api/automation-config`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: 'receive_orders', config: { isActive: newVal } }),
+      })
+      if (res.ok) {
+        setReceiveOrdersActive(newVal)
+        notify(newVal ? 'Automação "Criar entregas" ativada.' : 'Automação desativada.')
+      }
+    } catch { notify('Erro ao alterar status da automação.') }
+    setDialogOpen(false)
+    setAdjustOpen(false)
+  }
+
+  const handleNfeActivateToggle = async () => {
+    const newVal = !generateNfeActive
+    try {
+      const res = await fetch(`${API_URL}/api/automation-config`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: 'generate_nfe', config: { isActive: newVal } }),
+      })
+      if (res.ok) {
+        setGenerateNfeActive(newVal)
+        notify(newVal ? 'Automação "Gerar nota fiscal" ativada.' : 'Automação "Gerar nota fiscal" desativada.')
+      } else { notify('Erro ao alterar status da automação.') }
+    } catch { notify('Erro ao alterar status da automação.') }
+    setNfeDialogOpen(false)
+    setNfeAdjustOpen(false)
+  }
+
+  const handleSrActivateToggle = async () => {
+    const newVal = !stockReplenishmentActive
+    try {
+      const res = await fetch(`${API_URL}/api/automation-config`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: 'stock_replenishment', config: { isActive: newVal } }),
+      })
+      if (res.ok) {
+        setStockReplenishmentActive(newVal)
+        notify(newVal ? 'Automação "Reposição de estoque" ativada.' : 'Automação "Reposição de estoque" desativada.')
+
+        // Fetch automation-created planning items to notify or reschedule
+        const planData = await fetch(`${API_URL}/api/purchase-planning`).then((r) => r.json()).catch(() => ({ items: [] }))
+        const automationItems = (planData.items || []).filter(
+          (item) => !item.completed && item.notes?.includes('automação de Reposição de Estoque')
+        )
+
+        if (!newVal && automationItems.length > 0 && addNotif) {
+          // Automation deactivated: notify about missed purchases
+          const names = automationItems.map((i) => i.title).join(', ')
+          addNotif('notifPurchases', {
+            icon: ShoppingCart,
+            type: 'warning',
+            title: 'Compra não realizada',
+            text: `${automationItems.length} compra(s) não foram realizadas pois a automação de reposição de estoque foi desabilitada: ${names}.`,
+          })
+        }
+
+        if (newVal && automationItems.length > 0) {
+          // Automation reactivated: check current stock before rescheduling
+          const [productsData, cfgData] = await Promise.all([
+            fetch(`${API_URL}/api/products`).then((r) => r.json()).catch(() => ({ products: [] })),
+            fetch(`${API_URL}/api/automation-config?key=stock_replenishment`).then((r) => r.json()).catch(() => ({ config: {} })),
+          ])
+          const allProducts = productsData.products || []
+          const minStockQty = cfgData.config?.srMinStockQty ?? 5
+          const today = new Date().toISOString().split('T')[0]
+
+          await Promise.all(
+            automationItems.map(async (item) => {
+              const product = allProducts.find((p) => p.name?.toLowerCase() === item.title?.toLowerCase())
+              if (product && product.availableQuantity > minStockQty) {
+                // Product was restocked while automation was off — remove the planned purchase and its supplier link
+                await fetch(`${API_URL}/api/purchase-planning`, {
+                  method: 'DELETE',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ id: item.id }),
+                }).catch(() => {})
+              } else {
+                // Still low stock — reschedule to today per the automation's default schedule
+                await fetch(`${API_URL}/api/purchase-planning`, {
+                  method: 'PATCH',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ id: item.id, title: item.title, scheduledDate: today, notes: item.notes }),
+                }).catch(() => {})
+              }
+            })
+          ).catch(() => {})
+        }
+      } else { notify('Erro ao alterar status da automação.') }
+    } catch { notify('Erro ao alterar status da automação.') }
+    setSrDialogOpen(false)
+    setSrAdjustOpen(false)
+  }
+
+  const handleActivateAll = async () => {
+    try {
+      await Promise.all([
+        fetch(`${API_URL}/api/automation-config`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key: 'receive_orders', config: { isActive: true } }) }),
+        fetch(`${API_URL}/api/automation-config`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key: 'generate_nfe', config: { isActive: true } }) }),
+        fetch(`${API_URL}/api/automation-config`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key: 'stock_replenishment', config: { isActive: true } }) }),
+        fetch(`${API_URL}/api/automation-config`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key: 'client_reactivation', config: { isActive: true } }) }),
+      ])
+      setReceiveOrdersActive(true)
+      setGenerateNfeActive(true)
+      setStockReplenishmentActive(true)
+      setClientReactivationActive(true)
+      notify('Todas as automações foram ativadas com sucesso.')
+    } catch { notify('Erro ao ativar automações.') }
+    setActivateAllOpen(false)
+  }
+
+  const handleCrActivateToggle = async () => {
+    const newVal = !clientReactivationActive
+    try {
+      const res = await fetch(`${API_URL}/api/automation-config`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: 'client_reactivation', config: { isActive: newVal } }),
+      })
+      if (res.ok) {
+        setClientReactivationActive(newVal)
+        notify(newVal ? 'Automação "Acompanhar clientes parados" ativada.' : 'Automação "Acompanhar clientes parados" desativada.')
+      } else { notify('Erro ao alterar status da automação.') }
+    } catch { notify('Erro ao alterar status da automação.') }
+    setCrDialogOpen(false)
+    setCrAdjustOpen(false)
+  }
+
+  const isCardActive = (title) => {
+    if (title === 'Criar entregas') return receiveOrdersActive
+    if (title === 'Gerar nota fiscal') return generateNfeActive
+    if (title === 'Reposição de estoque') return stockReplenishmentActive
+    if (title === 'Acompanhar clientes parados') return clientReactivationActive
+    return aiEnabled
+  }
+
+  return (
+    <>
+      <section className="pageStack">
+        <div className="sectionHeader"><div><p>Configurações inteligentes do sistema</p></div></div>
+        <div className="automationHero">
+          <div><Bot size={34} /><h2>Automação ativa na operação</h2><p>Controle como o painel apoia pedidos, estoque, compras, notas, fornecedores, clientes e entregas.</p></div>
+          <button onClick={() => setActivateAllOpen(true)}>Ativar automação completa</button>
+        </div>
+        <div className="automationGrid">
+          {automations.map(([title, text, available]) => (
+            <article
+              key={title}
+              className={isCardActive(title) ? 'on' : ''}
+              style={{ cursor: (title === 'Criar entregas' || title === 'Gerar nota fiscal' || title === 'Reposição de estoque' || title === 'Acompanhar clientes parados') ? 'pointer' : undefined }}
+              onClick={() => handleCardClick(title)}
+            >
+              <Settings2 size={22} />
+              <div><h3>{title}</h3><p>{text}</p></div>
+              <span>{isCardActive(title) ? 'Ativo' : 'Manual'}</span>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      {dialogOpen && (
+        <AutomationActionDialog
+          automation="Criar entregas"
+          isActive={receiveOrdersActive}
+          onClose={() => setDialogOpen(false)}
+          onActivate={handleActivateToggle}
+          onAdjust={() => { setDialogOpen(false); setAdjustOpen(true) }}
+        />
+      )}
+
+      {adjustOpen && (
+        <AutomationAdjustModal
+          isActive={receiveOrdersActive}
+          onClose={() => setAdjustOpen(false)}
+          onActivate={handleActivateToggle}
+          notify={notify}
+        />
+      )}
+
+      {nfeFiscalWarning && (
+        <div className="nfOverlay" onClick={(e) => e.target.classList.contains('nfOverlay') && setNfeFiscalWarning(false)}>
+          <div className="autoActionDialog">
+            <button className="nfClose" onClick={() => setNfeFiscalWarning(false)}><X size={16} /></button>
+            <div className="autoActionIcon" style={{ background: 'var(--orange-light, #fff3e0)', color: 'var(--orange, #f57c00)' }}><AlertCircle size={28} /></div>
+            <h3>Configuração fiscal incompleta</h3>
+            <p style={{ textAlign: 'center', color: 'var(--muted)', fontSize: '.92rem', lineHeight: 1.5 }}>
+              Para ativar esta automação, todos os produtos devem estar com os campos <strong>CST IBS/CBS</strong> e <strong>Classificação Tributária (cClassTrib)</strong> devidamente preenchidos.
+              <br /><br />
+              Acesse <strong>Configurações → Fiscal e NCM</strong> para configurar os produtos pendentes.
+            </p>
+            <div className="autoActionButtons">
+              <button className="autoActionBtnActivate" onClick={() => setNfeFiscalWarning(false)}>Entendido</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {nfeDialogOpen && (
+        <AutomationActionDialog
+          automation="Gerar nota fiscal"
+          isActive={generateNfeActive}
+          onClose={() => setNfeDialogOpen(false)}
+          onActivate={handleNfeActivateToggle}
+          onAdjust={() => { setNfeDialogOpen(false); setNfeAdjustOpen(true) }}
+        />
+      )}
+
+      {nfeAdjustOpen && (
+        <AutomationNfeAdjustModal
+          isActive={generateNfeActive}
+          onClose={() => setNfeAdjustOpen(false)}
+          onActivate={handleNfeActivateToggle}
+          notify={notify}
+        />
+      )}
+
+      {srDialogOpen && (
+        <AutomationActionDialog
+          automation="Reposição de estoque"
+          isActive={stockReplenishmentActive}
+          onClose={() => setSrDialogOpen(false)}
+          onActivate={handleSrActivateToggle}
+          onAdjust={() => { setSrDialogOpen(false); setSrAdjustOpen(true) }}
+        />
+      )}
+
+      {srAdjustOpen && (
+        <AutomationStockAdjustModal
+          isActive={stockReplenishmentActive}
+          onClose={() => setSrAdjustOpen(false)}
+          onActivate={handleSrActivateToggle}
+          notify={notify}
+        />
+      )}
+
+      {crDialogOpen && (
+        <AutomationActionDialog
+          automation="Acompanhar clientes parados"
+          isActive={clientReactivationActive}
+          onClose={() => setCrDialogOpen(false)}
+          onActivate={handleCrActivateToggle}
+          onAdjust={() => { setCrDialogOpen(false); setCrAdjustOpen(true) }}
+        />
+      )}
+
+      {crAdjustOpen && (
+        <AutomationClientReactivationAdjustModal
+          isActive={clientReactivationActive}
+          onClose={() => setCrAdjustOpen(false)}
+          onActivate={handleCrActivateToggle}
+          notify={notify}
+        />
+      )}
+
+      {activateAllOpen && (
+        <ActivateAllModal
+          onClose={() => setActivateAllOpen(false)}
+          onConfirm={handleActivateAll}
+          receiveOrdersActive={receiveOrdersActive}
+          generateNfeActive={generateNfeActive}
+          stockReplenishmentActive={stockReplenishmentActive}
+          clientReactivationActive={clientReactivationActive}
+        />
+      )}
+    </>
+  )
+}
+
+function AutomationNfeAdjustModal({ onClose, onActivate, isActive, notify }) {
+  const [sellers, setSellers] = useState([])
+  const [saving, setSaving] = useState(false)
+  const [activating, setActivating] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [config, setConfig] = useState({
+    nfeNotifyOnError: false,
+    nfeNotifySellerId: null,
+    nfePrintDanfeAuto: false,
+    timeIntervalMinutes: 5,
+    timeStart: '07:00',
+    timeEnd: '22:00',
+  })
+  const [savedConfig, setSavedConfig] = useState(null)
+
+  useEffect(() => {
+    const fetchAll = async () => {
+      setLoading(true)
+      try {
+        const [sellersRes, cfgRes] = await Promise.all([
+          fetch(`${API_URL}/api/sellers`).then((r) => r.json()).catch(() => ({ sellers: [] })),
+          fetch(`${API_URL}/api/automation-config?key=generate_nfe`).then((r) => r.json()).catch(() => null),
+        ])
+        if (sellersRes.sellers) setSellers(sellersRes.sellers.filter((s) => s.status === 'Ativo'))
+        if (cfgRes?.config) {
+          const loaded = {
+            nfeNotifyOnError: !!cfgRes.config.nfeNotifyOnError,
+            nfeNotifySellerId: cfgRes.config.nfeNotifySellerId ?? null,
+            nfePrintDanfeAuto: !!cfgRes.config.nfePrintDanfeAuto,
+            timeIntervalMinutes: cfgRes.config.timeIntervalMinutes ?? 5,
+            timeStart: cfgRes.config.timeStart ?? '07:00',
+            timeEnd: cfgRes.config.timeEnd ?? '22:00',
+          }
+          setConfig(loaded)
+          setSavedConfig(loaded)
+        } else {
+          const def = { nfeNotifyOnError: false, nfeNotifySellerId: null, nfePrintDanfeAuto: false, timeIntervalMinutes: 5, timeStart: '07:00', timeEnd: '22:00' }
+          setSavedConfig(def)
+        }
+      } catch { /* ignore */ }
+      finally { setLoading(false) }
+    }
+    fetchAll()
+  }, [])
+
+  const setC = (k, v) => setConfig((p) => ({ ...p, [k]: v }))
+
+  const isDirty = savedConfig !== null && JSON.stringify(config) !== JSON.stringify(savedConfig)
+
+  const handleSave = async (silent = false) => {
+    setSaving(true)
+    try {
+      const res = await fetch(`${API_URL}/api/automation-config`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: 'generate_nfe', config }),
+      })
+      if (res.ok) {
+        if (!silent) notify('Configurações salvas com sucesso.')
+        setSavedConfig(config)
+      } else if (!silent) notify('Erro ao salvar configurações.')
+      return res.ok
+    } catch {
+      if (!silent) notify('Erro ao salvar configurações.')
+      return false
+    } finally { setSaving(false) }
+  }
+
+  const handleActivate = async () => {
+    setActivating(true)
+    try {
+      const saved = await handleSave(true)
+      if (saved) await onActivate()
+      else notify('Erro ao salvar configurações.')
+    } finally { setActivating(false) }
+  }
+
+  return (
+    <div className="nfOverlay" onClick={(e) => e.target.classList.contains('nfOverlay') && onClose()}>
+      <div className="autoAdjustModal">
+        <div className="autoAdjustHeader">
+          <div className="autoAdjustHeaderInfo">
+            <div>
+              <span>Automação</span>
+              <h2>Gerar nota fiscal</h2>
+              <p>Configure como esta automação deve funcionar</p>
+            </div>
+          </div>
+          <button className="nfClose" style={{ position: 'static' }} onClick={onClose}><X size={16} /></button>
+        </div>
+
+        {loading ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '32px 28px', color: 'var(--muted)', fontWeight: 700 }}>
+            <Loader2 size={18} className="verNotaDetailsSpinner" /> Carregando configurações...
+          </div>
+        ) : (
+          <div className="autoAdjustBody">
+
+            {/* Tratamento de erros */}
+            <div className="autoAdjustSection">
+              <div className="autoAdjustSectionTitle"><AlertCircle size={15} /> Tratamento de erros na emissão</div>
+              <p style={{ fontSize: '.83rem', color: 'var(--muted)', fontWeight: 600, margin: '0 0 14px' }}>
+                Quando ocorrer um erro na verificação ou geração da nota fiscal de algum produto
+              </p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <label className="autoAdjustCheckRow" style={{ cursor: 'pointer' }} onClick={() => setC('nfeNotifyOnError', false)}>
+                  <input type="radio" readOnly checked={!config.nfeNotifyOnError} style={{ accentColor: 'var(--primary)', width: 16, height: 16 }} />
+                  <div>
+                    <span>IA analisa e corrige automaticamente</span>
+                    <small>A inteligência artificial tentará identificar e resolver o erro com base no catálogo de rejeições do SEFAZ e reemitirá a nota quando possível</small>
+                  </div>
+                </label>
+                <label className="autoAdjustCheckRow" style={{ cursor: 'pointer' }} onClick={() => setC('nfeNotifyOnError', true)}>
+                  <input type="radio" readOnly checked={config.nfeNotifyOnError} style={{ accentColor: 'var(--primary)', width: 16, height: 16 }} />
+                  <div>
+                    <span>Notificar funcionário para análise</span>
+                    <small>Um funcionário receberá uma notificação no app para verificar e corrigir manualmente o erro</small>
+                  </div>
+                </label>
+              </div>
+
+              {config.nfeNotifyOnError && (
+                <div style={{ marginTop: 14 }}>
+                  <div className="autoAdjustSectionTitle" style={{ marginBottom: 8 }}><UserRound size={14} /> Funcionário a notificar</div>
+                  <CustomSelect
+                    value={config.nfeNotifySellerId ? String(config.nfeNotifySellerId) : ''}
+                    onChange={(v) => setC('nfeNotifySellerId', v ? Number(v) : null)}
+                    placeholder="Selecionar funcionário"
+                    options={sellers.map((s) => ({ value: String(s.id), label: s.name }))}
+                  />
+                </div>
+              )}
+            </div>
+
+            {/* Impressão automática do DANFE */}
+            <div className="autoAdjustSection">
+              <div className="autoAdjustSectionTitle"><Printer size={15} /> Impressão do DANFE</div>
+              <label className="autoAdjustCheckRow">
+                <input type="checkbox" checked={config.nfePrintDanfeAuto}
+                  onChange={(e) => setC('nfePrintDanfeAuto', e.target.checked)} />
+                <div>
+                  <span>Imprimir DANFE automaticamente</span>
+                  <small>Ao ser autorizada pelo SEFAZ, o DANFE da nota fiscal será enviado automaticamente para a impressora padrão do sistema</small>
+                </div>
+              </label>
+            </div>
+
+            {/* Período de execução */}
+            <div className="autoAdjustSection">
+              <div className="autoAdjustSectionTitle"><Clock3 size={15} /> Período de execução</div>
+              <div className="autoAdjustRow">
+                <label>
+                  <span>Intervalo (minutos)</span>
+                  <input type="number" min={1} max={1440} value={config.timeIntervalMinutes}
+                    onChange={(e) => setC('timeIntervalMinutes', Math.max(1, Number(e.target.value)))} />
+                </label>
+                <label>
+                  <span>Início</span>
+                  <TimePickerInput value={config.timeStart} onChange={(v) => setC('timeStart', v)} dropUp />
+                </label>
+                <label>
+                  <span>Fim</span>
+                  <TimePickerInput value={config.timeEnd} onChange={(v) => setC('timeEnd', v)} dropUp />
+                </label>
+              </div>
+            </div>
+
+          </div>
+        )}
+
+        <div className="autoAdjustFooter">
+          <button className="autoAdjustSaveBtn" onClick={() => handleSave()} disabled={saving || loading || !isDirty}>
+            {saving ? <><Loader2 size={15} className="verNotaDetailsSpinner" /> Salvando...</> : 'Salvar'}
+          </button>
+          <button className="autoAdjustActivateBtn" onClick={handleActivate} disabled={activating || loading}>
+            {activating
+              ? <><Loader2 size={15} className="verNotaDetailsSpinner" /> {isActive ? 'Desativando...' : 'Ativando...'}</>
+              : isActive ? <><X size={15} /> Desativar automação</> : <><Sparkles size={15} /> Ativar automação</>
+            }
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function AutomationStockAdjustModal({ onClose, onActivate, isActive, notify }) {
+  const SR_CATEGORIES = ['Assados', 'Frutas', 'Salgados', 'Condimentos', 'Legumes', 'Polpa de fruta', 'Doces', 'Pizza', 'Bebidas']
+
+  const [suppliers, setSuppliers] = useState([])
+  const [saving, setSaving] = useState(false)
+  const [activating, setActivating] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [wabaTemplates, setWabaTemplates] = useState([])
+  const [config, setConfig] = useState({
+    minStockQty: 5,
+    maxPurchaseQty: 50,
+    timeIntervalMinutes: 30,
+    timeStart: '07:00',
+    timeEnd: '18:00',
+    notifyTimes: [],
+    wabaTemplateId: null,
+  })
+  const [categoryBindings, setCategoryBindings] = useState([])
+  const [savedConfig, setSavedConfig] = useState(null)
+  const [savedCategoryBindings, setSavedCategoryBindings] = useState(null)
+  const [newNotifyTime, setNewNotifyTime] = useState('')
+  const [bindingSelectors, setBindingSelectors] = useState({})
+
+  useEffect(() => {
+    const fetchAll = async () => {
+      setLoading(true)
+      try {
+        const [suppliersRes, cfgRes, tmplRes] = await Promise.all([
+          fetch(`${API_URL}/api/suppliers`).then((r) => r.json()).catch(() => ({ suppliers: [] })),
+          fetch(`${API_URL}/api/automation-config?key=stock_replenishment`).then((r) => r.json()).catch(() => null),
+          fetch(`${API_URL}/api/waba-templates`).then((r) => r.json()).catch(() => null),
+        ])
+        if (suppliersRes.suppliers) setSuppliers(suppliersRes.suppliers)
+        if (Array.isArray(tmplRes)) setWabaTemplates(tmplRes)
+        if (cfgRes?.config) {
+          const loaded = {
+            minStockQty: cfgRes.config.srMinStockQty ?? 5,
+            maxPurchaseQty: cfgRes.config.srMaxPurchaseQty ?? 50,
+            timeIntervalMinutes: cfgRes.config.timeIntervalMinutes ?? 30,
+            timeStart: cfgRes.config.timeStart ?? '07:00',
+            timeEnd: cfgRes.config.timeEnd ?? '18:00',
+            notifyTimes: cfgRes.config.srNotifyTimes ?? [],
+            wabaTemplateId: cfgRes.config.srWabaTemplateId ?? null,
+          }
+          const loadedBindings = cfgRes.categoryBindings ?? []
+          setConfig(loaded)
+          setSavedConfig(loaded)
+          setCategoryBindings(loadedBindings)
+          setSavedCategoryBindings(loadedBindings)
+        } else {
+          const def = { minStockQty: 5, maxPurchaseQty: 50, timeIntervalMinutes: 30, timeStart: '07:00', timeEnd: '18:00', notifyTimes: [], wabaTemplateId: null }
+          setSavedConfig(def)
+          setSavedCategoryBindings([])
+        }
+      } catch { /* ignore */ }
+      finally { setLoading(false) }
+    }
+    fetchAll()
+  }, [])
+
+  const setC = (k, v) => setConfig((p) => ({ ...p, [k]: v }))
+
+  const addNotifyTime = () => {
+    if (!newNotifyTime || config.notifyTimes.includes(newNotifyTime)) return
+    setC('notifyTimes', [...config.notifyTimes, newNotifyTime].sort())
+    setNewNotifyTime('')
+  }
+
+  const removeNotifyTime = (t) => setC('notifyTimes', config.notifyTimes.filter((x) => x !== t))
+
+  const getBindingsForCategory = (category) => categoryBindings.filter((b) => b.category === category)
+
+  const addCategoryBinding = (category, supplierId) => {
+    if (!supplierId) return
+    const supplier = suppliers.find((s) => String(s.id) === String(supplierId))
+    if (!supplier) return
+    if (categoryBindings.find((b) => b.category === category && b.supplierId === Number(supplierId))) return
+    setCategoryBindings((prev) => [...prev, { supplierId: Number(supplierId), supplierName: supplier.name, category }])
+    setBindingSelectors((p) => ({ ...p, [category]: '' }))
+  }
+
+  const removeCategoryBinding = (category, supplierId) => {
+    setCategoryBindings((prev) => prev.filter((b) => !(b.category === category && b.supplierId === supplierId)))
+  }
+
+  const allCategoriesCovered = SR_CATEGORIES.every((cat) => categoryBindings.some((b) => b.category === cat))
+
+  const bindingsKey = (arr) => JSON.stringify(
+    (arr ?? []).map(({ supplierId, category }) => ({ supplierId, category }))
+      .sort((a, b) => a.category.localeCompare(b.category) || a.supplierId - b.supplierId)
+  )
+  const isDirty = savedConfig !== null && (
+    JSON.stringify(config) !== JSON.stringify(savedConfig) ||
+    bindingsKey(categoryBindings) !== bindingsKey(savedCategoryBindings)
+  )
+
+  const handleSave = async (silent = false) => {
+    setSaving(true)
+    try {
+      const res = await fetch(`${API_URL}/api/automation-config`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          key: 'stock_replenishment',
+          config: {
+            srMinStockQty: config.minStockQty,
+            srMaxPurchaseQty: config.maxPurchaseQty,
+            timeIntervalMinutes: config.timeIntervalMinutes,
+            timeStart: config.timeStart,
+            timeEnd: config.timeEnd,
+            srNotifyTimes: config.notifyTimes,
+            srWabaTemplateId: config.wabaTemplateId,
+          },
+          categoryBindings,
+        }),
+      })
+      if (res.ok) {
+        if (!silent) notify('Configurações salvas com sucesso.')
+        setSavedConfig(config)
+        setSavedCategoryBindings(categoryBindings)
+      } else if (!silent) notify('Erro ao salvar configurações.')
+      return res.ok
+    } catch {
+      if (!silent) notify('Erro ao salvar configurações.')
+      return false
+    } finally { setSaving(false) }
+  }
+
+  const handleActivate = async () => {
+    if (!isActive && !allCategoriesCovered) {
+      notify('Todas as categorias devem ter pelo menos um fornecedor vinculado para ativar a automação.')
+      return
+    }
+    setActivating(true)
+    try {
+      const saved = await handleSave(true)
+      if (saved) await onActivate()
+      else notify('Erro ao salvar configurações.')
+    } finally { setActivating(false) }
+  }
+
+  return (
+    <div className="nfOverlay" onClick={(e) => e.target.classList.contains('nfOverlay') && onClose()}>
+      <div className="autoAdjustModal">
+        <div className="autoAdjustHeader">
+          <div className="autoAdjustHeaderInfo">
+            <div>
+              <span>Automação</span>
+              <h2>Reposição de estoque</h2>
+              <p>Configure como esta automação deve funcionar</p>
+            </div>
+          </div>
+          <button className="nfClose" style={{ position: 'static' }} onClick={onClose}><X size={16} /></button>
+        </div>
+
+        {loading ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '32px 28px', color: 'var(--muted)', fontWeight: 700 }}>
+            <Loader2 size={18} className="verNotaDetailsSpinner" /> Carregando configurações...
+          </div>
+        ) : (
+          <div className="autoAdjustBody">
+
+            {/* Limites de estoque */}
+            <div className="autoAdjustSection">
+              <div className="autoAdjustSectionTitle"><Package size={15} /> Limites de estoque</div>
+              <div className="autoAdjustRow">
+                <label>
+                  <span>Qtd. mínima (estoque baixo)</span>
+                  <input type="number" min={0} value={config.minStockQty}
+                    onChange={(e) => setC('minStockQty', Math.max(0, Number(e.target.value)))} />
+                </label>
+                <label>
+                  <span>Qtd. máxima por compra</span>
+                  <input type="number" min={1} value={config.maxPurchaseQty}
+                    onChange={(e) => setC('maxPurchaseQty', Math.max(1, Number(e.target.value)))} />
+                </label>
+              </div>
+            </div>
+
+            {/* Período de execução */}
+            <div className="autoAdjustSection">
+              <div className="autoAdjustSectionTitle"><Clock3 size={15} /> Período de execução</div>
+              <div className="autoAdjustRow">
+                <label>
+                  <span>Intervalo (minutos)</span>
+                  <input type="number" min={5} max={1440} value={config.timeIntervalMinutes}
+                    onChange={(e) => setC('timeIntervalMinutes', Math.max(5, Number(e.target.value)))} />
+                </label>
+                <label>
+                  <span>Início</span>
+                  <TimePickerInput value={config.timeStart} onChange={(v) => setC('timeStart', v)} />
+                </label>
+                <label>
+                  <span>Fim</span>
+                  <TimePickerInput value={config.timeEnd} onChange={(v) => setC('timeEnd', v)} />
+                </label>
+              </div>
+            </div>
+
+            {/* Horários de comunicação ao fornecedor */}
+            <div className="autoAdjustSection">
+              <div className="autoAdjustSectionTitle"><Bell size={15} /> Horários de comunicação ao fornecedor</div>
+              <p style={{ fontSize: '.83rem', color: 'var(--muted)', fontWeight: 600, margin: '0 0 12px' }}>
+                Defina os horários em que a automação poderá criar compras e comunicar os fornecedores. Se nenhum horário for adicionado, a automação seguirá o intervalo configurado.
+              </p>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 10 }}>
+                <TimePickerInput value={newNotifyTime} onChange={setNewNotifyTime} />
+                <button className="autoAdjustAddBinding" onClick={addNotifyTime} disabled={!newNotifyTime}><Plus size={15} /></button>
+              </div>
+              {config.notifyTimes.length > 0 && (
+                <div className="autoAdjustBindingList">
+                  {config.notifyTimes.map((t) => (
+                    <div key={t} className="autoAdjustBindingItem">
+                      <Bell size={13} />
+                      <span style={{ fontWeight: 600 }}>{t}</span>
+                      <button onClick={() => removeNotifyTime(t)}><X size={13} /></button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Template de comunicação com fornecedor */}
+            <div className="autoAdjustSection">
+              <div className="autoAdjustSectionTitle"><MessageCircle size={15} /> Template de comunicação com fornecedor</div>
+              <p style={{ fontSize: '.83rem', color: 'var(--muted)', fontWeight: 600, margin: '0 0 12px' }}>
+                Selecione o template WABA que será enviado ao fornecedor para abrir a conversa quando houver compras criadas para ele.
+              </p>
+              <CustomSelect
+                value={config.wabaTemplateId ? String(config.wabaTemplateId) : ''}
+                onChange={(v) => setC('wabaTemplateId', v || null)}
+                placeholder={wabaTemplates.length ? 'Selecionar template' : 'Nenhum template disponível'}
+                options={wabaTemplates.map((t) => ({ value: t.name, label: t.name }))}
+                disabled={!wabaTemplates.length}
+              />
+              {(() => {
+                const tpl = config.wabaTemplateId && wabaTemplates.length
+                  ? wabaTemplates.find((t) => t.name === config.wabaTemplateId)
+                  : null
+                if (!tpl) return null
+                return (
+                  <div style={{ marginTop: 10, padding: '10px 14px', background: 'var(--surface)', borderRadius: 8, border: '1px solid var(--border)', fontSize: '.83rem', color: 'var(--muted)', fontWeight: 600, lineHeight: 1.55 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6, color: 'var(--success, #16a34a)', fontWeight: 700, fontSize: '.78rem' }}>
+                      <Info size={12} /> Prévia do template WABA
+                    </div>
+                    {tpl.body}
+                  </div>
+                )
+              })()}
+            </div>
+
+            {/* Vínculos fornecedor-categoria */}
+            <div className="autoAdjustSection">
+              <div className="autoAdjustSectionTitle"><Truck size={15} /> Vínculo fornecedor → categoria de produto</div>
+              <p style={{ fontSize: '.83rem', color: 'var(--muted)', fontWeight: 600, margin: '0 0 12px' }}>
+                Vincule ao menos um fornecedor a cada categoria. Será usado quando não houver histórico de compra do produto que precisar de reposição.
+              </p>
+              {!allCategoriesCovered && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '8px 12px', background: 'var(--orange-light, #fff3e0)', borderRadius: 8, marginBottom: 12, fontSize: '.82rem', color: 'var(--orange, #f57c00)', fontWeight: 700 }}>
+                  <AlertCircle size={14} /> Todas as categorias precisam de ao menos um fornecedor para ativar a automação
+                </div>
+              )}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {SR_CATEGORIES.map((cat) => {
+                  const bound = getBindingsForCategory(cat)
+                  const isCovered = bound.length > 0
+                  return (
+                    <div key={cat} style={{ background: 'var(--surface)', borderRadius: 10, padding: '10px 12px', border: `1px solid ${isCovered ? 'var(--border)' : 'var(--border)'}` }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 8 }}>
+                        <span style={{ fontWeight: 700, fontSize: '.88rem', flex: 1 }}>{cat}</span>
+                        {isCovered
+                          ? <span style={{ fontSize: '.75rem', color: 'var(--success, #2e7d32)', fontWeight: 700, background: '#e8f5e9', padding: '2px 8px', borderRadius: 99 }}>Vinculado</span>
+                          : <span style={{ fontSize: '.75rem', color: '#e65100', fontWeight: 700, background: '#fff3e0', padding: '2px 8px', borderRadius: 99 }}>Sem fornecedor</span>
+                        }
+                      </div>
+                      {bound.length > 0 && (
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
+                          {bound.map((b) => (
+                            <div key={b.supplierId} style={{ display: 'flex', alignItems: 'center', gap: 5, background: 'var(--chip-bg, #eef2ff)', padding: '3px 10px 3px 8px', borderRadius: 99, fontSize: '.81rem', fontWeight: 600 }}>
+                              <Truck size={11} />{b.supplierName}
+                              <button onClick={() => removeCategoryBinding(cat, b.supplierId)} style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', padding: 0, marginLeft: 2 }}><X size={11} /></button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      <div style={{ display: 'flex', gap: 7 }}>
+                        <CustomSelect
+                          value={bindingSelectors[cat] || ''}
+                          onChange={(v) => setBindingSelectors((p) => ({ ...p, [cat]: v }))}
+                          placeholder="Selecionar fornecedor"
+                          options={suppliers
+                            .filter((s) => !categoryBindings.find((b) => b.category === cat && b.supplierId === s.id))
+                            .map((s) => ({ value: String(s.id), label: s.name }))}
+                        />
+                        <button className="autoAdjustAddBinding" onClick={() => addCategoryBinding(cat, bindingSelectors[cat])} disabled={!bindingSelectors[cat]}><Plus size={15} /></button>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+
+          </div>
+        )}
+
+        <div className="autoAdjustFooter">
+          <button className="autoAdjustSaveBtn" onClick={() => handleSave()} disabled={saving || loading || !isDirty}>
+            {saving ? <><Loader2 size={15} className="verNotaDetailsSpinner" /> Salvando...</> : 'Salvar'}
+          </button>
+          <button className="autoAdjustActivateBtn" onClick={handleActivate} disabled={activating || loading}>
+            {activating
+              ? <><Loader2 size={15} className="verNotaDetailsSpinner" /> {isActive ? 'Desativando...' : 'Ativando...'}</>
+              : isActive ? <><X size={15} /> Desativar automação</> : <><Sparkles size={15} /> Ativar automação</>
+            }
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Automation: Acompanhar clientes parados ───────────────────────────────────
+
+function AutomationClientReactivationAdjustModal({ onClose, onActivate, isActive, notify }) {
+  const [saving, setSaving] = useState(false)
+  const [activating, setActivating] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [wabaTemplates, setWabaTemplates] = useState([])
+
+  const TEMPLATE_PLACEHOLDERS = {
+    promotion: 'Olá {{1}}! 🎉 Temos novidades e promoções especiais esperando por você. Que tal dar uma olhada no que preparamos? Estamos com saudades do seu pedido!',
+    catalog:   'Olá {{1}}! Nosso catálogo foi atualizado com produtos fresquinhos. Acesse agora e confira as novidades que separamos para você 🛒',
+  }
+
+  const [config, setConfig] = useState({
+    inactiveDays: 30,
+    resendDays: 30,
+    messageType: 'promotion',
+    wabaTemplatePromoId: null,
+    wabaTemplateCatalogId: null,
+    timeIntervalMinutes: 60,
+    timeStart: '08:00',
+    timeEnd: '18:00',
+    crPromoParam2: '',
+    crPromoParam3: '',
+  })
+  const [savedConfig, setSavedConfig] = useState(null)
+
+  useEffect(() => {
+    const fetchAll = async () => {
+      setLoading(true)
+      try {
+        const [cfgRes, tmplRes] = await Promise.all([
+          fetch(`${API_URL}/api/automation-config?key=client_reactivation`).then((r) => r.json()).catch(() => null),
+          fetch(`${API_URL}/api/waba-templates`).then((r) => r.json()).catch(() => null),
+        ])
+        if (Array.isArray(tmplRes)) setWabaTemplates(tmplRes)
+        if (cfgRes?.config) {
+          const loaded = {
+            inactiveDays: cfgRes.config.crInactiveDays ?? 30,
+            resendDays: cfgRes.config.crResendDays ?? 30,
+            messageType: cfgRes.config.crMessageType ?? 'promotion',
+            wabaTemplatePromoId: cfgRes.config.crWabaTemplatePromoId ?? null,
+            wabaTemplateCatalogId: cfgRes.config.crWabaTemplateCatalogId ?? null,
+            timeIntervalMinutes: cfgRes.config.timeIntervalMinutes ?? 60,
+            timeStart: cfgRes.config.timeStart ?? '08:00',
+            timeEnd: cfgRes.config.timeEnd ?? '18:00',
+            crPromoParam2: cfgRes.config.crPromoParam2 ?? '',
+            crPromoParam3: cfgRes.config.crPromoParam3 ?? '',
+          }
+          setConfig(loaded)
+          setSavedConfig(loaded)
+        } else {
+          const def = { inactiveDays: 30, resendDays: 30, messageType: 'promotion', wabaTemplatePromoId: null, wabaTemplateCatalogId: null, timeIntervalMinutes: 60, timeStart: '08:00', timeEnd: '18:00', crPromoParam2: '', crPromoParam3: '' }
+          setSavedConfig(def)
+        }
+      } catch { /* ignore */ }
+      finally { setLoading(false) }
+    }
+    fetchAll()
+  }, [])
+
+  const setC = (k, v) => setConfig((p) => ({ ...p, [k]: v }))
+
+  const isDirty = savedConfig !== null && JSON.stringify(config) !== JSON.stringify(savedConfig)
+
+  const handleSave = async (silent = false) => {
+    setSaving(true)
+    try {
+      const res = await fetch(`${API_URL}/api/automation-config`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          key: 'client_reactivation',
+          config: {
+            crInactiveDays: config.inactiveDays,
+            crResendDays: config.resendDays,
+            crMessageType: config.messageType,
+            crWabaTemplatePromoId: config.wabaTemplatePromoId,
+            crWabaTemplateCatalogId: config.wabaTemplateCatalogId,
+            timeIntervalMinutes: config.timeIntervalMinutes,
+            timeStart: config.timeStart,
+            timeEnd: config.timeEnd,
+            crPromoParam2: config.crPromoParam2,
+            crPromoParam3: config.crPromoParam3,
+          },
+        }),
+      })
+      if (res.ok) {
+        if (!silent) notify('Configurações salvas com sucesso.')
+        setSavedConfig(config)
+      } else if (!silent) notify('Erro ao salvar configurações.')
+      return res.ok
+    } catch {
+      if (!silent) notify('Erro ao salvar configurações.')
+      return false
+    } finally { setSaving(false) }
+  }
+
+  const handleActivate = async () => {
+    setActivating(true)
+    try {
+      const saved = await handleSave(true)
+      if (saved) await onActivate()
+      else notify('Erro ao salvar configurações.')
+    } finally { setActivating(false) }
+  }
+
+  return (
+    <div className="nfOverlay" onClick={(e) => e.target.classList.contains('nfOverlay') && onClose()}>
+      <div className="autoAdjustModal">
+        <div className="autoAdjustHeader">
+          <div className="autoAdjustHeaderInfo">
+            <div>
+              <span>Automação</span>
+              <h2>Acompanhar clientes parados</h2>
+              <p>Configure como esta automação deve funcionar</p>
+            </div>
+          </div>
+          <button className="nfClose" style={{ position: 'static' }} onClick={onClose}><X size={16} /></button>
+        </div>
+
+        {loading ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '32px 28px', color: 'var(--muted)', fontWeight: 700 }}>
+            <Loader2 size={18} className="verNotaDetailsSpinner" /> Carregando configurações...
+          </div>
+        ) : (
+          <div className="autoAdjustBody">
+
+            {/* Dias de inatividade */}
+            <div className="autoAdjustSection">
+              <div className="autoAdjustSectionTitle"><Users size={15} /> Critério de inatividade</div>
+              <p style={{ fontSize: '.83rem', color: 'var(--muted)', fontWeight: 600, margin: '0 0 12px' }}>
+                Considerar um cliente inativo quando ele ficar sem realizar nenhum pedido por:
+              </p>
+              <div className="autoAdjustRow">
+                <label style={{ flex: 1 }}>
+                  <span>Dias sem pedido</span>
+                  <input type="number" min={1} max={365} value={config.inactiveDays}
+                    onChange={(e) => setC('inactiveDays', Math.max(1, Number(e.target.value)))} />
+                </label>
+              </div>
+            </div>
+
+            {/* Reenvio de template */}
+            <div className="autoAdjustSection">
+              <div className="autoAdjustSectionTitle"><RefreshCw size={15} /> Reenvio de template</div>
+              <p style={{ fontSize: '.83rem', color: 'var(--muted)', fontWeight: 600, margin: '0 0 12px' }}>
+                Aguardar X dias antes de reenviar o template para o mesmo cliente. Caso o cliente realize uma compra antes desse prazo, o envio não será feito.
+              </p>
+              <div className="autoAdjustRow">
+                <label style={{ flex: 1 }}>
+                  <span>Dias para reenvio</span>
+                  <input type="number" min={1} max={365} value={config.resendDays}
+                    onChange={(e) => setC('resendDays', Math.max(1, Number(e.target.value)))} />
+                </label>
+              </div>
+            </div>
+
+            {/* Tipo de mensagem */}
+            <div className="autoAdjustSection">
+              <div className="autoAdjustSectionTitle"><MessageCircle size={15} /> Tipo de mensagem</div>
+              <p style={{ fontSize: '.83rem', color: 'var(--muted)', fontWeight: 600, margin: '0 0 14px' }}>
+                Selecione qual template WABA será enviado aos clientes inativos
+              </p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                {[
+                  { key: 'promotion', label: 'Promoção', icon: Tag, desc: 'Mensagem de oferta especial para reativar o cliente', templateId: config.wabaTemplatePromoId },
+                  { key: 'catalog', label: 'Ver catálogo', icon: ExternalLink, desc: 'Convite para o cliente conferir novidades no catálogo', templateId: config.wabaTemplateCatalogId },
+                ].map(({ key, label, icon: Icon, desc, templateId }) => {
+                  const realBody = templateId && wabaTemplates.length
+                    ? (wabaTemplates.find((t) => t.name === templateId)?.body ?? null)
+                    : null
+                  return (
+                  <div key={key}>
+                    <label
+                      className="autoAdjustCheckRow"
+                      style={{ cursor: 'pointer', alignItems: 'flex-start' }}
+                      onClick={() => setC('messageType', key)}
+                    >
+                      <input type="radio" readOnly checked={config.messageType === key}
+                        style={{ accentColor: 'var(--primary)', width: 16, height: 16, marginTop: 3 }} />
+                      <div>
+                        <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}><Icon size={13} />{label}</span>
+                        <small>{desc}</small>
+                      </div>
+                    </label>
+                    {config.messageType === key && (
+                      <>
+                        <div style={{ marginTop: 8, padding: '10px 14px', background: 'var(--surface)', borderRadius: 8, border: '1px solid var(--border)', fontSize: '.83rem', color: 'var(--muted)', fontWeight: 600, lineHeight: 1.55 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6, color: realBody ? 'var(--success, #16a34a)' : 'var(--primary)', fontWeight: 700, fontSize: '.78rem' }}>
+                            <Info size={12} /> {realBody ? 'Prévia do template WABA' : 'Prévia do template (placeholder — será substituído pelo template real do WABA)'}
+                          </div>
+                          {realBody ?? TEMPLATE_PLACEHOLDERS[key]}
+                        </div>
+                        {key === 'promotion' && (
+                          <div style={{ marginTop: 10, padding: '10px 14px', background: 'var(--surface)', borderRadius: 8, border: '1px solid var(--border)' }}>
+                            <div style={{ fontSize: '.78rem', fontWeight: 700, color: 'var(--muted)', marginBottom: 8 }}>Parâmetros do template</div>
+                            <div className="autoAdjustRow" style={{ gap: 8 }}>
+                              <label style={{ flex: '0 0 180px' }}>
+                                <span>1 - Nome</span>
+                                <input type="text" disabled value="Nome do cliente (automático)" style={{ opacity: 0.5, cursor: 'not-allowed' }} />
+                              </label>
+                              <label style={{ flex: 1 }}>
+                                <span>2 - Desconto</span>
+                                <input type="text" placeholder="Ex: 10%" value={config.crPromoParam2}
+                                  onChange={(e) => setC('crPromoParam2', e.target.value)} />
+                              </label>
+                              <label style={{ flex: 1 }}>
+                                <span>3 - Validade</span>
+                                <input type="text" placeholder="Ex: 01/09" value={config.crPromoParam3}
+                                  onChange={(e) => setC('crPromoParam3', e.target.value)} />
+                              </label>
+                            </div>
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                  )
+                })}
+              </div>
+            </div>
+
+            {/* Período de execução */}
+            <div className="autoAdjustSection">
+              <div className="autoAdjustSectionTitle"><Clock3 size={15} /> Período de execução</div>
+              <div className="autoAdjustRow">
+                <label>
+                  <span>Intervalo (minutos)</span>
+                  <input type="number" min={5} max={1440} value={config.timeIntervalMinutes}
+                    onChange={(e) => setC('timeIntervalMinutes', Math.max(5, Number(e.target.value)))} />
+                </label>
+                <label>
+                  <span>Início</span>
+                  <TimePickerInput value={config.timeStart} onChange={(v) => setC('timeStart', v)} dropUp />
+                </label>
+                <label>
+                  <span>Fim</span>
+                  <TimePickerInput value={config.timeEnd} onChange={(v) => setC('timeEnd', v)} dropUp />
+                </label>
+              </div>
+            </div>
+
+          </div>
+        )}
+
+        <div className="autoAdjustFooter">
+          <button className="autoAdjustSaveBtn" onClick={() => handleSave()} disabled={saving || loading || !isDirty}>
+            {saving ? <><Loader2 size={15} className="verNotaDetailsSpinner" /> Salvando...</> : 'Salvar'}
+          </button>
+          <button className="autoAdjustActivateBtn" onClick={handleActivate} disabled={activating || loading}>
+            {activating
+              ? <><Loader2 size={15} className="verNotaDetailsSpinner" /> {isActive ? 'Desativando...' : 'Ativando...'}</>
+              : isActive ? <><X size={15} /> Desativar automação</> : <><Sparkles size={15} /> Ativar automação</>
+            }
+          </button>
+        </div>
+      </div>
+    </div>
   )
 }
 
@@ -4526,7 +6691,7 @@ function DateTimePicker({ value, onChange, placeholder = 'Selecionar data e hora
   )
 }
 
-function TimePickerInput({ value = '08:00', onChange }) {
+function TimePickerInput({ value = '08:00', onChange, dropUp = false }) {
   const [open, setOpen] = useState(false)
   const ref = useRef(null)
   const parts = (value || '08:00').split(':')
@@ -4553,7 +6718,7 @@ function TimePickerInput({ value = '08:00', onChange }) {
         <ChevronDown size={14} style={{ marginLeft: 'auto', flexShrink: 0, transform: open ? 'rotate(180deg)' : 'none', transition: 'transform .2s' }} />
       </button>
       {open && (
-        <div className="dtpDropdown tpDropdown">
+        <div className="dtpDropdown tpDropdown" style={dropUp ? { top: 'auto', bottom: 'calc(100% + 6px)' } : undefined}>
           <p className="tpLabel">Selecionar horário</p>
           <div className="tpWheels">
             <div className="tpWheel">
@@ -4577,7 +6742,7 @@ function TimePickerInput({ value = '08:00', onChange }) {
   )
 }
 
-function CustomSelect({ value, onChange, options = [], placeholder = 'Selecione...', disabled = false }) {
+function CustomSelect({ value, onChange, options = [], placeholder = 'Selecione...', disabled = false, dropUp = false }) {
   const [open, setOpen] = useState(false)
   const ref = useRef(null)
   const selected = options.find((o) => String(o.value) === String(value))
@@ -4595,7 +6760,7 @@ function CustomSelect({ value, onChange, options = [], placeholder = 'Selecione.
         <ChevronDown size={14} style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform .2s', flexShrink: 0 }} />
       </button>
       {open && (
-        <div className="productSelectDropdown">
+        <div className="productSelectDropdown" style={dropUp ? { top: 'auto', bottom: 'calc(100% + 6px)' } : undefined}>
           {options.length === 0 && <p className="productSelectEmpty">Nenhuma opção disponível</p>}
           {options.map((o) => (
             <button key={o.value} type="button" className={String(value) === String(o.value) ? 'active' : ''} onClick={() => { onChange(o.value); setOpen(false) }}>
@@ -4641,7 +6806,12 @@ function ProductSelect({ value, onChange, disabled, products: productList = [] }
   )
 }
 
-function NewOrderModal({ onClose, onCreateOrder, onUpdateOrder, editOrder, clients = [], lockedEdit = false, notesOnlyEdit = false, products = [] }) {
+function NewOrderModal({ onClose, onCreateOrder, onUpdateOrder, editOrder, clients = [], lockedEdit = false, notesOnlyEdit = false, balcaoNotesOnlyEdit = false, products = [], automationLockClient = false, onAddClient }) {
+  const [tab, setTab] = useState((balcaoNotesOnlyEdit || editOrder?.status === 'Balcão') ? 'balcao' : 'pedido')
+  const [localClients, setLocalClients] = useState(clients)
+  const [balcaoNewClientOpen, setBalcaoNewClientOpen] = useState(false)
+
+  useEffect(() => { setLocalClients(clients) }, [clients])
   const [selectedClientId, setSelectedClientId] = useState(() => {
     if (editOrder) {
       const match = clients.find((c) => c.establishmentName === editOrder.customer)
@@ -4677,6 +6847,181 @@ function NewOrderModal({ onClose, onCreateOrder, onUpdateOrder, editOrder, clien
   })
   const [submitError, setSubmitError] = useState('')
   const [submitting, setSubmitting] = useState(false)
+
+  // ── Balcão form state ────────────────────────────────────────────────────
+  const isBalcaoEdit = !!(editOrder?.status === 'Balcão')
+  const [balcaoClientId, setBalcaoClientId] = useState(() => {
+    if (editOrder?.status === 'Balcão' && editOrder) {
+      const match = clients.find((c) => c.establishmentName === editOrder.customer)
+      return match ? String(match.id) : ''
+    }
+    return ''
+  })
+  const [balcaoItems, setBalcaoItems] = useState(() => {
+    if (editOrder?.status === 'Balcão' && editOrder?.products?.length > 0) {
+      return editOrder.products.map((p) => {
+        const product = products.find((pr) => pr.name === p.name)
+        return { productId: product ? product.id : null, qty: p.qty }
+      })
+    }
+    return [{ productId: null, qty: 0 }]
+  })
+  const [balcaoNotes, setBalcaoNotes] = useState(editOrder?.status === 'Balcão' && editOrder ? editOrder.notes || '' : '')
+  const [balcaoPurpose, setBalcaoPurpose] = useState(editOrder?.status === 'Balcão' && editOrder ? editOrder.purchasePurpose || 'consumo' : 'consumo')
+  const [balcaoCnpj, setBalcaoCnpj] = useState('')
+  const [balcaoSubmitError, setBalcaoSubmitError] = useState('')
+  const [balcaoSubmitting, setBalcaoSubmitting] = useState(false)
+
+  const handleBalcaoClientSelect = (id) => {
+    if (id === '__new__') { setBalcaoNewClientOpen(true); return }
+    setBalcaoClientId(id)
+    const c = localClients.find((cl) => String(cl.id) === String(id))
+    setBalcaoCnpj(c?.cnpj || '')
+  }
+
+  const balcaoOrderProducts = balcaoItems
+    .filter((item) => item.productId && item.qty > 0)
+    .map((item) => { const p = products.find((pr) => pr.id === item.productId); return { ...p, qty: item.qty } })
+  const balcaoTotal = balcaoOrderProducts.reduce((sum, p) => sum + p.price * p.qty, 0)
+  const balcaoClient = localClients.find((c) => String(c.id) === String(balcaoClientId))
+  const balcaoClientHasCnpj = !!(balcaoClient?.cnpj)
+  const balcaoNeedsCnpj = !!balcaoClientId && !balcaoClientHasCnpj
+  const balcaoIsDirty = !isBalcaoEdit || (() => {
+    if (!editOrder) return true
+    const origClient = clients.find((c) => c.establishmentName === editOrder.customer)
+    if (balcaoClientId !== (origClient ? String(origClient.id) : '')) return true
+    if (balcaoNotes !== (editOrder.notes || '')) return true
+    if (balcaoPurpose !== (editOrder.purchasePurpose || 'consumo')) return true
+    const origItems = (editOrder.products || []).map((p) => ({ productId: products.find((pr) => pr.name === p.name)?.id ?? null, qty: p.qty })).filter((i) => i.productId && i.qty > 0)
+    const curItems = balcaoItems.filter((i) => i.productId && i.qty > 0)
+    if (curItems.length !== origItems.length) return true
+    return curItems.some((ci, idx) => ci.productId !== origItems[idx]?.productId || ci.qty !== origItems[idx]?.qty)
+  })()
+  const balcaoCanSubmit = !!balcaoClientId && balcaoItems.some((i) => i.productId && i.qty > 0) && (!balcaoNeedsCnpj || balcaoCnpj.trim() !== '') && balcaoIsDirty
+
+  const submitBalcao = async (e) => {
+    e.preventDefault()
+    if (!balcaoCanSubmit || balcaoSubmitting) return
+    setBalcaoSubmitError('')
+    setBalcaoSubmitting(true)
+    try {
+      const effectiveCnpj = balcaoClientHasCnpj ? (balcaoClient?.cnpj || null) : (balcaoCnpj.trim() || null)
+      const payload = {
+        clientId: Number(balcaoClientId),
+        clientName: balcaoClient?.establishmentName || '',
+        clientCnpj: effectiveCnpj,
+        clientCity: balcaoClient?.city || null,
+        clientPhone: balcaoClient?.contactNumber || null,
+        totalValue: balcaoTotal,
+        observations: balcaoNotes || null,
+        source: 'Balcão',
+        purchasePurpose: balcaoPurpose,
+        balcaoStatus: 'aguardando_pagamento',
+        items: balcaoOrderProducts.map((p) => ({ productName: p.name, quantity: p.qty, unit: p.unit, unitPrice: p.price })),
+      }
+      const res = await fetch(`${API_URL}/api/orders`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Erro ao criar pedido')
+      const order = {
+        ...data.order,
+        status: 'Balcão',
+        source: 'Balcão',
+        cnpj: effectiveCnpj || data.order.cnpj || '',
+        cpf: balcaoClient?.cpf || '',
+        purchasePurpose: balcaoPurpose,
+        balcaoData: { balcaoStatus: 'aguardando_pagamento', paymentMethod: null, paymentConfirmedAt: null },
+      }
+      onCreateOrder(order)
+      onClose()
+    } catch (err) {
+      setBalcaoSubmitError(err.message || 'Erro ao criar pedido. Tente novamente.')
+    } finally {
+      setBalcaoSubmitting(false)
+    }
+  }
+
+  const submitBalcaoEdit = async (e) => {
+    e.preventDefault()
+    if (!balcaoCanSubmit || balcaoSubmitting) return
+    setBalcaoSubmitError('')
+    setBalcaoSubmitting(true)
+    try {
+      const effectiveCnpj = balcaoClientHasCnpj ? (balcaoClient?.cnpj || null) : (balcaoCnpj.trim() || null)
+      const payload = {
+        orderId: editOrder.id,
+        clientId: Number(balcaoClientId),
+        clientName: balcaoClient?.establishmentName || '',
+        clientCnpj: effectiveCnpj,
+        clientCity: balcaoClient?.city || null,
+        clientPhone: balcaoClient?.contactNumber || null,
+        totalValue: balcaoTotal,
+        observations: balcaoNotes || null,
+        purchasePurpose: balcaoPurpose,
+        items: balcaoOrderProducts.map((p) => ({ productName: p.name, quantity: p.qty, unit: p.unit, unitPrice: p.price })),
+      }
+      const res = await fetch(`${API_URL}/api/orders`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Erro ao atualizar pedido')
+      const updatedOrder = {
+        ...editOrder,
+        customer: balcaoClient?.establishmentName || '',
+        cnpj: effectiveCnpj || '',
+        city: balcaoClient?.city || '',
+        whatsapp: balcaoClient?.contactNumber || '',
+        value: balcaoTotal,
+        products: balcaoOrderProducts.map((p) => ({ name: p.name, qty: p.qty, unit: p.unit, price: p.price })),
+        notes: balcaoNotes || '',
+        purchasePurpose: balcaoPurpose,
+      }
+      onUpdateOrder(updatedOrder)
+      onClose()
+    } catch (err) {
+      setBalcaoSubmitError(err.message || 'Erro ao atualizar pedido. Tente novamente.')
+    } finally {
+      setBalcaoSubmitting(false)
+    }
+  }
+
+  const submitBalcaoNotesOnly = async (e) => {
+    e.preventDefault()
+    if (balcaoSubmitting) return
+    setBalcaoSubmitError('')
+    setBalcaoSubmitting(true)
+    try {
+      const payload = {
+        orderId: editOrder.id,
+        clientId: null,
+        clientName: editOrder.customer,
+        clientCnpj: editOrder.cnpj || null,
+        clientCity: editOrder.city || null,
+        clientPhone: editOrder.whatsapp || null,
+        totalValue: editOrder.value,
+        observations: balcaoNotes || null,
+        items: editOrder.products.map((p) => ({ productName: p.name, quantity: p.qty, unit: p.unit, unitPrice: p.price })),
+      }
+      const res = await fetch(`${API_URL}/api/orders`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Erro ao atualizar pedido')
+      onUpdateOrder({ ...editOrder, notes: balcaoNotes || '' })
+      onClose()
+    } catch (err) {
+      setBalcaoSubmitError(err.message || 'Erro ao salvar. Tente novamente.')
+    } finally {
+      setBalcaoSubmitting(false)
+    }
+  }
 
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }))
   const addItem = () => setItems((i) => [...i, { productId: null, qty: 0 }])
@@ -4794,11 +7139,24 @@ function NewOrderModal({ onClose, onCreateOrder, onUpdateOrder, editOrder, clien
         <button className="closeBtn" onClick={onClose}><X /></button>
         <div className="modalHeader">
           <div>
-            <span>Pedido {editOrder ? 'existente' : 'manual'}</span>
-            <h2>{editOrder ? 'Editar pedido' : 'Novo pedido'}</h2>
-            <p>{notesOnlyEdit ? 'Pedido entregue — apenas Observações pode ser editado' : editOrder ? 'Altere os dados do pedido e salve as modificações' : 'Preencha os dados do cliente e os produtos solicitados'}</p>
+            <span>{isBalcaoEdit ? 'Venda no balcão' : editOrder ? 'Pedido existente' : 'Pedido manual'}</span>
+            <h2>{isBalcaoEdit ? 'Editar venda no balcão' : editOrder ? 'Editar pedido' : 'Novo pedido'}</h2>
+            <p>{balcaoNotesOnlyEdit ? 'Venda entregue — apenas Observações pode ser editado' : isBalcaoEdit ? 'Altere os dados da venda no balcão e salve as modificações' : notesOnlyEdit ? 'Pedido entregue — apenas Observações pode ser editado' : editOrder ? 'Altere os dados do pedido e salve as modificações' : tab === 'balcao' ? 'Registre uma venda direta no balcão da Saborsan' : 'Preencha os dados do cliente e os produtos solicitados'}</p>
           </div>
         </div>
+
+        {!editOrder && !balcaoNotesOnlyEdit && (
+          <div className="newProductTabs">
+            <button className={`newProductTab${tab === 'pedido' ? ' active' : ''}`} onClick={() => setTab('pedido')}>
+              <ClipboardEdit size={16} /> Pedido
+            </button>
+            <button className={`newProductTab${tab === 'balcao' ? ' active' : ''}`} onClick={() => setTab('balcao')}>
+              <Store size={16} /> Venda no balcão
+            </button>
+          </div>
+        )}
+
+        {((!isBalcaoEdit && editOrder) || tab === 'pedido') && (
         <form onSubmit={submit}>
           <div className="newOrderScrollArea">
             <h3>Dados do cliente</h3>
@@ -4807,10 +7165,11 @@ function NewOrderModal({ onClose, onCreateOrder, onUpdateOrder, editOrder, clien
                 <CustomSelect
                   value={selectedClientId}
                   onChange={(v) => handleClientSelect(v)}
-                  disabled={lockedEdit || notesOnlyEdit}
+                  disabled={lockedEdit || notesOnlyEdit || automationLockClient}
                   placeholder={clients.length === 0 ? 'Carregando clientes...' : 'Selecione o cliente'}
                   options={clients.map((c) => ({ value: String(c.id), label: `${c.establishmentName}${c.city ? ` — ${c.city}` : ''}` }))}
                 />
+                {automationLockClient && <small style={{color:'var(--muted)',fontWeight:600,marginTop:4,display:'block'}}>Campo desabilitado — automação 'Criar entregas' está ativada</small>}
               </label>
             </div>
             {selectedClientId && (() => {
@@ -4818,7 +7177,8 @@ function NewOrderModal({ onClose, onCreateOrder, onUpdateOrder, editOrder, clien
               if (!c) return null
               return (
                 <div className="supplierDetailGrid" style={{ marginTop: 10, marginBottom: 4 }}>
-                  {(c.cnpj || c.document) && <div className="supplierDetailItem"><span>{c.documentType === 'cpf' ? 'CPF' : 'CNPJ'}</span><b>{c.document || c.cnpj}</b></div>}
+                  {c.cnpj && <div className="supplierDetailItem"><span>CNPJ</span><b>{c.cnpj}</b></div>}
+                  {c.cpf && <div className="supplierDetailItem"><span>CPF</span><b>{c.cpf}</b></div>}
                   {c.city && <div className="supplierDetailItem"><span>Cidade</span><b>{c.city}</b></div>}
                   {c.contactNumber && <div className="supplierDetailItem"><span>WhatsApp</span><b>{c.contactNumber}</b></div>}
                 </div>
@@ -4886,35 +7246,227 @@ function NewOrderModal({ onClose, onCreateOrder, onUpdateOrder, editOrder, clien
             </div>
           </div>
         </form>
+        )}
+
+        {(isBalcaoEdit || (!editOrder && tab === 'balcao')) && (
+        <form onSubmit={balcaoNotesOnlyEdit ? submitBalcaoNotesOnly : isBalcaoEdit ? submitBalcaoEdit : submitBalcao}>
+          <div className="newOrderScrollArea">
+            <h3>Dados do cliente</h3>
+            <div className="settingsForm">
+              <label>Cliente *
+                <CustomSelect
+                  value={balcaoClientId}
+                  onChange={handleBalcaoClientSelect}
+                  disabled={balcaoNotesOnlyEdit}
+                  placeholder={localClients.length === 0 ? 'Carregando clientes...' : 'Selecione o cliente'}
+                  options={[
+                    { value: '__new__', label: '+ Cadastrar novo cliente' },
+                    ...localClients.map((c) => ({ value: String(c.id), label: `${c.establishmentName}${c.city ? ` — ${c.city}` : ''}` })),
+                  ]}
+                />
+              </label>
+            </div>
+            {balcaoClientId && balcaoClientId !== '__new__' && balcaoClient && (
+              <div className="supplierDetailGrid" style={{ marginTop: 10, marginBottom: 4 }}>
+                {balcaoClient.cnpj && <div className="supplierDetailItem"><span>CNPJ</span><b>{balcaoClient.cnpj}</b></div>}
+                {balcaoClient.cpf && <div className="supplierDetailItem"><span>CPF</span><b>{balcaoClient.cpf}</b></div>}
+                {balcaoClient.city && <div className="supplierDetailItem"><span>Cidade</span><b>{balcaoClient.city}</b></div>}
+                {balcaoClient.contactNumber && <div className="supplierDetailItem"><span>WhatsApp</span><b>{balcaoClient.contactNumber}</b></div>}
+              </div>
+            )}
+            {balcaoNeedsCnpj && (
+              <div className="settingsForm" style={{ marginTop: 8 }}>
+                <label>CNPJ do cliente *
+                  <input
+                    placeholder="00.000.000/0001-00"
+                    value={balcaoCnpj}
+                    onChange={(e) => setBalcaoCnpj(e.target.value)}
+                  />
+                  <small style={{ color: 'var(--muted)', fontWeight: 600, marginTop: 4, display: 'block' }}>Este cliente não tem CNPJ cadastrado. Informe para continuar.</small>
+                </label>
+              </div>
+            )}
+
+            <h3 className="newOrderSectionTitle">Produtos solicitados</h3>
+            <div className="newOrderItems">
+              {balcaoItems.map((item, idx) => {
+                const product = item.productId ? products.find((p) => p.id === item.productId) : null
+                return (
+                  <div className="newOrderItem" key={idx}>
+                    <ProductSelect
+                      value={item.productId}
+                      disabled={balcaoNotesOnlyEdit}
+                      products={products}
+                      onChange={(val) => setBalcaoItems((prev) => prev.map((it, j) => j === idx ? { ...it, productId: val, qty: Math.max(1, it.qty) } : it))}
+                    />
+                    <input type="number" min={item.productId ? 1 : 0} value={item.qty} disabled={balcaoNotesOnlyEdit || !item.productId} onChange={(e) => setBalcaoItems((prev) => prev.map((it, j) => j === idx ? { ...it, qty: Math.max(1, Number(e.target.value)) } : it))} />
+                    <span className="newOrderUnit">{product ? product.unit : ''}</span>
+                    <span className="newOrderItemPrice">{product && item.qty > 0 ? money(product.price * item.qty) : ''}</span>
+                    {!balcaoNotesOnlyEdit && balcaoItems.length > 1 && (
+                      <button type="button" className="newOrderRemoveBtn" onClick={() => setBalcaoItems((prev) => prev.filter((_, j) => j !== idx))}><X size={14} /></button>
+                    )}
+                  </div>
+                )
+              })}
+              {!balcaoNotesOnlyEdit && <button type="button" className="newOrderAddBtn" onClick={() => setBalcaoItems((prev) => [...prev, { productId: null, qty: 0 }])}>
+                <Plus size={15} /> Adicionar produto
+              </button>}
+            </div>
+
+            <h3 className="newOrderSectionTitle">Finalidade da compra</h3>
+            <div className="nfFinalidadeOpts" style={balcaoNotesOnlyEdit ? { pointerEvents: 'none', opacity: 0.75 } : {}}>
+              <label className={`nfFinalidadeOpt${balcaoPurpose === 'consumo' ? ' selected' : ''}`}>
+                <input type="radio" name="balcaoPurpose" value="consumo" checked={balcaoPurpose === 'consumo'} onChange={() => !balcaoNotesOnlyEdit && setBalcaoPurpose('consumo')} />
+                <span>Consumo próprio</span>
+                <small>Uso interno, sem revenda</small>
+              </label>
+              <label className={`nfFinalidadeOpt${balcaoPurpose === 'revenda' ? ' selected' : ''}`}>
+                <input type="radio" name="balcaoPurpose" value="revenda" checked={balcaoPurpose === 'revenda'} onChange={() => !balcaoNotesOnlyEdit && setBalcaoPurpose('revenda')} />
+                <span>Revenda / Industrialização</span>
+                <small>Requer CNPJ cadastrado</small>
+              </label>
+            </div>
+
+            <div className="noteBox" style={{ marginTop: '16px' }}>
+              <b>Observações</b>
+              <textarea rows={3} placeholder="Instruções especiais, forma de retirada..." value={balcaoNotes} onChange={(e) => setBalcaoNotes(e.target.value)} />
+            </div>
+          </div>
+
+          <div className="newOrderFooter">
+            <div className="newOrderTotalInline">
+              <span>Total estimado</span>
+              <strong>{money(balcaoTotal)}</strong>
+            </div>
+            {balcaoSubmitError && <small className="errorText">{balcaoSubmitError}</small>}
+            <div className="newOrderFooterActions">
+              <button type="submit" className="btnPrimary" disabled={balcaoNotesOnlyEdit ? balcaoSubmitting : (!balcaoCanSubmit || balcaoSubmitting)}><CheckCircle2 size={17} /> {balcaoSubmitting ? (isBalcaoEdit ? 'Salvando...' : 'Criando...') : isBalcaoEdit ? 'Salvar alterações' : 'Registrar venda'}</button>
+            </div>
+          </div>
+        </form>
+        )}
+      </div>
+
+      {balcaoNewClientOpen && (
+        <NewClientModal
+          onClose={() => setBalcaoNewClientOpen(false)}
+          onCreated={(c) => {
+            setLocalClients((prev) => [c, ...prev])
+            onAddClient && onAddClient(c)
+            setBalcaoClientId(String(c.id))
+            setBalcaoCnpj(c.cnpj || '')
+            setBalcaoNewClientOpen(false)
+          }}
+        />
+      )}
+    </div>
+  )
+}
+
+function BalcaoPaymentModal({ order, onClose, onConfirm }) {
+  const [method, setMethod] = useState(null)
+  const [confirming, setConfirming] = useState(false)
+
+  const methods = [
+    { id: 'pix', label: 'Pix', icon: QrCode, desc: 'Transferência instantânea' },
+    { id: 'cartao', label: 'Cartão de crédito ou débito', icon: CreditCard, desc: 'Máquina de cartão' },
+    { id: 'boleto', label: 'Boleto', icon: FileText, desc: 'Pagamento via boleto bancário' },
+    { id: 'dinheiro', label: 'Dinheiro físico', icon: Banknote, desc: 'Pagamento em espécie' },
+  ]
+
+  return (
+    <div className="modalBackdrop">
+      <div className="detailModal newOrderModal" style={{ maxWidth: 520 }}>
+        <button className="closeBtn" onClick={onClose}><X /></button>
+        <div className="modalHeader">
+          <div>
+            <span>{order.id}</span>
+            <h2>Forma de pagamento</h2>
+            <p>Selecione como o cliente realizará o pagamento</p>
+          </div>
+        </div>
+        <div className="newOrderScrollArea">
+          <h3 className="newOrderSectionTitle" style={{ marginTop: 0 }}>Cliente</h3>
+          <div className="supplierDetailGrid" style={{ marginBottom: 16 }}>
+            <div className="supplierDetailItem"><span>Nome</span><b>{order.customer}</b></div>
+            {order.purchasePurpose === 'consumo'
+              ? (order.cpf && <div className="supplierDetailItem"><span>CPF</span><b>{order.cpf}</b></div>)
+              : (order.cnpj && <div className="supplierDetailItem"><span>CNPJ</span><b>{order.cnpj}</b></div>)
+            }
+          </div>
+          <h3 className="newOrderSectionTitle">Método de pagamento</h3>
+          <div className="balcaoPaymentMethods">
+            {methods.map((m) => (
+              <button
+                key={m.id}
+                type="button"
+                className={`balcaoPaymentMethod${method === m.id ? ' selected' : ''}`}
+                onClick={() => setMethod(m.id)}
+              >
+                <div className="balcaoPaymentMethodIcon"><m.icon size={20} /></div>
+                <div className="balcaoPaymentMethodInfo">
+                  <b>{m.label}</b>
+                  <small>{m.desc}</small>
+                </div>
+              </button>
+            ))}
+          </div>
+          {method && (
+            <div className="balcaoPaymentTotal">
+              <span>Total a pagar</span>
+              <strong>{money(order.value)}</strong>
+            </div>
+          )}
+        </div>
+        <div className="newOrderFooter">
+          <div className="newOrderFooterActions" style={{ marginLeft: 'auto' }}>
+            <button
+              type="button"
+              className="btnPrimary"
+              style={{ border: 0, borderRadius: 999, padding: '12px 20px', fontWeight: 900, background: 'linear-gradient(135deg,var(--orange),#ff9c2c)', color: '#fff' }}
+              disabled={!method || confirming}
+              onClick={async () => {
+                setConfirming(true)
+                await onConfirm(method)
+                setConfirming(false)
+              }}
+            >
+              <CheckCircle2 size={17} /> {confirming ? 'Confirmando...' : 'Confirmar pagamento'}
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   )
 }
 
-function OrderModal({ order, onClose, updateOrderStatus, createInvoice, onRemove, onEdit, canRemove = true, onReactivate = null }) {
+function OrderModal({ order, linkedDelivery = null, onClose, updateOrderStatus, createInvoice, onRemove, onEdit, canRemove = true, onReactivate = null, receiveOrdersActive = false }) {
+  const deliveryLabel = linkedDelivery ? `${linkedDelivery.id} · ${linkedDelivery.status}` : order.delivery
   return (
     <div className="modalBackdrop">
       <div className="detailModal orderModal">
         <button className="closeBtn" onClick={onClose}><X /></button>
-        <div className="modalHeader"><div><span>{order.id}</span><h2>{order.customer}</h2><p>{order.cnpj} • {order.city}</p></div><Status status={order.isDeleted ? 'Removido' : order.status} /></div>
+        <div className="modalHeader"><div><span>{order.id}</span><h2>{order.customer}</h2><p>{order.whatsapp} • {order.city}</p></div></div>
         <div className="orderModalBody">
-          <div className="modalSplit">
-            <div>
-              <h3>Produtos solicitados</h3>
-              <div className="modalItems">{order.products.map((p) => <div key={p.name}><span>{p.qty} {p.unit}</span><b>{p.name}</b><strong>{money(p.qty * p.price)}</strong></div>)}</div>
-              <div className="noteBox"><b>Observações</b><p>{order.notes}</p></div>
-            </div>
-            <div className="summaryBox">
+          <div>
+            <h3>Produtos solicitados</h3>
+            <div className="modalItems">{order.products.map((p) => <div key={p.name}><span>{p.qty} {p.unit}</span><b>{p.name}</b><strong>{money(p.qty * p.price)}</strong></div>)}</div>
+            <div className="modalItems" style={{marginTop:8,display:'block',padding:'12px 14px'}}><b>Observações</b><p style={{marginTop:6,color:'var(--muted)',fontWeight:400}}>{order.notes || '—'}</p></div>
+            <div className="summaryBox" style={{marginTop:16}}>
               <h3>Resumo</h3>
               <p><b>WhatsApp:</b> {order.whatsapp}</p>
-              <p><b>Entrega:</b> {order.delivery}</p>
+              <p><b>Entrega:</b> {deliveryLabel}</p>
               <p><b>Valor:</b> {money(order.value)}</p>
             </div>
           </div>
         </div>
         <div className="orderModalFooter">
           {onReactivate && <button className="orderModalBtn orderModalBtnPrimary" style={{background:'var(--green, #22c55e)',borderColor:'var(--green, #22c55e)'}} onClick={onReactivate}>Reativar</button>}
-          {!onReactivate && canRemove && <button className="orderModalBtn orderModalBtnDanger" onClick={onRemove}>Remover</button>}
+          {!onReactivate && canRemove && (
+            receiveOrdersActive && order.status === 'Recebido'
+              ? <button className="orderModalBtn orderModalBtnDanger" disabled style={{opacity:0.5,cursor:'not-allowed'}} title="Desabilitado porque a automação 'Criar entregas' está ativada">Remover</button>
+              : <button className="orderModalBtn orderModalBtnDanger" onClick={onRemove}>Remover</button>
+          )}
           {!onReactivate && <button className="orderModalBtn orderModalBtnPrimary" onClick={onEdit}>Editar</button>}
         </div>
       </div>
@@ -4982,7 +7534,72 @@ function MiniTable({ title, data }) {
   return <div className="card miniTable"><div className="cardHeader"><h3>{title}</h3></div>{data.map((row, i) => <div className="miniRow" key={i}>{row.map((cell, j) => <span key={j} className={j === 0 ? 'main' : ''}>{cell}</span>)}</div>)}</div>
 }
 function ReportCard({ icon: Icon, title, value, text }) {
-  return <article className="reportCard"><Icon size={28} /><span>{title}</span><h3>{value}</h3><p>{text}</p></article>
+  return <article className="reportCard"><div className="reportCardTop"><Icon size={28} /><span>{title}</span></div><h3>{value}</h3><p>{text}</p></article>
+}
+
+function DispositivosSection({ form, set, printerList, setPrinterList, printersLoading, setPrintersLoading }) {
+  useEffect(() => {
+    if (printerList.length > 0) return
+    setPrintersLoading(true)
+    fetch(`${API_URL}/api/print-danfe`)
+      .then((r) => r.ok ? r.json() : null)
+      .then((data) => {
+        if (data?.printers?.length) setPrinterList(data.printers)
+      })
+      .catch(() => {})
+      .finally(() => setPrintersLoading(false))
+  }, [])
+
+  const printerOptions = printerList.map((p) => ({ value: p, label: p }))
+
+  return (
+    <div className="card settingsCard">
+      <div className="cardHeader">
+        <div><p>Hardware</p><h3>Dispositivos conectados</h3></div>
+        <Printer size={22} />
+      </div>
+      <div className="settingsForm">
+        <label>
+          Impressora padrão
+          {printersLoading ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 0', color: 'var(--muted)', fontSize: '.88rem' }}>
+              <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> Carregando impressoras...
+            </div>
+          ) : printerList.length === 0 ? (
+            <span style={{ display: 'block', color: 'var(--muted)', fontSize: '.84rem', marginTop: 6 }}>Nenhuma impressora encontrada no sistema.</span>
+          ) : (
+            <CustomSelect
+              value={form.impressoraPadrao}
+              onChange={(v) => set('impressoraPadrao', v)}
+              options={printerOptions}
+              placeholder="Selecione a impressora padrão"
+            />
+          )}
+        </label>
+        <label>
+          Impressora térmica padrão
+          {printersLoading ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 0', color: 'var(--muted)', fontSize: '.88rem' }}>
+              <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> Carregando impressoras...
+            </div>
+          ) : printerList.length === 0 ? (
+            <span style={{ display: 'block', color: 'var(--muted)', fontSize: '.84rem', marginTop: 6 }}>Nenhuma impressora encontrada no sistema.</span>
+          ) : (
+            <CustomSelect
+              value={form.impressoraTermica}
+              onChange={(v) => set('impressoraTermica', v)}
+              options={printerOptions}
+              placeholder="Selecione a impressora térmica"
+            />
+          )}
+        </label>
+      </div>
+      <div className="settingsInfo" style={{ marginTop: 14 }}>
+        <Printer size={14} />
+        <span>As impressoras listadas são as disponíveis no sistema operacional desta máquina. Clique em <strong>Salvar alterações</strong> para confirmar.</span>
+      </div>
+    </div>
+  )
 }
 
 function FiscalConfigSection({ notify }) {
@@ -5033,38 +7650,37 @@ function FiscalConfigSection({ notify }) {
     finally { setLoading(false) }
   }
 
-  async function handleSync() {
-    if (syncing) return
+  async function handleSyncAndClassify() {
+    if (syncing || classifying) return
+    setClassifyResults(null)
     setSyncing(true)
-    setClassifyResults(null)
     try {
-      const res = await fetch(`${API_URL}/api/ncm/sync`, { method: 'POST' })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error || 'Erro na sincronização')
-      setSyncStatus(data)
-      notify(`Tabela NCM sincronizada: ${data.activeCount?.toLocaleString('pt-BR')} códigos ativos.`)
+      const syncRes = await fetch(`${API_URL}/api/ncm/sync`, { method: 'POST' })
+      const syncData = await syncRes.json()
+      if (!syncRes.ok) throw new Error(syncData.error || 'Erro na sincronização')
+      setSyncStatus(syncData)
+      notify(`Tabela NCM sincronizada: ${syncData.activeCount?.toLocaleString('pt-BR')} códigos ativos.`)
       await loadData()
-    } catch (err) { notify(`Erro: ${err.message}`) }
-    finally { setSyncing(false) }
-  }
-
-  async function handleClassify() {
-    if (classifying) return
+    } catch (err) {
+      notify(`Erro na sincronização: ${err.message}`)
+      setSyncing(false)
+      return
+    }
+    setSyncing(false)
     setClassifying(true)
-    setClassifyResults(null)
     try {
-      const res = await fetch(`${API_URL}/api/ncm/classify`, { method: 'POST' })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error || 'Erro na classificação')
-      setClassifyResults(data)
-      notify(`Classificação concluída: ${data.classified} classificados, ${data.pending} pendentes.`)
+      const classifyRes = await fetch(`${API_URL}/api/ncm/classify`, { method: 'POST' })
+      const classifyData = await classifyRes.json()
+      if (!classifyRes.ok) throw new Error(classifyData.error || 'Erro na classificação')
+      setClassifyResults(classifyData)
+      notify(`Classificação concluída: ${classifyData.classified} classificados, ${classifyData.pending} pendentes.`)
       await loadData()
-    } catch (err) { notify(`Erro: ${err.message}`) }
+    } catch (err) { notify(`Erro na classificação: ${err.message}`) }
     finally { setClassifying(false) }
   }
 
   function openEdit(product) {
-    const cfg = configs.find(c => c.productId === product.id || c.productName === product.name)
+    const cfg = configs.find(c => String(c.productId) === String(product.id) || c.productName?.trim() === product.name?.trim())
     const ncmData = classifyProducts.find(cp => cp.id === product.id || cp.name === product.name)
     const suggestedNcm = ncmData?.ncm || '21069090'
     const nextForm = cfg ? {
@@ -5125,8 +7741,8 @@ function FiscalConfigSection({ notify }) {
 
   const rows = products.map(p => ({
     product: p,
-    config: configs.find(c => c.productId === p.id || c.productName === p.name),
-    ncmData: classifyProducts.find(cp => cp.id === p.id || cp.name === p.name),
+    config: configs.find(c => String(c.productId) === String(p.id) || c.productName?.trim() === p.name?.trim()),
+    ncmData: classifyProducts.find(cp => String(cp.id) === String(p.id) || cp.name?.trim() === p.name?.trim()),
   }))
 
   const pendingNcmCount = rows.filter(({ config, ncmData }) => {
@@ -5186,20 +7802,12 @@ function FiscalConfigSection({ notify }) {
               </div>
             </div>
             <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 20 }}>
-              <button className="btnSolid" onClick={handleSync} disabled={syncing} style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
+              <button className="btnSolid" onClick={handleSyncAndClassify} disabled={syncing || classifying} style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
                 {syncing
                   ? <><Loader2 size={16} style={{ animation: 'spin 1s linear infinite' }} /> Sincronizando...</>
-                  : <><RefreshCw size={16} /> Sincronizar tabela NCM</>}
-              </button>
-              <button
-                className={pendingNcmCount === 0 ? 'btnOutline' : 'btnSolid'}
-                onClick={handleClassify}
-                disabled={classifying || !syncStatus?.activeCount}
-                style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}
-              >
-                {classifying
-                  ? <><Loader2 size={16} style={{ animation: 'spin 1s linear infinite' }} /> Classificando...</>
-                  : <><Wand2 size={16} /> Classificar produtos com IA</>}
+                  : classifying
+                    ? <><Loader2 size={16} style={{ animation: 'spin 1s linear infinite' }} /> Classificando...</>
+                    : <><RefreshCw size={16} /> Sincronizar e Classificar com IA</>}
               </button>
             </div>
             {!syncStatus?.activeCount && (
@@ -5238,13 +7846,13 @@ function FiscalConfigSection({ notify }) {
               {rows.length === 0 && <div style={{ padding: '12px 0', color: 'var(--text-light)', fontSize: '.88rem' }}>Nenhum produto cadastrado.</div>}
               {rows.map(({ product, config, ncmData }) => {
                 const fiscalOk = config && config.ibsCbsCst
-                const effectiveNcm = config?.ncm || ncmData?.ncm
+                const effectiveNcm = config?.ncm || ncmData?.ncm || '21069090'
                 const effectiveNcmSource = config?.ncmSource || ncmData?.ncmSource
                 const effectiveNcmConfidence = config?.ncmConfidence || ncmData?.ncmConfidence
                 return (
                   <div key={product.id} className="fiscalConfigRow">
                     <span className="fiscalProdName">{product.name}</span>
-                    <span className="fiscalCode">{effectiveNcm || '—'}</span>
+                    <span className="fiscalCode" style={!config?.ncm && !ncmData?.ncm ? { color: 'var(--text-light)' } : undefined}>{effectiveNcm}</span>
                     <span><NcmSourceBadge source={effectiveNcmSource} confidence={effectiveNcmConfidence} /></span>
                     <span className="fiscalCode">{config?.ibsCbsCst || '—'}</span>
                     <span className="fiscalCode">{config?.ibsCbsClassTrib || '—'}</span>
@@ -5325,7 +7933,7 @@ function FiscalConfigSection({ notify }) {
   )
 }
 
-function Settings({ notify, onNotifSettingChange }) {
+function Settings({ notify, onNotifSettingChange, search = '' }) {
   const [form, setForm] = useState(() => {
     try {
       const stored = localStorage.getItem('saborsan_settings')
@@ -5378,6 +7986,8 @@ function Settings({ notify, onNotifSettingChange }) {
         notifDeliveries: true,
         notifClients: true,
         notifPayments: true,
+        impressoraPadrao: '',
+        impressoraTermica: '',
         ...saved,
       }
     } catch {
@@ -5420,6 +8030,8 @@ function Settings({ notify, onNotifSettingChange }) {
         compraDatas: [],
         iaFornecedorPrompt: 'Você é um assistente de compras da Saborsan Distribuidora. Ao contatar fornecedores, seja cordial, objetivo e profissional. Solicite cotações de preço, prazo de entrega e condições de pagamento. Priorize fornecedores com melhor custo-benefício e histórico de pontualidade. Confirme disponibilidade de estoque antes de fechar pedido.',
         iaImportPrompt: '',
+        impressoraPadrao: '',
+        impressoraTermica: '',
         notifOrders: true,
         notifSellers: true,
         notifFiscalDocuments: true,
@@ -5455,6 +8067,15 @@ function Settings({ notify, onNotifSettingChange }) {
     relatorioHora:  f.relatorioHora  || '08:00',
   })
   const [savedRelatoriosSnap, setSavedRelatoriosSnap] = useState(() => snapRelatorios(form))
+
+  const snapDispositivos = (f) => JSON.stringify({
+    impressoraPadrao:  f.impressoraPadrao  || '',
+    impressoraTermica: f.impressoraTermica || '',
+  })
+  const [savedDispositivosSnap, setSavedDispositivosSnap] = useState(() => snapDispositivos(form))
+
+  const [printerList, setPrinterList] = useState([])
+  const [printersLoading, setPrintersLoading] = useState(false)
 
   useEffect(() => {
     fetch(`${API_URL}/api/stock-purchase-config`)
@@ -5528,6 +8149,22 @@ function Settings({ notify, onNotifSettingChange }) {
         }));
       })
       .catch(() => {});
+
+    fetch(`${API_URL}/api/device-settings`)
+      .then((r) => r.ok ? r.json() : null)
+      .then((data) => {
+        if (!data) return;
+        setForm((f) => ({
+          ...f,
+          impressoraPadrao:  data.defaultPrinter        ?? f.impressoraPadrao,
+          impressoraTermica: data.defaultThermalPrinter ?? f.impressoraTermica,
+        }));
+        setSavedDispositivosSnap(JSON.stringify({
+          impressoraPadrao:  data.defaultPrinter        || '',
+          impressoraTermica: data.defaultThermalPrinter || '',
+        }));
+      })
+      .catch(() => {});
   }, []);
 
   const saveSettings = async () => {
@@ -5588,22 +8225,50 @@ function Settings({ notify, onNotifSettingChange }) {
       } catch {}
     }
 
+    if (activeSection === 'dispositivos') {
+      try {
+        const saved = JSON.parse(savedDispositivosSnap)
+        const patch = {}
+        if ((form.impressoraPadrao  || '') !== (saved.impressoraPadrao  || '')) patch.defaultPrinter        = form.impressoraPadrao  || ''
+        if ((form.impressoraTermica || '') !== (saved.impressoraTermica || '')) patch.defaultThermalPrinter = form.impressoraTermica || ''
+        if (Object.keys(patch).length > 0) {
+          await fetch(`${API_URL}/api/device-settings`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(patch),
+          })
+        }
+        setSavedDispositivosSnap(snapDispositivos(form))
+      } catch {}
+    }
+
     notify('Configurações salvas com sucesso.')
   }
 
   const settingsSections = [
-    { id: 'empresa',       label: 'Dados da empresa',      icon: Building2  },
-    { id: 'operacao',      label: 'Estoque e fornecedores', icon: Boxes      },
-    { id: 'notificacoes',  label: 'Notificações',          icon: Bell       },
-    { id: 'relatorios',    label: 'Relatórios',            icon: BarChart3  },
-    { id: 'fiscal',        label: 'Fiscal e NCM',          icon: ReceiptText },
+    { id: 'empresa',       label: 'Dados da empresa',        icon: Building2,   keywords: ['empresa', 'nome', 'cnpj', 'email', 'telefone', 'cidade', 'uf', 'identidade', 'corporativo'] },
+    { id: 'operacao',      label: 'Estoque e fornecedores',  icon: Boxes,       keywords: ['estoque', 'fornecedor', 'alerta', 'ia', 'whatsapp', 'notifica', 'prompt', 'compra', 'horário', 'limite', 'mínimo', 'reposição', 'automação'] },
+    { id: 'notificacoes',  label: 'Notificações',            icon: Bell,        keywords: ['notificação', 'notif', 'alerta', 'pedido', 'vendedor', 'nota', 'fiscal', 'entrega', 'cliente', 'pagamento', 'push'] },
+    { id: 'relatorios',    label: 'Relatórios',              icon: BarChart3,   keywords: ['relatório', 'email', 'frequência', 'semanal', 'mensal', 'diário', 'vendas', 'financeiro', 'envio'] },
+    { id: 'fiscal',        label: 'Fiscal e NCM',            icon: ReceiptText, keywords: ['fiscal', 'ncm', 'cfop', 'icms', 'nota', 'nfe', 'nfc', 'tribut', 'cst', 'pis', 'cofins', 'sefaz'] },
+    { id: 'dispositivos',  label: 'Dispositivos conectados', icon: Printer,     keywords: ['dispositivo', 'impressora', 'térmica', 'printer', 'conectado', 'danfe'] },
   ]
 
   const [activeSection, setActiveSection] = useState('empresa')
+
+  useEffect(() => {
+    if (!search) return
+    const match = settingsSections.find((s) => {
+      const q = search.toLowerCase()
+      return s.label.toLowerCase().includes(q) || s.keywords.some((k) => k.includes(q))
+    })
+    if (match) setActiveSection(match.id)
+  }, [search])
   const active = settingsSections.find((s) => s.id === activeSection)
   const showSaveBtn = activeSection !== 'fiscal' && activeSection !== 'empresa' && activeSection !== 'notificacoes'
-  const operacaoDirty = activeSection !== 'operacao' || snapOperacao(form) !== savedOperacaoSnap
-  const relatoriosDirty = activeSection !== 'relatorios' || snapRelatorios(form) !== savedRelatoriosSnap
+  const operacaoDirty    = activeSection !== 'operacao'     || snapOperacao(form)    !== savedOperacaoSnap
+  const relatoriosDirty  = activeSection !== 'relatorios'   || snapRelatorios(form)  !== savedRelatoriosSnap
+  const dispositivosDirty = activeSection !== 'dispositivos' || snapDispositivos(form) !== savedDispositivosSnap
 
   return (
     <>
@@ -5830,12 +8495,23 @@ function Settings({ notify, onNotifSettingChange }) {
           )}
 
           {activeSection === 'fiscal' && <FiscalConfigSection notify={notify} />}
+
+          {activeSection === 'dispositivos' && (
+            <DispositivosSection
+              form={form}
+              set={set}
+              printerList={printerList}
+              setPrinterList={setPrinterList}
+              printersLoading={printersLoading}
+              setPrintersLoading={setPrintersLoading}
+            />
+          )}
         </div>
       </div>
     </div>
     {showSaveBtn && (
       <div className="settingsSaveFooter">
-        <button className="btnSolid" onClick={saveSettings} disabled={!operacaoDirty || !relatoriosDirty} style={{ opacity: (!operacaoDirty || !relatoriosDirty) ? 0.45 : 1, cursor: (!operacaoDirty || !relatoriosDirty) ? 'not-allowed' : 'pointer' }}><CheckCircle2 size={18} /> Salvar alterações</button>
+        <button className="btnSolid" onClick={saveSettings} disabled={!operacaoDirty || !relatoriosDirty || !dispositivosDirty} style={{ opacity: (!operacaoDirty || !relatoriosDirty || !dispositivosDirty) ? 0.45 : 1, cursor: (!operacaoDirty || !relatoriosDirty || !dispositivosDirty) ? 'not-allowed' : 'pointer' }}><CheckCircle2 size={18} /> Salvar alterações</button>
       </div>
     )}
     </>
@@ -5976,36 +8652,36 @@ function SellerDetailModal({ seller, onClose, onToggleActive, onEdit }) {
         <button className="closeBtn" onClick={onClose}><X /></button>
         <div className="modalHeader">
           <div>
-            <span>Vendedor #{seller.id}</span>
+            <span>Vendedor</span>
             <h2>{seller.name}</h2>
             <p>{seller.region} • {seller.phone}</p>
           </div>
-          <Status status={seller.status} />
         </div>
         <div className="orderModalBody">
-          <div className="modalSplit">
-            <div>
-              <h3>Desempenho de vendas</h3>
-              <div className="detailGrid">
-                <div><b>Total vendido</b><span>{money(seller.total)}</span></div>
-                <div><b>Meta do período</b><span>{money(seller.meta)}</span></div>
-                <div><b>Atingimento</b><span>{pct}%</span></div>
-                <div><b>Nº de vendas</b><span>{seller.sales.length}</span></div>
-              </div>
-              <div className="stockLevel" style={{ marginTop: 12 }}><div style={{ width: `${pct}%` }}></div></div>
-              <small style={{ color: 'var(--muted)', fontSize: 12 }}>{money(seller.total)} de {money(seller.meta)} ({pct}%)</small>
+          <div>
+            <h3>Desempenho de vendas</h3>
+            <div className="detailGrid">
+              <div><b>Total vendido</b><span>{money(seller.total)}</span></div>
+              <div><b>Meta do período</b><span>{money(seller.meta)}</span></div>
+              <div><b>Nº de pedidos</b><span>{(seller.sales || []).length}</span></div>
+              <div><b>Nº de vendas</b><span>{seller.deliveriesCount ?? 0}</span></div>
             </div>
-            <div className="summaryBox">
-              <h3>Dados do vendedor</h3>
-              <p><b>Nome:</b> {seller.name}</p>
-              <p><b>Região:</b> {seller.region}</p>
-              <p><b>WhatsApp:</b> {seller.phone}</p>
-              <p><b>Status:</b> {seller.status}</p>
-            </div>
+            <div className="stockLevel" style={{ marginTop: 12 }}><div style={{ width: `${pct}%` }}></div></div>
+            <small style={{ color: 'var(--muted)', fontSize: 12 }}>{money(seller.total)} de {money(seller.meta)} ({pct}%)</small>
+          </div>
+          <div className="summaryBox" style={{ marginTop: 20 }}>
+            <h3>Dados do vendedor</h3>
+            <p><b>Nome:</b> {seller.name}</p>
+            <p><b>Região:</b> {seller.region}</p>
+            <p><b>WhatsApp:</b> {seller.phone}</p>
+            <p><b>Status:</b> {seller.status}</p>
           </div>
           <h3 style={{ marginTop: 20 }}>Vendas realizadas</h3>
+          {(seller.sales || []).filter(Boolean).length === 0 && (
+            <p style={{ color: 'var(--muted)', fontSize: 13, marginTop: 6 }}>Nenhuma venda registrada para este vendedor.</p>
+          )}
           <div className="modalItems">
-            {seller.sales.map((sale) => (
+            {(seller.sales || []).filter(Boolean).map((sale) => (
               <div key={sale.id}>
                 <span>{sale.date}</span>
                 <b>{sale.customer} <small style={{ fontWeight: 400, color: 'var(--muted)' }}>({sale.city})</small></b>
@@ -6027,10 +8703,22 @@ function Sellers({ search = '', addNotif }) {
   const [sellersData, setSellersData] = useState([])
   const [sellersLoading, setSellersLoading] = useState(false)
   const [selected, setSelected] = useState(null)
+  const [sellerSales, setSellerSales] = useState([])
+  const [sellerSalesLoading, setSellerSalesLoading] = useState(false)
   const [sellerDetailOpen, setSellerDetailOpen] = useState(false)
   const [newSellerOpen, setNewSellerOpen] = useState(false)
   const [editSeller, setEditSeller] = useState(null)
   const seller = selected ? sellersData.find((s) => s.id === selected) : null
+
+  useEffect(() => {
+    if (!selected) { setSellerSales([]); return }
+    setSellerSalesLoading(true)
+    fetch(`${API_URL}/api/sellers?sellerId=${selected}`)
+      .then((r) => r.json())
+      .then((data) => setSellerSales(data.sales || []))
+      .catch(() => setSellerSales([]))
+      .finally(() => setSellerSalesLoading(false))
+  }, [selected])
   const totalGeral = sellersData.reduce((a, s) => a + s.total, 0)
   const bestSeller = sellersData.length > 0 ? sellersData.reduce((a, b) => a.total > b.total ? a : b) : null
   const notifiedSellersRef = useRef(new Set())
@@ -6088,7 +8776,6 @@ function Sellers({ search = '', addNotif }) {
       <div className="sellersSummary">
         <div className="card sellerStat"><span>Total de vendas</span><strong>{money(totalGeral)}</strong><small>{sellersData.reduce((a, s) => a + s.sales.length, 0)} pedidos no período</small></div>
         <div className="card sellerStat"><span>Vendedores ativos</span><strong>{sellersData.filter(s => s.status === 'Ativo').length}</strong><small>de {sellersData.length} cadastrados</small></div>
-        <div className="card sellerStat"><span>Melhor vendedor</span><strong>{bestSeller ? bestSeller.name.split(' ')[0] : '—'}</strong><small>{bestSeller ? money(bestSeller.total) : '—'}</small></div>
       </div>
 
       {sellersLoading && <p className="loadingText">Carregando vendedores...</p>}
@@ -6125,18 +8812,20 @@ function Sellers({ search = '', addNotif }) {
           </div>
           <div className="sellerSalesList">
             <div className="sellerSalesHeader"><b>Pedido</b><b>Cliente</b><b>Produtos</b><b>Pagamento</b><b>Data</b><b>Valor</b></div>
-            {seller.sales.map((sale) => (
+            {sellerSalesLoading && <p className="loadingText" style={{ gridColumn: '1/-1', padding: '12px 0' }}>Carregando...</p>}
+            {!sellerSalesLoading && sellerSales.length === 0 && <p className="emptyText" style={{ gridColumn: '1/-1', padding: '12px 0' }}>Nenhuma entrega concluída.</p>}
+            {sellerSales.map((sale) => (
               <div key={sale.id}>
                 <b>{sale.id}</b>
                 <span>{sale.customer}<small>{sale.city}</small></span>
                 <span>{sale.products.map(p => `${p.name} ×${p.qty}`).join(', ')}</span>
-                <span>{sale.payment}</span>
+                <span>{sale.payment != null ? money(sale.payment) : ''}</span>
                 <small>{sale.date}</small>
                 <strong>{money(sale.value)}</strong>
               </div>
             ))}
           </div>
-          <div className="sellerDetailTotal"><span>Total do período</span><strong>{money(seller.total)}</strong></div>
+          <div className="sellerDetailTotal"><span>Total do período</span><strong>{money(sellerSales.reduce((a, s) => a + s.value, 0))}</strong></div>
         </div>
       )}
 
@@ -6167,6 +8856,12 @@ function NotaFiscalModal({ order, onClose, updateOrderStatus, notify, addNotif }
   const [submitting, setSubmitting] = useState(false)
   const pollingRef = useRef(null)
   const mountedRef = useRef(true)
+
+  const isBalcao = order.status === 'Balcão'
+  const isNfce = isBalcao ? purchasePurpose === 'consumo' : false
+  const docTypeLabel = isNfce ? 'NFC-e' : 'NF-e'
+  const PAYMENT_LABELS = { pix: 'Pix', cartao: 'Cartão de crédito / débito', boleto: 'Boleto', dinheiro: 'Dinheiro físico' }
+  const balcaoPaymentLabel = isBalcao ? (PAYMENT_LABELS[order.balcaoData?.paymentMethod] || null) : null
 
   useEffect(() => {
     mountedRef.current = true
@@ -6218,13 +8913,17 @@ function NotaFiscalModal({ order, onClose, updateOrderStatus, notify, addNotif }
         if (data.status === 'AUTHORIZED') {
           setNfeResult(data)
           setStep('autorizada')
-          updateOrderStatus(order.id, 'Pronto', { nfeData: { ...data, reference: ref, nfeStatus: 'AUTHORIZED' } })
+          const isBalcao = order.status === 'Balcão'
+          updateOrderStatus(order.id, isBalcao ? 'Balcão' : 'Pronto', {
+            nfeData: { ...data, reference: ref, nfeStatus: 'AUTHORIZED' },
+            ...(isBalcao ? { balcaoData: { ...(order.balcaoData || {}), balcaoStatus: 'entregue' }, purchasePurpose } : {}),
+          })
           notify(`NF-e ${data.number ? `nº ${data.number} ` : ''}autorizada para ${order.customer}.`)
           addNotif && addNotif('notifFiscalDocuments', { icon: ReceiptText, title: 'Nota fiscal autorizada', text: `NF-e de ${order.customer} foi autorizada pelo SEFAZ.` })
         } else if (data.status === 'REJECTED' || data.status === 'SUBMISSION_FAILED') {
           setNfeError(data)
           setStep('rejeitada')
-          updateOrderStatus(order.id, 'Pronto', { nfeData: { nfeStatus: data.status, errorCode: data.errorCode || null, errorMessage: data.errorMessage || null, reference: ref } })
+          updateOrderStatus(order.id, order.status === 'Balcão' ? 'Balcão' : 'Pronto', { nfeData: { nfeStatus: data.status, errorCode: data.errorCode || null, errorMessage: data.errorMessage || null, reference: ref } })
           addNotif && addNotif('notifFiscalDocuments', { icon: AlertTriangle, type: 'warning', title: 'Nota fiscal negada', text: `NF-e de ${order.customer} foi negada ou gerou erro pelo SEFAZ / Focus NF-e.` })
         } else {
           startPolling(ref, attempt + 1)
@@ -6245,7 +8944,11 @@ function NotaFiscalModal({ order, onClose, updateOrderStatus, notify, addNotif }
       const res = await fetch(`${API_URL}/api/emit-nfe`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ orderId: order.id, purchasePurpose }),
+        body: JSON.stringify({
+          orderId: order.id,
+          purchasePurpose,
+          ...(isBalcao ? { isBalcao: true, paymentMethod: order.balcaoData?.paymentMethod || null } : {}),
+        }),
       })
       const data = await res.json()
       if (!mountedRef.current) return
@@ -6258,7 +8961,11 @@ function NotaFiscalModal({ order, onClose, updateOrderStatus, notify, addNotif }
       if (data.status === 'AUTHORIZED') {
         setNfeResult(data)
         setStep('autorizada')
-        updateOrderStatus(order.id, 'Pronto', { nfeData: { ...data, nfeStatus: 'AUTHORIZED' } })
+        const isBalcaoEmit = order.status === 'Balcão'
+        updateOrderStatus(order.id, isBalcaoEmit ? 'Balcão' : 'Pronto', {
+          nfeData: { ...data, nfeStatus: 'AUTHORIZED' },
+          ...(isBalcaoEmit ? { balcaoData: { ...(order.balcaoData || {}), balcaoStatus: 'entregue' }, purchasePurpose } : {}),
+        })
         notify(`NF-e ${data.number ? `nº ${data.number} ` : ''}autorizada para ${order.customer}.`)
         addNotif && addNotif('notifFiscalDocuments', { icon: ReceiptText, title: 'Nota fiscal autorizada', text: `NF-e de ${order.customer} foi autorizada pelo SEFAZ.` })
         return
@@ -6337,7 +9044,7 @@ function NotaFiscalModal({ order, onClose, updateOrderStatus, notify, addNotif }
           <div className="nfBody">
             <button className="nfClose" onClick={onClose}><X size={18} /></button>
             <div className="nfSection">
-              <span className="topKicker">Prévia da NF-e</span>
+              <span className="topKicker">Prévia da {docTypeLabel}</span>
               <h2>{order.customer}</h2>
               <p>{order.city} • CNPJ: {order.cnpj}</p>
             </div>
@@ -6361,29 +9068,37 @@ function NotaFiscalModal({ order, onClose, updateOrderStatus, notify, addNotif }
               </div>
               <div className="nfCard">
                 <p className="nfLabel">Operação</p>
-                <b>Venda de mercadoria</b>
+                <b>{isNfce ? 'Venda ao consumidor' : 'Venda de mercadoria'}</b>
                 <small>Saída — CFOP 5102</small>
               </div>
               <div className="nfCard">
                 <p className="nfLabel">Pedido de origem</p>
                 <b>{order.id}</b>
-                <small>{order.delivery}</small>
+                <small>{isBalcao ? 'Venda no balcão' : order.delivery}</small>
               </div>
+              {isBalcao && balcaoPaymentLabel && (
+                <div className="nfCard">
+                  <p className="nfLabel">Forma de pagamento</p>
+                  <b>{balcaoPaymentLabel}</b>
+                  <small>Registrado na venda</small>
+                </div>
+              )}
             </div>
             <div className="nfFinalidade">
               <p className="nfLabel">Finalidade da compra</p>
-              <div className="nfFinalidadeOpts">
+              <div className="nfFinalidadeOpts" style={isBalcao ? { pointerEvents: 'none', opacity: 0.75 } : {}}>
                 <label className={`nfFinalidadeOpt${purchasePurpose === 'consumo' ? ' selected' : ''}`}>
-                  <input type="radio" name="finalidade" value="consumo" checked={purchasePurpose === 'consumo'} onChange={() => setPurchasePurpose('consumo')} />
+                  <input type="radio" name="finalidade" value="consumo" checked={purchasePurpose === 'consumo'} onChange={() => !isBalcao && setPurchasePurpose('consumo')} />
                   <span>Consumo próprio</span>
-                  <small>Uso interno, sem revenda</small>
+                  <small>{isNfce ? 'Emite NFC-e (modelo 65)' : 'Uso interno, sem revenda'}</small>
                 </label>
                 <label className={`nfFinalidadeOpt${purchasePurpose === 'revenda' ? ' selected' : ''}`}>
-                  <input type="radio" name="finalidade" value="revenda" checked={purchasePurpose === 'revenda'} onChange={() => setPurchasePurpose('revenda')} />
+                  <input type="radio" name="finalidade" value="revenda" checked={purchasePurpose === 'revenda'} onChange={() => !isBalcao && setPurchasePurpose('revenda')} />
                   <span>Revenda / Industrialização</span>
-                  <small>Requer Inscrição Estadual</small>
+                  <small>{!isNfce && purchasePurpose === 'revenda' ? 'Emite NF-e (modelo 55)' : 'Requer Inscrição Estadual'}</small>
                 </label>
               </div>
+              {isBalcao && <small style={{ color: 'var(--muted)', fontWeight: 600, marginTop: 6, display: 'block' }}>Finalidade definida na venda no balcão — {docTypeLabel} será emitida</small>}
             </div>
             <div className="nfTable">
               <div className="nfTableHead"><span>Produto</span><span>NCM</span><span>CFOP</span><span>Qtd</span><span>Valor</span></div>
@@ -6405,7 +9120,7 @@ function NotaFiscalModal({ order, onClose, updateOrderStatus, notify, addNotif }
             </div>
             <div className="nfAI">
               <div className="nfAIHeader"><Sparkles size={16} /><b>Emissão via Focus NFe</b></div>
-              <div className="nfAIItem success"><CheckCircle2 size={14} /> NF-e modelo 55 — transmissão direta à SEFAZ</div>
+              <div className="nfAIItem success"><CheckCircle2 size={14} /> {docTypeLabel} modelo {isNfce ? '65' : '55'} — transmissão direta à SEFAZ</div>
               <div className="nfAIItem success"><CheckCircle2 size={14} /> Certificado digital gerenciado pela Focus NFe</div>
               <div className="nfAIItem warning"><AlertTriangle size={14} /> Dados fiscais (NCM, CFOP, CST, alíquotas) devem ser validados pelo contador</div>
               <div className="nfAIItem warning"><AlertTriangle size={14} /> Verifique substituição tributária nos produtos congelados (ICMS-ST)</div>
@@ -6448,7 +9163,7 @@ function NotaFiscalModal({ order, onClose, updateOrderStatus, notify, addNotif }
           <div className="nfBody nfCentered">
             <div className="nfSending">
               <div className="nfSpinner" />
-              <h2>Processando NF-e via Focus NFe...</h2>
+              <h2>Processando {docTypeLabel} via Focus NFe...</h2>
               <div className="nfSendingSteps">
                 {[
                   'Preparando dados fiscais...',
@@ -6583,6 +9298,8 @@ function NotaFiscalModal({ order, onClose, updateOrderStatus, notify, addNotif }
 function VerNotaModal({ order, onClose, onSendToClient, onGerarNota, updateOrderStatus }) {
   const nfe = order.nfeData
   const hasSent = !!order.nfeSentAt
+  // derive from stored field first; fallback to reference prefix (NFCE... = NFC-e)
+  const docType = nfe?.documentType || (String(nfe?.reference || '').toUpperCase().startsWith('NFCE') ? 'NFC-e' : 'NF-e')
 
   const [showDetails, setShowDetails] = useState(false)
   const [nfeDetails, setNfeDetails] = useState(null)
@@ -6655,16 +9372,18 @@ function VerNotaModal({ order, onClose, onSendToClient, onGerarNota, updateOrder
         <div className="modalHeader">
           <div>
             <span>{order.id}</span>
-            <h2>Nota Fiscal Eletrônica</h2>
+            <h2>{docType === 'NFC-e' ? 'Nota Fiscal de Consumidor' : 'Nota Fiscal Eletrônica'}</h2>
             <p>{order.customer} • {order.city}</p>
           </div>
           <div className="verNotaHeaderBadges">
             <Status status={
               (nfeDetails && nfeDetails.statusSefaz && nfeDetails.statusSefaz !== '100')
                 ? 'Erro na nota'
-                : nfe?.nfeStatus === 'AUTHORIZED' ? 'Nota emitida' : 'Erro na nota'
+                : nfe?.nfeStatus === 'AUTHORIZED' ? 'Nota emitida'
+                : (nfe?.nfeStatus === 'PROCESSING' || nfe?.nfeStatus === 'SUBMITTING') ? 'Processando'
+                : 'Erro na nota'
             } />
-            {nfe?.number && <small className="verNotaNum">NF-e nº {nfe.number}</small>}
+            {nfe?.number && <small className="verNotaNum">{docType} nº {nfe.number}</small>}
           </div>
         </div>
 
@@ -6765,19 +9484,19 @@ function VerNotaModal({ order, onClose, onSendToClient, onGerarNota, updateOrder
           </div>
         ) : nfe ? (
           <>
-            {nfe.nfeStatus !== 'AUTHORIZED' && (
+            {nfe.nfeStatus !== 'AUTHORIZED' && nfe.nfeStatus !== 'PROCESSING' && nfe.nfeStatus !== 'SUBMITTING' && (
               <div className="verNotaErrorBox">
                 <div className="verNotaErrorTitle"><AlertTriangle size={17} /> Erro na emissão da nota fiscal</div>
                 {nfe.errorCode && <span className="verNotaErrorCode">Código: {nfe.errorCode}</span>}
                 <p className="verNotaErrorMsg">{nfe.errorMessage || 'Ocorreu um erro ao emitir esta nota fiscal. Verifique os dados e tente gerar uma nova nota.'}</p>
               </div>
             )}
-            {nfe.nfeStatus !== 'AUTHORIZED' && onGerarNota && (
+            {nfe.nfeStatus !== 'AUTHORIZED' && nfe.nfeStatus !== 'PROCESSING' && nfe.nfeStatus !== 'SUBMITTING' && onGerarNota && (
               <button className="verNotaGerarBtn" onClick={() => onGerarNota(order)}>
                 <ReceiptText size={17} /> Gerar nova nota
               </button>
             )}
-            {nfe.nfeStatus === 'AUTHORIZED' && (
+            {nfe.nfeStatus === 'AUTHORIZED' && docType !== 'NFC-e' && (
             <div className="verNotaGrid">
               {nfe.number && <div className="verNotaInfo"><small>Número</small><b>{nfe.number}</b></div>}
               {nfe.series && <div className="verNotaInfo"><small>Série</small><b>{nfe.series}</b></div>}
@@ -6789,7 +9508,7 @@ function VerNotaModal({ order, onClose, onSendToClient, onGerarNota, updateOrder
             {nfe.nfeStatus === 'AUTHORIZED' && <div className="verNotaActions">
               <button className="verNotaActionBtn" onClick={openNfeDetails} disabled={!nfe.reference}>
                 <div className="verNotaActionIcon"><FileText size={20} /></div>
-                <div className="verNotaActionText"><b>Ver NF-e</b><span>Detalhes completos via Focus NFe</span></div>
+                <div className="verNotaActionText"><b>Ver {docType}</b><span>Detalhes completos via Focus NFe</span></div>
                 <ChevronRight size={15} />
               </button>
 
@@ -6801,7 +9520,7 @@ function VerNotaModal({ order, onClose, onSendToClient, onGerarNota, updateOrder
 
               <button className="verNotaActionBtn" onClick={() => downloadFile('danfe')} disabled={!nfe.reference}>
                 <div className="verNotaActionIcon"><ReceiptText size={20} /></div>
-                <div className="verNotaActionText"><b>Baixar DANFE</b><span>Documento auxiliar em PDF</span></div>
+                <div className="verNotaActionText"><b>Baixar {docType === 'NFC-e' ? 'DANFC-e' : 'DANFE'}</b><span>Documento auxiliar em PDF</span></div>
                 <ChevronRight size={15} />
               </button>
 
@@ -6816,7 +9535,7 @@ function VerNotaModal({ order, onClose, onSendToClient, onGerarNota, updateOrder
 
               <button className="verNotaActionBtn verNotaDanger">
                 <div className="verNotaActionIcon"><Ban size={20} /></div>
-                <div className="verNotaActionText"><b>Cancelar NF-e</b><span>Disponível nas primeiras 24h após emissão</span></div>
+                <div className="verNotaActionText"><b>Cancelar {docType}</b><span>Disponível nas primeiras 24h após emissão</span></div>
                 <ChevronRight size={15} />
               </button>
             </div>}
@@ -6828,6 +9547,113 @@ function VerNotaModal({ order, onClose, onSendToClient, onGerarNota, updateOrder
             <small>Para acessar os documentos, utilize o painel da Focus NFe ou gere a nota novamente para este pedido.</small>
           </div>
         )}
+      </div>
+    </div>
+  )
+}
+
+function PrintDanfeModal({ order, onClose }) {
+  const [printing, setPrinting] = useState(false)
+  const [error, setError] = useState(null)
+  const [printers, setPrinters] = useState([])
+  const [selectedPrinter, setSelectedPrinter] = useState('')
+  const [printersLoading, setPrintersLoading] = useState(true)
+  const nfe = order.nfeData
+  const isNfce = nfe?.documentType === 'NFC-e' || String(nfe?.reference || '').toUpperCase().startsWith('NFCE')
+  const docLabel = isNfce ? 'NFC-e' : 'NF-e'
+
+  useEffect(() => {
+    fetch(`${API_URL}/api/print-danfe`)
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.printers?.length) {
+          setPrinters(data.printers)
+          const preferred = isNfce && data.thermalPrinter ? data.thermalPrinter : (data.default || data.printers[0])
+          setSelectedPrinter(preferred)
+        }
+      })
+      .catch(() => {})
+      .finally(() => setPrintersLoading(false))
+  }, [])
+
+  const handlePrint = async () => {
+    if (!nfe?.reference) return
+    setPrinting(true)
+    setError(null)
+    try {
+      const res = await fetch(`${API_URL}/api/print-danfe`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reference: nfe.reference, printer: selectedPrinter || undefined }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Erro ao imprimir')
+      onClose()
+    } catch (err) {
+      setError(err.message || 'Erro ao enviar para impressora.')
+    } finally {
+      setPrinting(false)
+    }
+  }
+
+  return (
+    <div className="modalBackdrop">
+      <div className="detailModal printDanfeModal">
+        <div className="modalHeader">
+          <div>
+            <span>Impressão</span>
+            <h2>Imprimir DAN{isNfce ? 'FC-e' : 'FE'}</h2>
+            <p>{order.customer}{nfe?.number ? ` • ${docLabel} nº ${nfe.number}` : ''}</p>
+          </div>
+          <Printer size={30} style={{ color: 'var(--navy)', opacity: .35, flexShrink: 0 }} />
+        </div>
+        <div className="printDanfeBody">
+          {nfe?.number && (
+            <div className="printDanfeInfoCard">
+              <small>Documento</small>
+              <b>{docLabel} nº {nfe.number}{nfe.series ? ` — Série ${nfe.series}` : ''}</b>
+              <span>{order.customer}</span>
+            </div>
+          )}
+          <div className="printDanfePrinterSelect">
+            <label className="printDanfePrinterLabel"><Printer size={13} /> Impressora</label>
+            {printersLoading ? (
+              <div className="printDanfePrinterLoading">
+                <Loader2 size={14} className="verNotaDetailsSpinner" /> Detectando impressoras...
+              </div>
+            ) : printers.length === 0 ? (
+              <div className="printDanfeError">
+                <AlertTriangle size={15} /> Nenhuma impressora encontrada. Verifique se o servidor está rodando localmente.
+              </div>
+            ) : (
+              <CustomSelect
+                value={selectedPrinter}
+                onChange={(v) => setSelectedPrinter(v)}
+                options={printers.map((p) => ({ value: p, label: p }))}
+                placeholder="Selecione a impressora"
+              />
+            )}
+          </div>
+          {error && (
+            <div className="printDanfeError">
+              <AlertTriangle size={15} /> {error}
+            </div>
+          )}
+        </div>
+        <div className="orderModalFooter">
+          <button className="nfBtnGhost" onClick={onClose} disabled={printing}>Cancelar</button>
+          <button
+            className="btnSolid"
+            onClick={handlePrint}
+            disabled={printing || printersLoading || printers.length === 0}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}
+          >
+            {printing
+              ? <><Loader2 size={16} className="verNotaDetailsSpinner" /> Imprimindo...</>
+              : <><Printer size={16} /> Imprimir</>
+            }
+          </button>
+        </div>
       </div>
     </div>
   )
@@ -7109,14 +9935,11 @@ function Payments({ paymentsData = [], paymentsLoading = false, onSelectPayment,
   const [viewMenuOpen, setViewMenuOpen] = useState(false)
   const viewMenuRef = useRef(null)
 
-  const filtered = !search
-    ? paymentsData
-    : paymentsData.filter((p) =>
-        (p.clientName || '').toLowerCase().includes(search.toLowerCase()) ||
-        (p.sellerName || '').toLowerCase().includes(search.toLowerCase()) ||
-        (p.id || '').toLowerCase().includes(search.toLowerCase()) ||
-        (p.paymentMethod || '').toLowerCase().includes(search.toLowerCase())
-      )
+  const filtered = paymentsData.filter((p) => {
+    if (!search) return true
+    const q = search.toLowerCase()
+    return [p.clientName, p.sellerName, p.id, p.orderId, p.paymentMethod, p.paymentDate, p.status, String(p.paymentValue ?? '')].some((f) => f && String(f).toLowerCase().includes(q))
+  })
 
   useEffect(() => {
     if (!viewMenuOpen) return

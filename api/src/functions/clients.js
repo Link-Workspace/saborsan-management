@@ -20,34 +20,14 @@ async function getPool() {
   return _pool;
 }
 
-let _columnsEnsured = false;
-let _documentTypeResized = false;
-
-async function ensureDocumentTypeSize(pool, context) {
-  if (_documentTypeResized) return;
-  try {
-    // Drop any non-PK/non-unique-constraint indexes on documentType that would block ALTER
-    await pool.request().query`
-      DECLARE @sql NVARCHAR(MAX) = '';
-      SELECT @sql = @sql + 'DROP INDEX [' + i.name + '] ON [Clients]; '
-      FROM sys.indexes i
-      INNER JOIN sys.index_columns ic ON i.object_id = ic.object_id AND i.index_id = ic.index_id
-      INNER JOIN sys.columns c ON ic.object_id = c.object_id AND ic.column_id = c.column_id
-      WHERE c.object_id = OBJECT_ID('Clients') AND c.name = 'documentType'
-        AND i.is_primary_key = 0 AND i.is_unique_constraint = 0 AND i.type > 0;
-      IF LEN(@sql) > 0 EXEC(@sql);
-    `;
-    await pool.request().query`
-      IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Clients') AND name = 'documentType')
-        ALTER TABLE Clients ADD documentType NVARCHAR(20) NULL;
-      ELSE IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Clients') AND name = 'documentType' AND max_length < 40)
-        ALTER TABLE Clients ALTER COLUMN documentType NVARCHAR(20) NULL;
-    `;
-    _documentTypeResized = true;
-  } catch (e) {
-    context.log('ensureDocumentTypeSize error:', e.message);
-  }
+function formatDaysSince(days) {
+  if (days == null) return null;
+  if (days === 0) return 'Hoje';
+  if (days === 1) return 'Ontem';
+  return `${days} dias atrás`;
 }
+
+let _columnsEnsured = false;
 
 async function ensureClientColumns() {
   if (_columnsEnsured) return;
@@ -108,6 +88,42 @@ async function ensureClientColumns() {
     IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Clients') AND name = 'purchasePurpose')
       ALTER TABLE Clients ADD purchasePurpose NVARCHAR(20) NULL
   `;
+  // Ensure dedicated cnpj and cpf columns; migrate old values stored in documentType
+  await pool.request().query`
+    IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Clients') AND name = 'cnpj')
+      ALTER TABLE Clients ADD cnpj NVARCHAR(20) NULL
+  `;
+  await pool.request().query`
+    IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Clients') AND name = 'cpf')
+      ALTER TABLE Clients ADD cpf NVARCHAR(14) NULL
+  `;
+  // One-time migration: copy values from legacy documentType column → dedicated cnpj/cpf columns
+  await pool.request().query`
+    UPDATE Clients SET cnpj = documentType
+    WHERE cnpj IS NULL AND documentType IS NOT NULL
+      AND documentType NOT IN ('cnpj', 'cpf')
+      AND LEN(REPLACE(REPLACE(REPLACE(REPLACE(documentType, '.',''),'/',''),'-',''),' ','')) = 14
+  `;
+  await pool.request().query`
+    UPDATE Clients SET cpf = documentType
+    WHERE cpf IS NULL AND documentType IS NOT NULL
+      AND documentType NOT IN ('cnpj', 'cpf')
+      AND LEN(REPLACE(REPLACE(REPLACE(REPLACE(documentType, '.',''),'/',''),'-',''),' ','')) = 11
+  `;
+  await pool.request().query`
+    IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'ClientReactivationLog')
+    CREATE TABLE ClientReactivationLog (
+      id             INT           IDENTITY(1,1) NOT NULL,
+      client_id      INT           NOT NULL,
+      client_phone   NVARCHAR(30)  NOT NULL,
+      message_type   NVARCHAR(20)  NOT NULL,
+      template_id    NVARCHAR(200) NULL,
+      status         NVARCHAR(50)  NOT NULL DEFAULT 'SENT',
+      error_message  NVARCHAR(500) NULL,
+      sent_at        DATETIME      NOT NULL DEFAULT GETUTCDATE(),
+      CONSTRAINT PK_ClientReactivationLog PRIMARY KEY CLUSTERED (id ASC)
+    )
+  `;
   _columnsEnsured = true;
 }
 
@@ -118,7 +134,6 @@ app.http('clients', {
     try {
       const pool = await getPool();
       try { await ensureClientColumns(); } catch (_) {}
-      await ensureDocumentTypeSize(pool, context);
 
       // ─── GET ────────────────────────────────────────────────────────────────
       if (request.method === 'GET') {
@@ -130,7 +145,14 @@ app.http('clients', {
             c.priority,
             c.priorityReason,
             c.tag,
-            c.lastPurchase,
+            (
+              SELECT TOP 1 DATEDIFF(day, COALESCE(fd.authorizedAt, o.createdAt), GETUTCDATE())
+              FROM GestaoOrders o
+              LEFT JOIN GestaoFiscalDocuments fd ON fd.orderId = o.id AND fd.status = 'AUTHORIZED'
+              WHERE o.deletedAt IS NULL
+                AND (o.clientId = c.id OR o.clientName = c.establishmentName)
+              ORDER BY COALESCE(fd.authorizedAt, o.createdAt) DESC
+            ) AS daysSinceLastPurchase,
             c.lastValue,
             c.avgTicket,
             c.suggestion,
@@ -139,7 +161,8 @@ app.http('clients', {
             c.clientName,
             c.address          AS clientAddress,
             c.contactNumber,
-            c.documentType     AS clientCnpj,
+            c.cnpj             AS clientCnpj,
+            c.cpf              AS clientCpf,
             c.city             AS clientCity,
             c.invoicePreference AS clientInvoicePreference,
             c.purchasePurpose   AS clientPurchasePurpose,
@@ -157,7 +180,24 @@ app.http('clients', {
             u.city             AS userCity,
             u.name             AS userName,
             u.address          AS userAddress,
-            u.invoicePreference AS userInvoicePreference
+            u.invoicePreference AS userInvoicePreference,
+            CASE WHEN EXISTS (
+              SELECT 1 FROM GestaoOrders o
+              WHERE o.deletedAt IS NULL
+                AND o.status <> N'Entregue'
+                AND (o.clientId = c.id OR o.clientName = c.establishmentName)
+            ) THEN 1 ELSE 0 END AS hasActiveOrders,
+            CASE WHEN EXISTS (
+              SELECT 1 FROM ClientReactivationLog l
+              WHERE l.client_id = c.id
+                AND l.status = 'SENT'
+                AND NOT EXISTS (
+                  SELECT 1 FROM GestaoOrders o2
+                  WHERE o2.deletedAt IS NULL
+                    AND (o2.clientId = c.id OR o2.clientName = c.establishmentName)
+                    AND o2.createdAt > l.sent_at
+                )
+            ) THEN 1 ELSE 0 END AS reactivationSent
           FROM Clients c
           LEFT JOIN Users u
             ON u.establishmentName = c.establishmentName
@@ -174,7 +214,8 @@ app.http('clients', {
           priority: c.priority || 'Media',
           priorityReason: c.priorityReason || '',
           tag: c.tag || '',
-          lastPurchase: c.lastPurchase || null,
+          lastPurchase: formatDaysSince(c.daysSinceLastPurchase != null ? c.daysSinceLastPurchase : null),
+          daysSinceLastPurchase: c.daysSinceLastPurchase != null ? c.daysSinceLastPurchase : null,
           lastValue: c.lastValue != null ? parseFloat(c.lastValue) : null,
           avgTicket: c.avgTicket != null ? parseFloat(c.avgTicket) : null,
           suggestion: c.suggestion || '',
@@ -186,6 +227,7 @@ app.http('clients', {
           purchasePurpose: c.clientPurchasePurpose || 'consumo',
           email: c.email || '',
           cnpj: c.clientCnpj || c.userCnpj || '',
+          cpf: c.clientCpf || '',
           city: c.clientCity || c.userCity || '',
           stateRegistrationIndicator: c.stateRegistrationIndicator ?? null,
           stateRegistration: c.stateRegistration || null,
@@ -194,6 +236,8 @@ app.http('clients', {
           lastFiscalLookupAt: c.lastFiscalLookupAt ? c.lastFiscalLookupAt.toISOString() : null,
           nextFiscalLookupAt: c.nextFiscalLookupAt ? c.nextFiscalLookupAt.toISOString() : null,
           requiresFiscalReview: !!c.requiresFiscalReview,
+          hasActiveOrders: !!c.hasActiveOrders,
+          reactivationSent: !!c.reactivationSent,
         }));
 
         return { jsonBody: { clients } };
@@ -204,7 +248,7 @@ app.http('clients', {
         const body = await request.json();
         const {
           establishmentName, clientName, email, password,
-          cnpj, contactNumber, address, city,
+          cnpj, cpf, contactNumber, address, city,
           segment, priority, priorityReason, tag,
           invoicePreference, bestDay, purchasePurpose,
         } = body;
@@ -256,7 +300,8 @@ app.http('clients', {
         const clientResult = await pool.request().query`
           INSERT INTO Clients (
             cityId, establishmentName, segment, priority, priorityReason,
-            tag, clientName, address, contactNumber, invoicePreference, bestDay, documentType, city, purchasePurpose
+            tag, clientName, address, contactNumber, invoicePreference, bestDay,
+            cnpj, cpf, city, purchasePurpose
           )
           OUTPUT INSERTED.id
           VALUES (
@@ -272,6 +317,7 @@ app.http('clients', {
             ${invoicePreference || null},
             ${bestDay || null},
             ${cnpj || null},
+            ${cpf || null},
             ${city || null},
             ${purchasePurpose || null}
           )
@@ -303,6 +349,7 @@ app.http('clients', {
               purchasePurpose: purchasePurpose || 'consumo',
               email: email?.trim().toLowerCase() || '',
               cnpj: cnpj || '',
+              cpf: cpf || '',
               city: city || '',
               indicadorIE: null,
               inscricaoEstadual: null,
@@ -318,7 +365,7 @@ app.http('clients', {
         const {
           id, userId,
           establishmentName, clientName, email,
-          cnpj, contactNumber, address, city,
+          cnpj, cpf, contactNumber, address, city,
           segment, priority, priorityReason, tag,
           invoicePreference, bestDay, purchasePurpose,
         } = body;
@@ -339,7 +386,8 @@ app.http('clients', {
             contactNumber     = ${contactNumber || null},
             invoicePreference = ${invoicePreference || null},
             bestDay           = ${bestDay || null},
-            documentType      = ${cnpj || null},
+            cnpj              = ${cnpj || null},
+            cpf               = ${cpf || null},
             city              = ${city || null},
             purchasePurpose   = ${purchasePurpose || null}
           WHERE id = ${id}
@@ -381,6 +429,10 @@ app.http('clients', {
           return { status: 400, jsonBody: { error: 'ID do cliente é obrigatório.' } };
         }
 
+        // Remove dependent rows before the parent to satisfy FK constraints
+        await pool.request().query`DELETE FROM ClientProducts WHERE clientId = ${id}`;
+        await pool.request().query`DELETE FROM ClientOrders WHERE clientId = ${id}`;
+        await pool.request().query`DELETE FROM ClientReactivationLog WHERE client_id = ${id}`;
         await pool.request().query`DELETE FROM Clients WHERE id = ${id}`;
 
         // Remove linked User only when no other Clients share the same establishment

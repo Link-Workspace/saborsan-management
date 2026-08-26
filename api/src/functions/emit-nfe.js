@@ -81,8 +81,8 @@ async function notifyDriverNfeAuthorized(orderId, context) {
       ? `Notas fiscais da entrega ${deliveryCode} emitidas`
       : `Nota fiscal do pedido ${orderId} emitida`;
     const msgBody = isMultiple
-      ? `Todas as NF-e da entrega ${deliveryCode} foram autorizadas pelo SEFAZ. Confirme para colocar em rota.`
-      : `A NF-e do pedido ${orderId} (entrega ${deliveryCode}) foi autorizada pelo SEFAZ. Confirme para colocar em rota.`;
+      ? `Todas as notas fiscais da entrega ${deliveryCode} foram autorizadas pelo SEFAZ. Confirme para colocar em rota.`
+      : `A nota fiscal do pedido ${orderId} (entrega ${deliveryCode}) foi autorizada pelo SEFAZ. Confirme para colocar em rota.`;
 
     for (const token of tokens) {
       try {
@@ -172,6 +172,12 @@ function createNfeReference(fiscalDocumentId) {
   return `NFE${normalized}`.toUpperCase();
 }
 
+function createNfceReference(fiscalDocumentId) {
+  const normalized = String(fiscalDocumentId).replace(/[^a-zA-Z0-9]/g, '');
+  if (!normalized) throw new Error('Não foi possível gerar referência da NFC-e');
+  return `NFCE${normalized}`.toUpperCase();
+}
+
 // ── Status mapper ─────────────────────────────────────────────────────────────
 
 function mapFocusStatus(response) {
@@ -188,7 +194,7 @@ function mapFocusStatus(response) {
       accessKey: response.chave_nfe || response.chave || response.chave_acesso,
       protocol: response.protocolo || response.numero_protocolo,
       xmlPath: response.caminho_xml_nota_fiscal || response.caminho_xml,
-      danfePath: response.caminho_danfe || response.caminho_pdf,
+      danfePath: response.caminho_danfe || response.caminho_danfce || response.caminho_pdf,
     };
   }
   if (sefazCode) {
@@ -203,21 +209,11 @@ function mapFocusStatus(response) {
     };
   }
 
-  // Sem código SEFAZ ainda: usar o status interno da Focus NFe para estados intermediários
+  // Sem status_sefaz: nunca confirmar AUTHORIZED por string — o SEFAZ pode ainda estar processando.
+  // 'autoriz' sem status_sefaz=100 significa que a Focus recebeu mas o SEFAZ ainda não confirmou.
   const raw = String(response.status || response.situacao || '').toLowerCase();
 
-  if (raw.includes('autoriz')) {
-    return {
-      status: 'AUTHORIZED',
-      number: response.numero,
-      series: response.serie,
-      accessKey: response.chave_nfe || response.chave || response.chave_acesso,
-      protocol: response.protocolo || response.numero_protocolo,
-      xmlPath: response.caminho_xml_nota_fiscal || response.caminho_xml,
-      danfePath: response.caminho_danfe || response.caminho_pdf,
-    };
-  }
-  if (raw.includes('process') || raw.includes('fila') || raw.includes('em processamento') || raw.includes('recebido')) {
+  if (raw.includes('process') || raw.includes('fila') || raw.includes('em processamento') || raw.includes('recebido') || raw.includes('autoriz')) {
     return { status: 'PROCESSING' };
   }
   if (raw.includes('cancel')) {
@@ -339,9 +335,9 @@ function buildNfePayload(order, items, { stateRegistrationIndicator = 9, stateRe
       icms_situacao_tributaria: f.icmsCst,
     };
 
-    // CST 41 obriga o envio do cBenef à Focus NF-e
+    // cBenef obrigatório quando resolvido para o CST do produto (independente do valor do CST)
     const cBenef = codigosBenef[item.productName];
-    if (String(f.icmsCst).trim() === '41' && cBenef) {
+    if (cBenef) {
       itemObj.codigo_beneficio_fiscal = cBenef;
     }
 
@@ -540,10 +536,19 @@ async function ensureTable() {
         responsePayload NVARCHAR(MAX)  NULL,
         issuedAt        DATETIME2      NULL,
         authorizedAt    DATETIME2      NULL,
+        documentType    NVARCHAR(10)   NOT NULL DEFAULT 'NF-e',
         createdAt       DATETIME2      NOT NULL DEFAULT GETUTCDATE(),
         updatedAt       DATETIME2      NOT NULL DEFAULT GETUTCDATE(),
         CONSTRAINT UQ_FiscalDoc_Env_Ref UNIQUE (environment, focusReference)
       )
+    END
+    ELSE
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_NAME = 'GestaoFiscalDocuments' AND COLUMN_NAME = 'documentType'
+      )
+        ALTER TABLE GestaoFiscalDocuments ADD documentType NVARCHAR(10) NOT NULL DEFAULT 'NF-e';
     END
   `;
 }
@@ -583,6 +588,54 @@ async function loadFiscalBenefits() {
   }
 }
 
+// ── NFC-e helpers ─────────────────────────────────────────────────────────────
+
+function mapPaymentMethodToFocus(method) {
+  const m = String(method || '').toLowerCase();
+  if (m.includes('pix')) return '17';
+  if (m.includes('cart') || m.includes('card')) return '03'; // cartão (crédito genérico)
+  if (m.includes('crédito') || m.includes('credito') || m.includes('credit')) return '03';
+  if (m.includes('débito') || m.includes('debito') || m.includes('debit')) return '04';
+  if (m.includes('dinheiro') || m.includes('espécie') || m.includes('especie') || m.includes('cash')) return '01';
+  if (m.includes('boleto')) return '15';
+  if (m.includes('voucher')) return '05';
+  return '90'; // sem pagamento / outros
+}
+
+async function loadOrderPayment(orderId) {
+  try {
+    const result = await sql.query`
+      SELECT TOP 1 paymentMethod, paymentValue
+      FROM Payments WHERE orderId = ${orderId}
+      ORDER BY createdAt DESC
+    `;
+    return result.recordset[0] || null;
+  } catch {
+    return null;
+  }
+}
+
+function buildNfcePayload(order, items, payment, { purchasePurpose = 'consumo', fiscalConfigs = {}, codigosBenef = {} } = {}) {
+  const base = buildNfePayload(order, items, {
+    stateRegistrationIndicator: 9,
+    stateRegistration: null,
+    purchasePurpose,
+    fiscalConfigs,
+    codigosBenef,
+  });
+  delete base.tipo_documento;
+  delete base.finalidade_emissao;
+  delete base.data_entrada_saida;
+  base.natureza_operacao = 'VENDA AO CONSUMIDOR';
+  base.presenca_comprador = 4;
+  const focusMethod = payment?.paymentMethod ? mapPaymentMethodToFocus(payment.paymentMethod) : '90';
+  const focusValue = Number(payment?.paymentValue) || base.valor_total;
+  base.formas_pagamento = [
+    { indicador_pagamento: 1, forma_pagamento: focusMethod, valor_pagamento: focusValue },
+  ];
+  return base;
+}
+
 // ── Azure Function handler ────────────────────────────────────────────────────
 
 app.http('emit-nfe', {
@@ -604,7 +657,7 @@ app.http('emit-nfe', {
         }
 
         const docResult = await sql.query`
-          SELECT xmlPath, danfePath FROM GestaoFiscalDocuments
+          SELECT xmlPath, danfePath, documentType FROM GestaoFiscalDocuments
           WHERE focusReference = ${ref} AND status = 'AUTHORIZED'
         `;
         const doc = docResult.recordset[0];
@@ -613,12 +666,13 @@ app.http('emit-nfe', {
         }
 
         const { baseUrl, token } = getFocusConfig();
+        const downloadDocEndpoint = doc.documentType === 'NFC-e' ? 'nfce' : 'nfe';
 
         // Se o caminho não estiver salvo no banco, busca o status atual na Focus NFe
         let filePath = download === 'xml' ? doc.xmlPath : doc.danfePath;
         if (!filePath) {
           try {
-            const statusRes = await focusRequest(`/v2/nfe/${encodeURIComponent(ref)}?completa=1`);
+            const statusRes = await focusRequest(`/v2/${downloadDocEndpoint}/${encodeURIComponent(ref)}?completa=1`);
             const mapped = mapFocusStatus(statusRes.data);
             if (mapped.status === 'AUTHORIZED') {
               // Atualiza o banco para futuras consultas
@@ -637,8 +691,8 @@ app.http('emit-nfe', {
         // Fallback: construir URL direta da Focus NFe pelo padrão de endpoint
         if (!filePath) {
           filePath = download === 'xml'
-            ? `${baseUrl}/v2/nfe/${encodeURIComponent(ref)}.xml`
-            : `${baseUrl}/v2/nfe/${encodeURIComponent(ref)}.pdf`;
+            ? `${baseUrl}/v2/${downloadDocEndpoint}/${encodeURIComponent(ref)}.xml`
+            : `${baseUrl}/v2/${downloadDocEndpoint}/${encodeURIComponent(ref)}.pdf`;
         }
 
         const fileUrl = filePath.startsWith('http') ? filePath : `${baseUrl}${filePath}`;
@@ -667,7 +721,15 @@ app.http('emit-nfe', {
       // ── Full NF-e details from Focus NFe ─────────────────────────────────
       if (request.method === 'GET' && ref && url.searchParams.get('details') === '1') {
         try {
-          const focusRes = await focusRequest(`/v2/nfe/${encodeURIComponent(ref)}?completa=1`);
+          let detailsDocType = 'NF-e';
+          let storedRequestPayload = null;
+          try {
+            const dtRes = await sql.query`SELECT TOP 1 documentType, requestPayload FROM GestaoFiscalDocuments WHERE focusReference = ${ref}`;
+            if (dtRes.recordset[0]?.documentType) detailsDocType = dtRes.recordset[0].documentType;
+            if (dtRes.recordset[0]?.requestPayload) storedRequestPayload = JSON.parse(dtRes.recordset[0].requestPayload);
+          } catch (_) {}
+          const detailsDocEndpoint = detailsDocType === 'NFC-e' ? 'nfce' : 'nfe';
+          const focusRes = await focusRequest(`/v2/${detailsDocEndpoint}/${encodeURIComponent(ref)}?completa=1`);
           const d = focusRes.data;
 
           // Corrige divergência: se o BD tem AUTHORIZED mas o SEFAZ retornou rejeição
@@ -685,7 +747,9 @@ app.http('emit-nfe', {
             } catch (_) { /* não interromper o fluxo */ }
           }
 
-          const rawItems = d.items || d.itens || [];
+          // Quando a Focus ainda não retornou os itens (NF-e em processamento),
+          // usar o payload enviado como fallback para exibir os dados ao usuário
+          const rawItems = d.items || d.itens || storedRequestPayload?.items || [];
           const items = rawItems.map((i) => ({
             number: i.numero_item,
             code: i.codigo_produto,
@@ -698,6 +762,9 @@ app.http('emit-nfe', {
             total: Number(i.valor_bruto ?? 0),
           }));
 
+          const totalsProducts = Number(d.valor_produtos) || Number(storedRequestPayload?.valor_produtos) || 0;
+          const totalsTotal    = Number(d.valor_total)    || Number(storedRequestPayload?.valor_total)    || 0;
+
           return {
             jsonBody: {
               reference: ref,
@@ -708,20 +775,20 @@ app.http('emit-nfe', {
               statusSefaz: d.status_sefaz,
               messageSefaz: d.mensagem_sefaz || d.mensagem,
               issuedAt: d.data_emissao,
-              natureza: d.natureza_operacao,
+              natureza: d.natureza_operacao || storedRequestPayload?.natureza_operacao,
               emitter: {
-                cnpj: d.cnpj_emitente,
+                cnpj: d.cnpj_emitente || storedRequestPayload?.cnpj_emitente,
                 name: d.nome_emitente,
               },
               recipient: {
-                name: d.nome_destinatario,
-                cnpj: d.cnpj_destinatario,
-                city: d.municipio_destinatario,
-                state: d.uf_destinatario,
+                name: d.nome_destinatario || storedRequestPayload?.nome_destinatario,
+                cnpj: d.cnpj_destinatario || storedRequestPayload?.cnpj_destinatario,
+                city: d.municipio_destinatario || storedRequestPayload?.municipio_destinatario,
+                state: d.uf_destinatario || storedRequestPayload?.uf_destinatario,
               },
               totals: {
-                products: Number(d.valor_produtos ?? 0),
-                total: Number(d.valor_total ?? 0),
+                products: totalsProducts,
+                total: totalsTotal,
                 icms: Number(d.valor_icms ?? 0),
                 pis: Number(d.valor_pis ?? 0),
                 cofins: Number(d.valor_cofins ?? 0),
@@ -744,7 +811,7 @@ app.http('emit-nfe', {
       if (request.method === 'GET' && ref) {
         const docResult = await sql.query`
           SELECT id, orderId, status, focusReference, nfeNumber, nfeSeries,
-                 accessKey, protocol, errorCode, errorMessage
+                 accessKey, protocol, errorCode, errorMessage, documentType
           FROM GestaoFiscalDocuments WHERE focusReference = ${ref}
         `;
         const doc = docResult.recordset[0];
@@ -762,6 +829,7 @@ app.http('emit-nfe', {
               series: doc.nfeSeries,
               accessKey: doc.accessKey,
               protocol: doc.protocol,
+              documentType: doc.documentType,
             },
           };
         }
@@ -778,7 +846,8 @@ app.http('emit-nfe', {
 
         // Query Focus NFe for current status (completa=1 inclui caminho_xml e caminho_danfe)
         try {
-          const focusRes = await focusRequest(`/v2/nfe/${encodeURIComponent(ref)}?completa=1`);
+          const statusDocEndpoint = doc.documentType === 'NFC-e' ? 'nfce' : 'nfe';
+          const focusRes = await focusRequest(`/v2/${statusDocEndpoint}/${encodeURIComponent(ref)}?completa=1`);
           const mapped = mapFocusStatus(focusRes.data);
 
           if (mapped.status === 'AUTHORIZED') {
@@ -810,6 +879,7 @@ app.http('emit-nfe', {
                 series: mapped.series,
                 accessKey: mapped.accessKey,
                 protocol: mapped.protocol,
+                documentType: doc.documentType,
               },
             };
           }
@@ -972,6 +1042,8 @@ app.http('emit-nfe', {
         // ── Consulta e validação fiscal do destinatário ──────────────────────
         // Prioridade: corpo da requisição > salvo no pedido > padrão 'consumo'
         const purchasePurpose = body.purchasePurpose || order.purchasePurpose || 'consumo';
+        const isBalcao = !!(body.isBalcao);
+        const bodyPaymentMethod = body.paymentMethod || null;
 
         let stateRegistrationIndicator = 9;
         let stateRegistration = null;
@@ -984,36 +1056,39 @@ app.http('emit-nfe', {
                          nextFiscalLookupAt, requiresFiscalReview
             FROM Clients
             WHERE cnpjNormalized = ${cnpjNorm}
-               OR (cnpjNormalized IS NULL AND REPLACE(REPLACE(REPLACE(REPLACE(documentType, '.',''),'/',''),'-',''),' ','') = ${cnpjNorm})
-               OR (documentType IS NULL AND establishmentName = ${order.clientName})
+               OR (cnpjNormalized IS NULL AND REPLACE(REPLACE(REPLACE(REPLACE(cnpj, '.',''),'/',''),'-',''),' ','') = ${cnpjNorm})
+               OR (cnpj IS NULL AND establishmentName = ${order.clientName})
           `;
 
           const clientRow = clientRes.recordset[0];
 
-          if (clientRow) {
-            const precisaConsultar =
-              clientRow.stateRegistrationIndicator === null ||
-              clientRow.stateRegistrationIndicator === undefined ||
-              !clientRow.nextFiscalLookupAt ||
-              new Date(clientRow.nextFiscalLookupAt) <= new Date() ||
-              clientRow.requiresFiscalReview;
+          const clientUf = String(order.clientCity || '').includes(' - ')
+            ? order.clientCity.split(' - ').pop().trim()
+            : null;
 
-            if (precisaConsultar) {
-              try {
-                const clientUf = String(order.clientCity || '').includes(' - ')
-                  ? order.clientCity.split(' - ').pop().trim()
-                  : null;
+          const precisaConsultar = !clientRow ||
+            clientRow.stateRegistrationIndicator === null ||
+            clientRow.stateRegistrationIndicator === undefined ||
+            !clientRow.nextFiscalLookupAt ||
+            new Date(clientRow.nextFiscalLookupAt) <= new Date() ||
+            clientRow.requiresFiscalReview;
 
-                const focusRes = await focusRequest(`/v2/cnpjs/${cnpjNorm}`);
-                const ieResult = extrairIEDaResposta(focusRes.data, clientUf);
+          if (precisaConsultar) {
+            try {
+              const focusRes = await focusRequest(`/v2/cnpjs/${cnpjNorm}`);
+              const ieResult = extrairIEDaResposta(focusRes.data, clientUf);
 
-                // Preserva IE anterior se a nova consulta não a encontrou
-                const perdeuIE = clientRow.stateRegistrationIndicator === 1 && clientRow.stateRegistration && ieResult.stateRegistrationIndicator !== 1;
-                const novoIndicador = perdeuIE ? clientRow.stateRegistrationIndicator : ieResult.stateRegistrationIndicator;
-                const novaIE = perdeuIE ? clientRow.stateRegistration : ieResult.stateRegistration;
-                const requerRevisao = perdeuIE ? 1 : 0;
-                const proxima = new Date(Date.now() + 15 * 24 * 60 * 60 * 1000);
+              // Preserva IE anterior se a nova consulta não a encontrou
+              const perdeuIE = clientRow &&
+                clientRow.stateRegistrationIndicator === 1 &&
+                clientRow.stateRegistration &&
+                ieResult.stateRegistrationIndicator !== 1;
+              const novoIndicador = perdeuIE ? clientRow.stateRegistrationIndicator : ieResult.stateRegistrationIndicator;
+              const novaIE = perdeuIE ? clientRow.stateRegistration : ieResult.stateRegistration;
+              const requerRevisao = perdeuIE ? 1 : 0;
+              const proxima = new Date(Date.now() + 15 * 24 * 60 * 60 * 1000);
 
+              if (clientRow) {
                 await sql.query`
                   UPDATE Clients SET
                     cnpjNormalized                  = ${cnpjNorm},
@@ -1030,37 +1105,64 @@ app.http('emit-nfe', {
                     fiscalLookupResponseJson        = ${JSON.stringify(focusRes.data)}
                   WHERE id = ${clientRow.id}
                 `;
-
-                stateRegistrationIndicator = novoIndicador;
-                stateRegistration = novaIE;
-              } catch (consultaErr) {
-                // Focus indisponível: usa último dado válido se existir
-                if (clientRow.stateRegistrationIndicator !== null && clientRow.stateRegistrationIndicator !== undefined) {
-                  stateRegistrationIndicator = clientRow.stateRegistrationIndicator;
-                  stateRegistration = clientRow.stateRegistration;
-                }
-                try {
-                  const errMsg = String(consultaErr.message || 'Erro na consulta CNPJ').slice(0, 490);
-                  await sql.query`
-                    UPDATE Clients SET
-                      lastFiscalLookupAt    = GETUTCDATE(),
-                      lastFiscalLookupError = ${errMsg}
-                    WHERE id = ${clientRow.id}
-                  `;
-                } catch (_) {}
               }
-            } else {
-              // Dados ainda válidos
-              if (clientRow.stateRegistrationIndicator !== null && clientRow.stateRegistrationIndicator !== undefined) {
+
+              stateRegistrationIndicator = novoIndicador;
+              stateRegistration = novaIE;
+            } catch (consultaErr) {
+              // Focus indisponível: usa último dado válido se existir
+              if (clientRow && clientRow.stateRegistrationIndicator !== null && clientRow.stateRegistrationIndicator !== undefined) {
                 stateRegistrationIndicator = clientRow.stateRegistrationIndicator;
                 stateRegistration = clientRow.stateRegistration;
               }
+              if (clientRow) {
+                try {
+                  const proxima15Dias = new Date(Date.now() + 15 * 24 * 60 * 60 * 1000);
+                  const proximaDia = new Date(Date.now() + 24 * 60 * 60 * 1000);
+                  if (consultaErr.httpStatus === 404) {
+                    await sql.query`
+                      UPDATE Clients SET
+                        lastFiscalLookupAt    = GETUTCDATE(),
+                        nextFiscalLookupAt    = ${proxima15Dias},
+                        fiscalLookupSource    = 'FOCUS_NFE',
+                        lastFiscalLookupError = N'CNPJ not found in the Federal Revenue database',
+                        requiresFiscalReview  = 1
+                      WHERE id = ${clientRow.id}
+                    `;
+                  } else if (consultaErr.httpStatus === 400) {
+                    const errMsg = String(consultaErr.message || 'CNPJ inválido').slice(0, 490);
+                    await sql.query`
+                      UPDATE Clients SET
+                        lastFiscalLookupAt    = GETUTCDATE(),
+                        nextFiscalLookupAt    = ${proxima15Dias},
+                        fiscalLookupSource    = 'FOCUS_NFE',
+                        lastFiscalLookupError = ${errMsg},
+                        requiresFiscalReview  = 1
+                      WHERE id = ${clientRow.id}
+                    `;
+                  } else {
+                    const errMsg = String(consultaErr.message || 'Erro na consulta CNPJ').slice(0, 490);
+                    await sql.query`
+                      UPDATE Clients SET
+                        lastFiscalLookupAt    = GETUTCDATE(),
+                        nextFiscalLookupAt    = ${proximaDia},
+                        lastFiscalLookupError = ${errMsg}
+                      WHERE id = ${clientRow.id}
+                    `;
+                  }
+                } catch (_) {}
+              }
             }
+          } else {
+            // Dados ainda válidos
+            stateRegistrationIndicator = clientRow.stateRegistrationIndicator;
+            stateRegistration = clientRow.stateRegistration;
           }
         }
 
         // Bloqueia emissão quando a combinação indicador 9 + revenda geraria rejeição 696
-        if (stateRegistrationIndicator === 9 && purchasePurpose === 'revenda') {
+        // (não se aplica a pedidos de balcão: o tipo de documento é determinado pela finalidade)
+        if (!isBalcao && stateRegistrationIndicator === 9 && purchasePurpose === 'revenda') {
           return {
             status: 422,
             jsonBody: {
@@ -1099,16 +1201,33 @@ app.http('emit-nfe', {
           return { jsonBody: { status: ex.status, reference: ex.focusReference } };
         }
 
+        // Determina tipo de documento
+        // Balcão: consumo próprio → NFC-e, revenda → NF-e
+        // Normal: não contribuinte do ICMS → NFC-e, contribuinte → NF-e
+        const isNfce = isBalcao ? purchasePurpose === 'consumo' : stateRegistrationIndicator === 9;
+        const docType = isNfce ? 'NFC-e' : 'NF-e';
+        const focusDocEndpoint = isNfce ? 'nfce' : 'nfe';
+
         // Create new FiscalDocument
         const env = process.env.NODE_ENV === 'production' ? 'PRODUCTION' : 'HOMOLOGATION';
         const createRes = await sql.query`
-          INSERT INTO GestaoFiscalDocuments (orderId, environment, status)
+          INSERT INTO GestaoFiscalDocuments (orderId, environment, status, documentType)
           OUTPUT INSERTED.id
-          VALUES (${orderId}, ${env}, 'SUBMITTING')
+          VALUES (${orderId}, ${env}, 'SUBMITTING', ${docType})
         `;
         const docId = createRes.recordset[0].id;
-        const reference = createNfeReference(docId);
-        const payload = buildNfePayload(order, items, { stateRegistrationIndicator, stateRegistration, purchasePurpose, fiscalConfigs, codigosBenef });
+
+        let reference, payload;
+        if (isNfce) {
+          const payment = (isBalcao && bodyPaymentMethod)
+            ? { paymentMethod: bodyPaymentMethod, paymentValue: order.totalValue }
+            : await loadOrderPayment(orderId);
+          reference = createNfceReference(docId);
+          payload = buildNfcePayload(order, items, payment, { purchasePurpose, fiscalConfigs, codigosBenef });
+        } else {
+          reference = createNfeReference(docId);
+          payload = buildNfePayload(order, items, { stateRegistrationIndicator, stateRegistration, purchasePurpose, fiscalConfigs, codigosBenef });
+        }
 
         await sql.query`
           UPDATE GestaoFiscalDocuments
@@ -1119,10 +1238,10 @@ app.http('emit-nfe', {
           WHERE id = ${docId}
         `;
 
-        // Send to Focus NFe
+        // Send to Focus NFe / NFC-e
         try {
           const focusRes = await focusRequest(
-            `/v2/nfe?ref=${encodeURIComponent(reference)}`,
+            `/v2/${focusDocEndpoint}?ref=${encodeURIComponent(reference)}`,
             { method: 'POST', body: payload }
           );
 
@@ -1181,6 +1300,7 @@ app.http('emit-nfe', {
                 series: mapped.series,
                 accessKey: mapped.accessKey,
                 protocol: mapped.protocol,
+                documentType: docType,
               },
             };
           }
@@ -1230,8 +1350,6 @@ app.http('emit-nfe', {
       }
       context.error('Erro em emit-nfe:', err);
       return { status: 500, jsonBody: { error: 'Erro interno do servidor' } };
-    } finally {
-      try { await sql.close(); } catch (_) {}
     }
   },
 });

@@ -246,8 +246,6 @@ app.http('fiscal-benefits', {
     } catch (err) {
       context.error('fiscal-benefits error:', err);
       return { status: 500, jsonBody: { error: 'Erro ao processar benefícios fiscais.' } };
-    } finally {
-      try { await sql.close(); } catch (_) {}
     }
   },
 });

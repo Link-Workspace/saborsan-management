@@ -254,7 +254,6 @@ async function classifyProducts(productIds, context) {
       results,
     };
   } finally {
-    try { await sql.close(); } catch (_) {}
   }
 }
 
@@ -280,7 +279,6 @@ app.http('ncm-classify', {
           `;
           return { jsonBody: { products: result.recordset } };
         } finally {
-          try { await sql.close(); } catch (_) {}
         }
       }
 

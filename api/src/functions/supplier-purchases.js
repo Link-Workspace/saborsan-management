@@ -153,6 +153,7 @@ app.http('supplier-purchases', {
         }
 
         await sql.query`DELETE FROM SupplierPurchases WHERE id = ${id}`;
+        await sql.query`DELETE FROM PurchasePlanningItems WHERE supplier_purchase_id = ${id}`.catch(() => {});
         return { jsonBody: { ok: true } };
       }
 

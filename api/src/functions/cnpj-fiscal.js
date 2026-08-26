@@ -313,8 +313,6 @@ app.http('cnpj-fiscal', {
       if (err.configError) return { status: 503, jsonBody: { error: err.message, configError: true } };
       context.error('Erro em cnpj-fiscal:', err);
       return { status: 500, jsonBody: { error: 'Erro interno do servidor' } };
-    } finally {
-      try { await sql.close(); } catch (_) {}
     }
   },
 });
@@ -365,8 +363,6 @@ app.timer('cnpjFiscalSync', {
       context.log(`Sincronização fiscal concluída: ${ok} atualizados, ${erros} com erro.`);
     } catch (err) {
       context.error('Erro na sincronização fiscal:', err);
-    } finally {
-      try { await sql.close(); } catch (_) {}
     }
   },
 });

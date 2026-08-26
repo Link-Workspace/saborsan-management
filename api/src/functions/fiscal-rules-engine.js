@@ -173,17 +173,18 @@ function vigente(beneficio, hoje) {
 }
 
 /**
- * Resolve o cBenef para um único produto com CST 41.
+ * Resolve o cBenef para um único produto dado seu CST.
  *
  * Tenta primeiro o código salvo no perfil do produto; se não estiver mais
- * vigente ou compatível, busca nos benefícios cadastrados.
+ * vigente ou compatível com o CST informado, busca nos benefícios cadastrados.
  *
- * @param {{ codigoBeneficioFiscalSalvo?: string, ufEmitente: string, fiscalBenefits: object[], hoje?: Date }}
+ * @param {{ codigoBeneficioFiscalSalvo?: string, ufEmitente: string, fiscalBenefits: object[], hoje?: Date, icmsCst?: string }}
  * @returns {{ codigo: string|null, bloqueio: null|'nenhum'|'multiplos', opcoes?: string[] }}
  */
-function resolverCBenef({ codigoBeneficioFiscalSalvo, ufEmitente, fiscalBenefits, hoje = new Date() }) {
+function resolverCBenef({ codigoBeneficioFiscalSalvo, ufEmitente, fiscalBenefits, hoje = new Date(), icmsCst = '41' }) {
   const codigoSalvo = codigoBeneficioFiscalSalvo ? String(codigoBeneficioFiscalSalvo).trim() : null;
-  const uf = ufEmitente.toUpperCase();
+  const uf  = ufEmitente.toUpperCase();
+  const cst = String(icmsCst).trim();
 
   if (codigoSalvo) {
     const ainda_valido = fiscalBenefits.find(
@@ -191,7 +192,7 @@ function resolverCBenef({ codigoBeneficioFiscalSalvo, ufEmitente, fiscalBenefits
         b.codigo === codigoSalvo &&
         b.uf.toUpperCase() === uf &&
         b.ativo &&
-        cstsCompativeis(b.cstsPermitidos, '41') &&
+        cstsCompativeis(b.cstsPermitidos, cst) &&
         vigente(b, hoje),
     );
     if (ainda_valido) return { codigo: codigoSalvo, bloqueio: null };
@@ -202,7 +203,7 @@ function resolverCBenef({ codigoBeneficioFiscalSalvo, ufEmitente, fiscalBenefits
     (b) =>
       b.uf.toUpperCase() === uf &&
       b.ativo &&
-      cstsCompativeis(b.cstsPermitidos, '41') &&
+      cstsCompativeis(b.cstsPermitidos, cst) &&
       vigente(b, hoje),
   );
 
@@ -212,7 +213,7 @@ function resolverCBenef({ codigoBeneficioFiscalSalvo, ufEmitente, fiscalBenefits
 }
 
 /**
- * Resolve cBenef para todos os itens que usam CST 41.
+ * Resolve cBenef para todos os itens cujo CST possua benefício fiscal cadastrado na UF emitente.
  *
  * @param {{ items, fiscalConfigs, fiscalMap, fiscalBenefits, ufEmitente }}
  * @returns {{ map: {[productName]: string}, erros: string[] }}
@@ -221,30 +222,43 @@ function resolverCBenefParaItens({ items, fiscalConfigs, fiscalMap, fiscalBenefi
   const map   = {};
   const erros = [];
   const hoje  = new Date();
+  const uf    = ufEmitente.toUpperCase();
 
   for (const item of items) {
     const chave = item.productName.toLowerCase();
     const cfg   = fiscalConfigs[chave] || fiscalConfigs[item.productName] || fiscalMap?.[item.productName] || null;
     const icmsCst = String(cfg?.icmsCst ?? '').trim();
 
-    if (icmsCst !== '41') continue;
+    if (!icmsCst) continue;
+
+    // Verifica se existe algum benefício fiscal aplicável a este CST na UF emitente
+    const temBeneficioAplicavel = fiscalBenefits.some(
+      (b) =>
+        b.uf.toUpperCase() === uf &&
+        b.ativo &&
+        cstsCompativeis(b.cstsPermitidos, icmsCst) &&
+        vigente(b, hoje),
+    );
+
+    if (!temBeneficioAplicavel) continue;
 
     const resultado = resolverCBenef({
       codigoBeneficioFiscalSalvo: cfg?.codigoBeneficioFiscal,
       ufEmitente,
       fiscalBenefits,
       hoje,
+      icmsCst,
     });
 
     if (resultado.bloqueio === 'nenhum') {
       erros.push(
-        `Produto "${item.productName}": CST 41 exige código de benefício fiscal (cBenef), ` +
+        `Produto "${item.productName}": CST ${icmsCst} exige código de benefício fiscal (cBenef), ` +
         `mas nenhum benefício vigente foi encontrado para a UF ${ufEmitente}. ` +
         `Cadastre o benefício em Configurações → Benefícios Fiscais.`,
       );
     } else if (resultado.bloqueio === 'multiplos') {
       erros.push(
-        `Produto "${item.productName}": CST 41 exige código de benefício fiscal (cBenef), mas há ` +
+        `Produto "${item.productName}": CST ${icmsCst} exige código de benefício fiscal (cBenef), mas há ` +
         `múltiplos benefícios vigentes para ${ufEmitente} (${resultado.opcoes.join(', ')}) ` +
         `e o sistema não pode selecionar automaticamente. ` +
         `Vincule o cBenef correto ao produto em Configurações → Configuração Fiscal.`,

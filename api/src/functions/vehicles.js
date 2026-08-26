@@ -1,23 +1,15 @@
 const { app } = require('@azure/functions');
-const sql = require('mssql');
-
-const sqlConfig = {
-  server: process.env.SQL_SERVER,
-  database: process.env.SQL_DATABASE,
-  user: process.env.SQL_USER,
-  password: process.env.SQL_PASSWORD,
-  options: { encrypt: true, trustServerCertificate: false },
-};
+const { getPool } = require('../db');
 
 app.http('vehicles', {
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
   authLevel: 'anonymous',
   handler: async (request, context) => {
     try {
-      await sql.connect(sqlConfig);
+      const pool = await getPool();
 
       if (request.method === 'GET') {
-        const result = await sql.query`
+        const result = await pool.request().query`
           SELECT id, name, brand, year, plate
           FROM Vehicles
           ORDER BY name ASC
@@ -42,7 +34,7 @@ app.http('vehicles', {
           return { status: 400, jsonBody: { error: 'Nome do veículo é obrigatório' } };
         }
 
-        const insertResult = await sql.query`
+        const insertResult = await pool.request().query`
           INSERT INTO Vehicles (name, brand, year, plate, created_at, updated_at)
           OUTPUT INSERTED.id
           VALUES (
@@ -81,7 +73,7 @@ app.http('vehicles', {
           return { status: 400, jsonBody: { error: 'Nome do veículo é obrigatório' } };
         }
 
-        await sql.query`
+        await pool.request().query`
           UPDATE Vehicles
           SET name       = ${name.trim()},
               brand      = ${brand || null},
@@ -102,15 +94,13 @@ app.http('vehicles', {
           return { status: 400, jsonBody: { error: 'id é obrigatório' } };
         }
 
-        await sql.query`DELETE FROM Vehicles WHERE id = ${id}`;
+        await pool.request().query`DELETE FROM Vehicles WHERE id = ${id}`;
 
         return { jsonBody: { success: true } };
       }
     } catch (error) {
       context.error('Erro na função vehicles:', error);
       return { status: 500, jsonBody: { error: 'Erro interno do servidor' } };
-    } finally {
-      await sql.close();
     }
   },
 });
