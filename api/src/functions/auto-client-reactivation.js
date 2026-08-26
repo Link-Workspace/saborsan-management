@@ -91,6 +91,7 @@ async function runAutoClientReactivation(context) {
   const cfgResult = await sql.query`
     SELECT is_active, cr_inactive_days, cr_message_type,
            cr_waba_template_promo_id, cr_waba_template_catalog_id, cr_resend_days,
+           cr_promo_param2, cr_promo_param3,
            time_interval_minutes, time_start, time_end
     FROM AutomationConfig WHERE automation_key = 'client_reactivation'
   `.catch(() => ({ recordset: [] }));
@@ -103,6 +104,8 @@ async function runAutoClientReactivation(context) {
   const inactiveDays   = cfg.cr_inactive_days ?? 30;
   const resendDays     = cfg.cr_resend_days ?? 30;
   const messageType    = cfg.cr_message_type ?? 'promotion';
+  const promoParam2    = cfg.cr_promo_param2 || '';
+  const promoParam3    = cfg.cr_promo_param3 || '';
   // DB value takes priority; env var is the project-level default
   const templateId     = messageType === 'catalog'
     ? (cfg.cr_waba_template_catalog_id || process.env.CR_WABA_TEMPLATE_CATALOG_ID || null)
@@ -170,11 +173,11 @@ async function runAutoClientReactivation(context) {
 
   await setCrProgress(`Encontrado(s) ${candidates.length} cliente(s) inativo(s). Enviando mensagens...`);
 
-  // Image URL for the promotion template header (set PROMO_HEADER_IMAGE_URL in env)
+  // Header component (same for all clients); body params are built per-client inside the loop
   const promoImageUrl = messageType === 'promotion' ? (process.env.PROMO_HEADER_IMAGE_URL || null) : null;
-  const templateComponents = promoImageUrl
-    ? [{ type: 'header', parameters: [{ type: 'image', image: { link: promoImageUrl } }] }]
-    : [];
+  const headerComponent = promoImageUrl
+    ? { type: 'header', parameters: [{ type: 'image', image: { link: promoImageUrl } }] }
+    : null;
 
   // ── Send WABA template to each inactive client ────────────────────────────
   let sent = 0;
@@ -189,7 +192,20 @@ async function runAutoClientReactivation(context) {
       continue;
     }
 
-    const result = await sendWabaTemplateMessage(phone, templateName, 'pt_BR', templateComponents);
+    const components = [];
+    if (headerComponent) components.push(headerComponent);
+    if (messageType === 'promotion') {
+      components.push({
+        type: 'body',
+        parameters: [
+          { type: 'text', text: client.establishmentName || 'Cliente' },
+          { type: 'text', text: promoParam2 },
+          { type: 'text', text: promoParam3 },
+        ],
+      });
+    }
+
+    const result = await sendWabaTemplateMessage(phone, templateName, 'pt_BR', components);
 
     if (result.success) {
       await sql.query`

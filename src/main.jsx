@@ -337,7 +337,6 @@ const navItems = [
   { id: 'entregas', label: 'Entregas', icon: Truck },
   { id: 'clientes', label: 'Clientes', icon: Users },
   { id: 'pagamentos', label: 'Pagamentos', icon: CreditCard },
-  { id: 'financeiro', label: 'Financeiro', icon: Wallet },
   { id: 'relatorios', label: 'Relatórios', icon: BarChart3 },
   { id: 'automacao', label: 'Automação', icon: Bot },
   { id: 'configuracoes', label: 'Configurações', icon: Settings2 },
@@ -448,6 +447,7 @@ function App() {
   const [generateNfeActive, setGenerateNfeActive] = useState(false)
   const [stockReplenishmentActive, setStockReplenishmentActive] = useState(false)
   const [clientReactivationActive, setClientReactivationActive] = useState(false)
+  const [crInactiveDays, setCrInactiveDays] = useState(30)
 
   const [systemNotifications, setSystemNotifications] = useState([])
   const [notifSettings, setNotifSettings] = useState(() => {
@@ -598,7 +598,10 @@ function App() {
   useEffect(() => {
     fetch(`${API_URL}/api/automation-config?key=client_reactivation`)
       .then((r) => r.json())
-      .then((data) => { setClientReactivationActive(!!(data?.config?.isActive)) })
+      .then((data) => {
+        setClientReactivationActive(!!(data?.config?.isActive))
+        if (data?.config?.crInactiveDays != null) setCrInactiveDays(data.config.crInactiveDays)
+      })
       .catch(() => {})
   }, [])
 
@@ -1009,7 +1012,7 @@ function App() {
             <span className="topKicker">Saborsan Distribuidora</span>
             <h1>{title}</h1>
           </div>
-          <div className="searchBox topbarSearch"><Search size={17} /><input placeholder={{ pedidos: 'Buscar pedidos, clientes...', estoque: 'Buscar produtos', notas: 'Buscar notas fiscais...', vendedores: 'Buscar vendedores...', fornecedores: 'Buscar fornecedores...', clientes: 'Buscar clientes...', pagamentos: 'Buscar pagamentos...' }[active] || 'Buscar no painel...'} value={topbarSearch} onChange={(e) => setTopbarSearch(e.target.value)} /></div>
+          {active !== 'automacao' && active !== 'relatorios' && active !== 'dashboard' && <div className="searchBox topbarSearch"><Search size={17} /><input placeholder={{ pedidos: 'Buscar pedidos, clientes...', estoque: 'Buscar produtos', notas: 'Buscar notas fiscais...', vendedores: 'Buscar vendedores...', fornecedores: 'Buscar fornecedores...', clientes: 'Buscar clientes...', pagamentos: 'Buscar pagamentos...' }[active] || 'Buscar no painel...'} value={topbarSearch} onChange={(e) => setTopbarSearch(e.target.value)} /></div>}
           <div className="topActions">
             {bgImport && (
               <button
@@ -1064,9 +1067,8 @@ function App() {
         {active === 'fornecedores' && <Suppliers onMessage={setSupplierModal} search={topbarSearch} addNotif={addNotif} />}
         {active === 'compras' && <Purchases notify={notify} addNotif={addNotif} stockReplenishmentActive={stockReplenishmentActive} search={topbarSearch} />}
         {active === 'entregas' && <Deliveries deliveries={deliveriesState} onNewDelivery={() => setNewDeliveryOpen(true)} onSelect={(d) => { setSelectedDelivery(d); fetchDeliveries() }} onOpenVehicles={() => setVehiclesOpen(true)} search={topbarSearch} />}
-        {active === 'clientes' && <Clients clientsData={clientsState} clientsLoading={clientsLoading} onNewClient={() => setNewClientOpen(true)} onSelectClient={setSelectedClient} search={topbarSearch} />}
+        {active === 'clientes' && <Clients clientsData={clientsState} clientsLoading={clientsLoading} onNewClient={() => setNewClientOpen(true)} onSelectClient={setSelectedClient} search={topbarSearch} clientReactivationActive={clientReactivationActive} crInactiveDays={crInactiveDays} />}
         {active === 'pagamentos' && <Payments paymentsData={paymentsState} paymentsLoading={paymentsLoading} onSelectPayment={setSelectedPayment} onNewPayment={() => setNewPaymentOpen(true)} search={topbarSearch} />}
-        {active === 'financeiro' && <Finance />}
         {active === 'relatorios' && <Reports orders={orders} deliveries={deliveriesState} payments={paymentsState} clients={clientsState} />}
         {active === 'automacao' && <Automation aiEnabled={aiEnabled} setAiEnabled={setAiEnabled} notify={notify} addNotif={addNotif} receiveOrdersActive={receiveOrdersActive} setReceiveOrdersActive={setReceiveOrdersActive} generateNfeActive={generateNfeActive} setGenerateNfeActive={setGenerateNfeActive} stockReplenishmentActive={stockReplenishmentActive} setStockReplenishmentActive={setStockReplenishmentActive} clientReactivationActive={clientReactivationActive} setClientReactivationActive={setClientReactivationActive} />}
         {active === 'configuracoes' && <Settings notify={notify} onNotifSettingChange={(key, val) => setNotifSettings((p) => ({ ...p, [key]: val }))} search={topbarSearch} />}
@@ -4472,7 +4474,7 @@ function DeliveryDetailModal({ delivery, onClose, orders, onCancel, onRemove, on
   )
 }
 
-function Clients({ clientsData = [], clientsLoading = false, onNewClient, onSelectClient, search = '' }) {
+function Clients({ clientsData = [], clientsLoading = false, onNewClient, onSelectClient, search = '', clientReactivationActive = false, crInactiveDays = 30 }) {
   const [viewMode, setViewMode] = useState('grid')
   const [viewMenuOpen, setViewMenuOpen] = useState(false)
   const viewMenuRef = useRef(null)
@@ -4496,7 +4498,7 @@ function Clients({ clientsData = [], clientsLoading = false, onNewClient, onSele
 
   const getPriorityStatus = (client) => {
     if (client.reactivationSent) return 'Mensagem de reativação enviada'
-    if (client.daysSinceLastPurchase != null && client.daysSinceLastPurchase >= 20) return 'Reativar'
+    if (clientReactivationActive && client.daysSinceLastPurchase != null && client.daysSinceLastPurchase >= crInactiveDays) return 'Reativar'
     return 'Ativo'
   }
 
@@ -6317,6 +6319,8 @@ function AutomationClientReactivationAdjustModal({ onClose, onActivate, isActive
     timeIntervalMinutes: 60,
     timeStart: '08:00',
     timeEnd: '18:00',
+    crPromoParam2: '',
+    crPromoParam3: '',
   })
   const [savedConfig, setSavedConfig] = useState(null)
 
@@ -6339,11 +6343,13 @@ function AutomationClientReactivationAdjustModal({ onClose, onActivate, isActive
             timeIntervalMinutes: cfgRes.config.timeIntervalMinutes ?? 60,
             timeStart: cfgRes.config.timeStart ?? '08:00',
             timeEnd: cfgRes.config.timeEnd ?? '18:00',
+            crPromoParam2: cfgRes.config.crPromoParam2 ?? '',
+            crPromoParam3: cfgRes.config.crPromoParam3 ?? '',
           }
           setConfig(loaded)
           setSavedConfig(loaded)
         } else {
-          const def = { inactiveDays: 30, resendDays: 30, messageType: 'promotion', wabaTemplatePromoId: null, wabaTemplateCatalogId: null, timeIntervalMinutes: 60, timeStart: '08:00', timeEnd: '18:00' }
+          const def = { inactiveDays: 30, resendDays: 30, messageType: 'promotion', wabaTemplatePromoId: null, wabaTemplateCatalogId: null, timeIntervalMinutes: 60, timeStart: '08:00', timeEnd: '18:00', crPromoParam2: '', crPromoParam3: '' }
           setSavedConfig(def)
         }
       } catch { /* ignore */ }
@@ -6373,6 +6379,8 @@ function AutomationClientReactivationAdjustModal({ onClose, onActivate, isActive
             timeIntervalMinutes: config.timeIntervalMinutes,
             timeStart: config.timeStart,
             timeEnd: config.timeEnd,
+            crPromoParam2: config.crPromoParam2,
+            crPromoParam3: config.crPromoParam3,
           },
         }),
       })
@@ -6476,12 +6484,35 @@ function AutomationClientReactivationAdjustModal({ onClose, onActivate, isActive
                       </div>
                     </label>
                     {config.messageType === key && (
-                      <div style={{ marginTop: 8, padding: '10px 14px', background: 'var(--surface)', borderRadius: 8, border: '1px solid var(--border)', fontSize: '.83rem', color: 'var(--muted)', fontWeight: 600, lineHeight: 1.55 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6, color: realBody ? 'var(--success, #16a34a)' : 'var(--primary)', fontWeight: 700, fontSize: '.78rem' }}>
-                          <Info size={12} /> {realBody ? 'Prévia do template WABA' : 'Prévia do template (placeholder — será substituído pelo template real do WABA)'}
+                      <>
+                        <div style={{ marginTop: 8, padding: '10px 14px', background: 'var(--surface)', borderRadius: 8, border: '1px solid var(--border)', fontSize: '.83rem', color: 'var(--muted)', fontWeight: 600, lineHeight: 1.55 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6, color: realBody ? 'var(--success, #16a34a)' : 'var(--primary)', fontWeight: 700, fontSize: '.78rem' }}>
+                            <Info size={12} /> {realBody ? 'Prévia do template WABA' : 'Prévia do template (placeholder — será substituído pelo template real do WABA)'}
+                          </div>
+                          {realBody ?? TEMPLATE_PLACEHOLDERS[key]}
                         </div>
-                        {realBody ?? TEMPLATE_PLACEHOLDERS[key]}
-                      </div>
+                        {key === 'promotion' && (
+                          <div style={{ marginTop: 10, padding: '10px 14px', background: 'var(--surface)', borderRadius: 8, border: '1px solid var(--border)' }}>
+                            <div style={{ fontSize: '.78rem', fontWeight: 700, color: 'var(--muted)', marginBottom: 8 }}>Parâmetros do template</div>
+                            <div className="autoAdjustRow" style={{ gap: 8 }}>
+                              <label style={{ flex: '0 0 180px' }}>
+                                <span>1 - Nome</span>
+                                <input type="text" disabled value="Nome do cliente (automático)" style={{ opacity: 0.5, cursor: 'not-allowed' }} />
+                              </label>
+                              <label style={{ flex: 1 }}>
+                                <span>2 - Desconto</span>
+                                <input type="text" placeholder="Ex: 10%" value={config.crPromoParam2}
+                                  onChange={(e) => setC('crPromoParam2', e.target.value)} />
+                              </label>
+                              <label style={{ flex: 1 }}>
+                                <span>3 - Validade</span>
+                                <input type="text" placeholder="Ex: 01/09" value={config.crPromoParam3}
+                                  onChange={(e) => setC('crPromoParam3', e.target.value)} />
+                              </label>
+                            </div>
+                          </div>
+                        )}
+                      </>
                     )}
                   </div>
                   )
@@ -7619,33 +7650,32 @@ function FiscalConfigSection({ notify }) {
     finally { setLoading(false) }
   }
 
-  async function handleSync() {
-    if (syncing) return
+  async function handleSyncAndClassify() {
+    if (syncing || classifying) return
+    setClassifyResults(null)
     setSyncing(true)
-    setClassifyResults(null)
     try {
-      const res = await fetch(`${API_URL}/api/ncm/sync`, { method: 'POST' })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error || 'Erro na sincronização')
-      setSyncStatus(data)
-      notify(`Tabela NCM sincronizada: ${data.activeCount?.toLocaleString('pt-BR')} códigos ativos.`)
+      const syncRes = await fetch(`${API_URL}/api/ncm/sync`, { method: 'POST' })
+      const syncData = await syncRes.json()
+      if (!syncRes.ok) throw new Error(syncData.error || 'Erro na sincronização')
+      setSyncStatus(syncData)
+      notify(`Tabela NCM sincronizada: ${syncData.activeCount?.toLocaleString('pt-BR')} códigos ativos.`)
       await loadData()
-    } catch (err) { notify(`Erro: ${err.message}`) }
-    finally { setSyncing(false) }
-  }
-
-  async function handleClassify() {
-    if (classifying) return
+    } catch (err) {
+      notify(`Erro na sincronização: ${err.message}`)
+      setSyncing(false)
+      return
+    }
+    setSyncing(false)
     setClassifying(true)
-    setClassifyResults(null)
     try {
-      const res = await fetch(`${API_URL}/api/ncm/classify`, { method: 'POST' })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error || 'Erro na classificação')
-      setClassifyResults(data)
-      notify(`Classificação concluída: ${data.classified} classificados, ${data.pending} pendentes.`)
+      const classifyRes = await fetch(`${API_URL}/api/ncm/classify`, { method: 'POST' })
+      const classifyData = await classifyRes.json()
+      if (!classifyRes.ok) throw new Error(classifyData.error || 'Erro na classificação')
+      setClassifyResults(classifyData)
+      notify(`Classificação concluída: ${classifyData.classified} classificados, ${classifyData.pending} pendentes.`)
       await loadData()
-    } catch (err) { notify(`Erro: ${err.message}`) }
+    } catch (err) { notify(`Erro na classificação: ${err.message}`) }
     finally { setClassifying(false) }
   }
 
@@ -7772,20 +7802,12 @@ function FiscalConfigSection({ notify }) {
               </div>
             </div>
             <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 20 }}>
-              <button className="btnSolid" onClick={handleSync} disabled={syncing} style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
+              <button className="btnSolid" onClick={handleSyncAndClassify} disabled={syncing || classifying} style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
                 {syncing
                   ? <><Loader2 size={16} style={{ animation: 'spin 1s linear infinite' }} /> Sincronizando...</>
-                  : <><RefreshCw size={16} /> Sincronizar tabela NCM</>}
-              </button>
-              <button
-                className={pendingNcmCount === 0 ? 'btnOutline' : 'btnSolid'}
-                onClick={handleClassify}
-                disabled={classifying || !syncStatus?.activeCount}
-                style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}
-              >
-                {classifying
-                  ? <><Loader2 size={16} style={{ animation: 'spin 1s linear infinite' }} /> Classificando...</>
-                  : <><Wand2 size={16} /> Classificar produtos com IA</>}
+                  : classifying
+                    ? <><Loader2 size={16} style={{ animation: 'spin 1s linear infinite' }} /> Classificando...</>
+                    : <><RefreshCw size={16} /> Sincronizar e Classificar com IA</>}
               </button>
             </div>
             {!syncStatus?.activeCount && (

@@ -118,6 +118,14 @@ async function ensureTables() {
       ALTER TABLE AutomationConfig ADD cr_current_step NVARCHAR(MAX) NULL
   `.catch(() => {});
   await sql.query`
+    IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('AutomationConfig') AND name = 'cr_promo_param2')
+      ALTER TABLE AutomationConfig ADD cr_promo_param2 NVARCHAR(100) NULL
+  `.catch(() => {});
+  await sql.query`
+    IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('AutomationConfig') AND name = 'cr_promo_param3')
+      ALTER TABLE AutomationConfig ADD cr_promo_param3 NVARCHAR(100) NULL
+  `.catch(() => {});
+  await sql.query`
     IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'StockReplenishmentCategoryBindings')
     CREATE TABLE StockReplenishmentCategoryBindings (
       id          INT           IDENTITY(1,1) NOT NULL,
@@ -147,7 +155,8 @@ app.http('automation-config', {
                  nfe_notify_on_error, nfe_notify_seller_id, nfe_print_danfe_auto,
                  sr_min_stock_qty, sr_max_purchase_qty, sr_notify_times, sr_waba_template_id,
                  cr_inactive_days, cr_message_type,
-                 cr_waba_template_promo_id, cr_waba_template_catalog_id, cr_resend_days
+                 cr_waba_template_promo_id, cr_waba_template_catalog_id, cr_resend_days,
+                 cr_promo_param2, cr_promo_param3
           FROM AutomationConfig
           WHERE automation_key = ${key}
         `;
@@ -208,6 +217,8 @@ app.http('automation-config', {
               crWabaTemplatePromoId: row.cr_waba_template_promo_id ?? process.env.CR_WABA_TEMPLATE_PROMO_ID ?? null,
               crWabaTemplateCatalogId: row.cr_waba_template_catalog_id ?? process.env.CR_WABA_TEMPLATE_CATALOG_ID ?? null,
               crResendDays: row.cr_resend_days ?? 30,
+              crPromoParam2: row.cr_promo_param2 ?? '',
+              crPromoParam3: row.cr_promo_param3 ?? '',
             },
             bindings: bindingsResult.recordset.map((b) => ({
               id: b.id,
@@ -247,11 +258,13 @@ app.http('automation-config', {
         const crWabaTemplatePromoId = config.crWabaTemplatePromoId !== undefined ? (config.crWabaTemplatePromoId ?? null) : null;
         const crWabaTemplateCatalogId = config.crWabaTemplateCatalogId !== undefined ? (config.crWabaTemplateCatalogId ?? null) : null;
         const crResendDays = config.crResendDays ?? null;
+        const crPromoParam2 = config.crPromoParam2 !== undefined ? (config.crPromoParam2 ?? null) : null;
+        const crPromoParam3 = config.crPromoParam3 !== undefined ? (config.crPromoParam3 ?? null) : null;
 
         if (!existing.recordset.length) {
           await sql.query`
             INSERT INTO AutomationConfig
-              (automation_key, is_active, min_orders, max_orders, max_cities, include_route_cities, time_interval_minutes, time_start, time_end, nfe_notify_on_error, nfe_notify_seller_id, nfe_print_danfe_auto, sr_min_stock_qty, sr_max_purchase_qty, sr_notify_times, sr_waba_template_id, cr_inactive_days, cr_message_type, cr_waba_template_promo_id, cr_waba_template_catalog_id, cr_resend_days, updated_at)
+              (automation_key, is_active, min_orders, max_orders, max_cities, include_route_cities, time_interval_minutes, time_start, time_end, nfe_notify_on_error, nfe_notify_seller_id, nfe_print_danfe_auto, sr_min_stock_qty, sr_max_purchase_qty, sr_notify_times, sr_waba_template_id, cr_inactive_days, cr_message_type, cr_waba_template_promo_id, cr_waba_template_catalog_id, cr_resend_days, cr_promo_param2, cr_promo_param3, updated_at)
             VALUES
               (${key},
                ${isActive ?? 0},
@@ -274,6 +287,8 @@ app.http('automation-config', {
                ${crWabaTemplatePromoId ?? null},
                ${crWabaTemplateCatalogId ?? null},
                ${crResendDays ?? 30},
+               ${crPromoParam2 ?? null},
+               ${crPromoParam3 ?? null},
                GETUTCDATE())
           `;
         } else {
@@ -301,6 +316,8 @@ app.http('automation-config', {
               cr_waba_template_promo_id    = ${crWabaTemplatePromoId !== null ? crWabaTemplatePromoId : currentRow.cr_waba_template_promo_id},
               cr_waba_template_catalog_id  = ${crWabaTemplateCatalogId !== null ? crWabaTemplateCatalogId : currentRow.cr_waba_template_catalog_id},
               cr_resend_days               = ${crResendDays !== null ? crResendDays : (currentRow.cr_resend_days ?? 30)},
+              cr_promo_param2              = ${crPromoParam2 !== null ? crPromoParam2 : currentRow.cr_promo_param2},
+              cr_promo_param3              = ${crPromoParam3 !== null ? crPromoParam3 : currentRow.cr_promo_param3},
               updated_at                   = GETUTCDATE()
             WHERE automation_key = ${key}
           `;
