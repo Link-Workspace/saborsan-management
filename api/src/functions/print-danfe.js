@@ -3,6 +3,9 @@ const { app } = require('@azure/functions')
 const path = require('path')
 const fs = require('fs')
 const os = require('os')
+const { execFile } = require('child_process')
+const { promisify } = require('util')
+const execFileAsync = promisify(execFile)
 const sql = require('mssql')
 
 const sqlConfig = {
@@ -35,6 +38,20 @@ function createBasicAuth(token) {
   return `Basic ${Buffer.from(`${token}:`, 'utf8').toString('base64')}`
 }
 
+// pdf-to-printer usa Get-CimInstance cujo output quebra linhas longas sem ':', quebrando o parser.
+// Esta função usa Get-Printer | ConvertTo-Json para retorno limpo e confiável.
+async function getSystemPrinters() {
+  const { stdout } = await execFileAsync('Powershell.exe', [
+    '-NoProfile', '-NonInteractive', '-Command',
+    'Get-Printer | Select-Object Name, Default | ConvertTo-Json -Compress',
+  ])
+  const raw = stdout.trim()
+  if (!raw) return []
+  const parsed = JSON.parse(raw)
+  const list = Array.isArray(parsed) ? parsed : [parsed]
+  return list.map((p) => ({ name: p.Name, isDefault: p.Default === true }))
+}
+
 app.http('print-danfe', {
   methods: ['GET', 'POST'],
   authLevel: 'anonymous',
@@ -54,14 +71,14 @@ app.http('print-danfe', {
       }
     }
 
-    const { print, getPrinters } = printerLib.default || printerLib
+    const { print } = printerLib.default || printerLib
 
     // ── GET: lista impressoras do sistema ─────────────────────────────────
     if (request.method === 'GET') {
       try {
-        const [list, thermalPrinter] = await Promise.all([getPrinters(), getThermalPrinter()])
-        const names = list.map((p) => p.deviceName || p.name || String(p)).filter(Boolean)
-        const defaultPrinter = list.find((p) => p.isDefault)?.deviceName || names[0] || null
+        const [list, thermalPrinter] = await Promise.all([getSystemPrinters(), getThermalPrinter()])
+        const names = list.map((p) => p.name).filter(Boolean)
+        const defaultPrinter = list.find((p) => p.isDefault)?.name || names[0] || null
         return { jsonBody: { printers: names, default: defaultPrinter, thermalPrinter } }
       } catch (err) {
         context.error('Erro ao listar impressoras:', err)
