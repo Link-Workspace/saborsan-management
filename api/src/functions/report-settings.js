@@ -17,12 +17,22 @@ app.http('report-settings', {
     try {
       await sql.connect(sqlConfig);
 
+      // Ensure new columns exist (idempotent)
+      await sql.query`
+        IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('ReportSettings') AND name = 'recipientName')
+          ALTER TABLE ReportSettings ADD recipientName NVARCHAR(100) NULL
+      `.catch(() => {});
+      await sql.query`
+        IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('ReportSettings') AND name = 'lastSentAt')
+          ALTER TABLE ReportSettings ADD lastSentAt DATETIME NULL
+      `.catch(() => {});
+
       if (request.method === 'GET') {
         const result = await sql.query`
           SELECT TOP 1
-            email, frequency, sendDay, sendTime,
+            email, whatsapp, recipientName, frequency, sendDay, sendTime,
             inclVendas, inclEstoque, inclFinanceiro, inclEntregas,
-            updatedAt
+            lastSentAt, updatedAt
           FROM ReportSettings
           ORDER BY id ASC
         `;
@@ -35,6 +45,8 @@ app.http('report-settings', {
         return {
           jsonBody: {
             relatorioEmail:      row.email          || '',
+            relatorioWhatsapp:   row.whatsapp        || '',
+            relatorioNome:       row.recipientName   || '',
             relatorioFreq:       row.frequency      || 'desativado',
             relatorioDia:        row.sendDay         || '1',
             relatorioHora:       row.sendTime        || '08:00',
@@ -42,6 +54,7 @@ app.http('report-settings', {
             relatorioEstoque:    !!row.inclEstoque,
             relatorioFinanceiro: !!row.inclFinanceiro,
             relatorioEntregas:   !!row.inclEntregas,
+            lastSentAt:          row.lastSentAt      || null,
             updatedAt:           row.updatedAt,
           },
         };
@@ -53,6 +66,8 @@ app.http('report-settings', {
         // Whitelist prevents SQL injection; only known columns are accepted
         const fieldMap = {
           relatorioEmail:      (v) => ({ col: 'email',          type: sql.NVarChar(255),    val: String(v)        }),
+          relatorioWhatsapp:   (v) => ({ col: 'whatsapp',       type: sql.NVarChar(20),     val: String(v)        }),
+          relatorioNome:       (v) => ({ col: 'recipientName',  type: sql.NVarChar(100),    val: String(v)        }),
           relatorioFreq:       (v) => ({ col: 'frequency',      type: sql.NVarChar(20),     val: String(v)        }),
           relatorioDia:        (v) => ({ col: 'sendDay',        type: sql.NVarChar(5),      val: String(v)        }),
           relatorioHora:       (v) => ({ col: 'sendTime',       type: sql.NVarChar(10),     val: String(v)        }),
