@@ -7960,6 +7960,8 @@ function Settings({ notify, onNotifSettingChange, search = '' }) {
         entregadorNotifPedido: true,
         entregadorNotifRota: true,
         relatorioEmail: 'gerencia@saborsan.com.br',
+        relatorioWhatsapp: '',
+        relatorioNome: '',
         relatorioFreq: 'mensal',
         relatorioDia: '1',
         relatorioHora: '08:00',
@@ -8013,6 +8015,8 @@ function Settings({ notify, onNotifSettingChange, search = '' }) {
         entregadorNotifPedido: true,
         entregadorNotifRota: true,
         relatorioEmail: 'gerencia@saborsan.com.br',
+        relatorioWhatsapp: '',
+        relatorioNome: '',
         relatorioFreq: 'mensal',
         relatorioDia: '1',
         relatorioHora: '08:00',
@@ -8061,10 +8065,12 @@ function Settings({ notify, onNotifSettingChange, search = '' }) {
   const [savedOperacaoSnap, setSavedOperacaoSnap] = useState(() => snapOperacao(form))
 
   const snapRelatorios = (f) => JSON.stringify({
-    relatorioEmail: f.relatorioEmail || '',
-    relatorioFreq:  f.relatorioFreq  || 'desativado',
-    relatorioDia:   f.relatorioDia   || '1',
-    relatorioHora:  f.relatorioHora  || '08:00',
+    relatorioEmail:    f.relatorioEmail    || '',
+    relatorioWhatsapp: f.relatorioWhatsapp || '',
+    relatorioNome:     f.relatorioNome     || '',
+    relatorioFreq:     f.relatorioFreq     || 'desativado',
+    relatorioDia:      f.relatorioDia      || '1',
+    relatorioHora:     f.relatorioHora     || '08:00',
   })
   const [savedRelatoriosSnap, setSavedRelatoriosSnap] = useState(() => snapRelatorios(form))
 
@@ -8076,6 +8082,35 @@ function Settings({ notify, onNotifSettingChange, search = '' }) {
 
   const [printerList, setPrinterList] = useState([])
   const [printersLoading, setPrintersLoading] = useState(false)
+  const [sendingReport, setSendingReport] = useState(false)
+
+  async function sendReportNow() {
+    setSendingReport(true)
+    try {
+      const res = await fetch(`${API_URL}/api/generate-send-report`, { method: 'POST' })
+      const data = await res.json()
+      if (!res.ok || data.error) {
+        notify(`Erro ao enviar: ${data.error || 'Falha desconhecida'}`, 'error')
+      } else if (data.skipped) {
+        notify(`Envio ignorado: ${data.reason}`, 'error')
+      } else {
+        const wp = data.results?.whatsapp
+        const em = data.results?.email
+        const wpOk  = wp?.success  === true
+        const emOk  = em?.success  === true
+        const parts = []
+        if (wpOk)  parts.push('WhatsApp enviado')
+        if (emOk)  parts.push('e-mail enviado')
+        if (!wpOk && wp) parts.push(`WhatsApp: ${wp.error || 'falhou'}`)
+        if (!emOk && em) parts.push(`e-mail: ${em.error || 'falhou'}`)
+        notify(parts.join(' · ') || 'Relatório enviado.')
+      }
+    } catch (err) {
+      notify(`Erro: ${err.message}`, 'error')
+    } finally {
+      setSendingReport(false)
+    }
+  }
 
   useEffect(() => {
     fetch(`${API_URL}/api/stock-purchase-config`)
@@ -8133,6 +8168,8 @@ function Settings({ notify, onNotifSettingChange, search = '' }) {
         setForm((f) => ({
           ...f,
           relatorioEmail:      data.relatorioEmail      ?? f.relatorioEmail,
+          relatorioWhatsapp:   data.relatorioWhatsapp   ?? f.relatorioWhatsapp,
+          relatorioNome:       data.relatorioNome       ?? f.relatorioNome,
           relatorioFreq:       data.relatorioFreq       ?? f.relatorioFreq,
           relatorioDia:        data.relatorioDia        ?? f.relatorioDia,
           relatorioHora:       data.relatorioHora       ?? f.relatorioHora,
@@ -8142,11 +8179,21 @@ function Settings({ notify, onNotifSettingChange, search = '' }) {
           relatorioEntregas:   data.relatorioEntregas   ?? f.relatorioEntregas,
         }));
         setSavedRelatoriosSnap(JSON.stringify({
-          relatorioEmail: data.relatorioEmail || '',
-          relatorioFreq:  data.relatorioFreq  || 'desativado',
-          relatorioDia:   data.relatorioDia   || '1',
-          relatorioHora:  data.relatorioHora  || '08:00',
+          relatorioEmail:    data.relatorioEmail    || '',
+          relatorioWhatsapp: data.relatorioWhatsapp || '',
+          relatorioNome:     data.relatorioNome     || '',
+          relatorioFreq:     data.relatorioFreq     || 'desativado',
+          relatorioDia:      data.relatorioDia      || '1',
+          relatorioHora:     data.relatorioHora     || '08:00',
         }));
+      })
+      .catch(() => {});
+
+    fetch(`${API_URL}/api/company-info`)
+      .then((r) => r.ok ? r.json() : null)
+      .then((data) => {
+        if (!data) return;
+        setForm((f) => ({ ...f, email: data.email || f.email }));
       })
       .catch(() => {});
 
@@ -8210,10 +8257,12 @@ function Settings({ notify, onNotifSettingChange, search = '' }) {
       try {
         const saved = JSON.parse(savedRelatoriosSnap)
         const patch = {}
-        if (form.relatorioEmail !== saved.relatorioEmail) patch.relatorioEmail = form.relatorioEmail
-        if (form.relatorioFreq  !== saved.relatorioFreq)  patch.relatorioFreq  = form.relatorioFreq
-        if (form.relatorioDia   !== saved.relatorioDia)   patch.relatorioDia   = form.relatorioDia
-        if (form.relatorioHora  !== saved.relatorioHora)  patch.relatorioHora  = form.relatorioHora
+        if (form.relatorioEmail    !== saved.relatorioEmail)    patch.relatorioEmail    = form.relatorioEmail
+        if (form.relatorioWhatsapp  !== saved.relatorioWhatsapp)  patch.relatorioWhatsapp  = form.relatorioWhatsapp
+        if ((form.relatorioNome || '') !== (saved.relatorioNome || '')) patch.relatorioNome = form.relatorioNome || ''
+        if (form.relatorioFreq      !== saved.relatorioFreq)      patch.relatorioFreq      = form.relatorioFreq
+        if (form.relatorioDia       !== saved.relatorioDia)       patch.relatorioDia       = form.relatorioDia
+        if (form.relatorioHora      !== saved.relatorioHora)      patch.relatorioHora      = form.relatorioHora
         if (Object.keys(patch).length > 0) {
           await fetch(`${API_URL}/api/report-settings`, {
             method: 'PATCH',
@@ -8249,7 +8298,7 @@ function Settings({ notify, onNotifSettingChange, search = '' }) {
     { id: 'empresa',       label: 'Dados da empresa',        icon: Building2,   keywords: ['empresa', 'nome', 'cnpj', 'email', 'telefone', 'cidade', 'uf', 'identidade', 'corporativo'] },
     { id: 'operacao',      label: 'Estoque e fornecedores',  icon: Boxes,       keywords: ['estoque', 'fornecedor', 'alerta', 'ia', 'whatsapp', 'notifica', 'prompt', 'compra', 'horário', 'limite', 'mínimo', 'reposição', 'automação'] },
     { id: 'notificacoes',  label: 'Notificações',            icon: Bell,        keywords: ['notificação', 'notif', 'alerta', 'pedido', 'vendedor', 'nota', 'fiscal', 'entrega', 'cliente', 'pagamento', 'push'] },
-    { id: 'relatorios',    label: 'Relatórios',              icon: BarChart3,   keywords: ['relatório', 'email', 'frequência', 'semanal', 'mensal', 'diário', 'vendas', 'financeiro', 'envio'] },
+    { id: 'relatorios',    label: 'Relatórios',              icon: BarChart3,   keywords: ['relatório', 'email', 'whatsapp', 'frequência', 'semanal', 'mensal', 'diário', 'vendas', 'financeiro', 'envio'] },
     { id: 'fiscal',        label: 'Fiscal e NCM',            icon: ReceiptText, keywords: ['fiscal', 'ncm', 'cfop', 'icms', 'nota', 'nfe', 'nfc', 'tribut', 'cst', 'pis', 'cofins', 'sefaz'] },
     { id: 'dispositivos',  label: 'Dispositivos conectados', icon: Printer,     keywords: ['dispositivo', 'impressora', 'térmica', 'printer', 'conectado', 'danfe'] },
   ]
@@ -8438,6 +8487,10 @@ function Settings({ notify, onNotifSettingChange, search = '' }) {
               <div className="cardHeader"><div><p>Relatórios</p><h3>Envio por e-mail</h3></div><BarChart3 size={22} /></div>
               <div className="settingsForm">
                 <label>E-mail de destino<input type="email" value={form.relatorioEmail} onChange={(e) => set('relatorioEmail', e.target.value)} /></label>
+                <div className="settingsTwoCols">
+                  <label>WhatsApp de destino<input type="tel" value={form.relatorioWhatsapp} onChange={(e) => set('relatorioWhatsapp', e.target.value)} placeholder="(49) 99999-0000" /></label>
+                  <label>Nome do destinatário<input type="text" value={form.relatorioNome} onChange={(e) => set('relatorioNome', e.target.value)} placeholder="Ex: Maria Gerente" /></label>
+                </div>
                 <label>Frequência de envio
                   <CustomSelect
                     value={form.relatorioFreq}
@@ -8490,6 +8543,16 @@ function Settings({ notify, onNotifSettingChange, search = '' }) {
                     }} /><span></span></label>
                   </div>
                 ))}
+              </div>
+              <div style={{ padding: '16px 0 4px', display: 'flex', justifyContent: 'flex-end' }}>
+                <button
+                  className="btnSolid"
+                  onClick={sendReportNow}
+                  disabled={sendingReport || (!form.relatorioEmail?.trim() && !form.relatorioWhatsapp?.trim())}
+                  style={{ opacity: (sendingReport || (!form.relatorioEmail?.trim() && !form.relatorioWhatsapp?.trim())) ? 0.5 : 1 }}
+                >
+                  <Send size={15} />{sendingReport ? ' Enviando...' : ' Enviar agora'}
+                </button>
               </div>
             </div>
           )}
